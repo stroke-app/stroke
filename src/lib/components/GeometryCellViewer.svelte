@@ -14,7 +14,7 @@
     parseGeometry, projectGeometry, geoShapeOf, sridLabel, lonLatOf, formatLonLat, shortCoord,
   } from '$lib/geometry-cell.js'
   import GeoMiniMap from './GeoMiniMap.svelte'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
 
   let {
     open = $bindable(false),
@@ -134,7 +134,7 @@
       await navigator.clipboard.writeText(String(value ?? ''))
       toast.success('Copied geometry')
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
 
@@ -153,7 +153,7 @@
       <Icon name="globe" class="size-3.5 shrink-0 text-primary" />
       <span class="min-w-0 truncate font-mono text-ui-sm font-medium">{column}</span>
       <span class="shrink-0 rounded bg-muted/60 px-1.5 py-0.5 font-mono text-ui-2xs text-muted-foreground">
-        {dataType.replace(/\(.*$/, '')}{#if geom} · {geom.type}{/if}
+        {dataType.replace(/\(.*$/, '')}{#if geom}{' '}· {geom.type}{/if}
       </span>
       {#if nullable}
         <span class="shrink-0 rounded bg-muted/40 px-1.5 py-0.5 font-mono text-ui-3xs text-muted-foreground">nullable</span>

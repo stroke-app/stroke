@@ -1,4 +1,6 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
+  import { errorText } from '$lib/utils.js'
   import { executeSql } from "$lib/api.js";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
   import Users from "@lucide/svelte/icons/users";
@@ -14,7 +16,7 @@
   import SecuritySqlModal from "./SecuritySqlModal.svelte";
 
   /** @type {{ active?: boolean, connectionType?: string | null }} */
-  let { active = false, connectionType = null } = $props();
+  let { active = false, connectionType = null, connectionId = "" } = $props();
 
   // Roles + RLS use pg_catalog - only available on Postgres-compatible engines.
   const supported = $derived(
@@ -87,6 +89,12 @@
       rolesLoading = false;
     }
   }
+
+  // Postgres reserves the pg_ prefix for its predefined roles (pg_monitor,
+  // pg_read_all_data, ...): fifteen of them listed above the user's own.
+  const ownRoles = $derived((roles ?? []).filter((r) => !String(r.rolname).startsWith("pg_")));
+  const builtinRoles = $derived((roles ?? []).filter((r) => String(r.rolname).startsWith("pg_")));
+  let showBuiltin = $state(false);
 
   /** SQL single-quoted string literal (escapes embedded quotes). */
   const sqlLit = (/** @type {unknown} */ v) => `'${String(v).replace(/'/g, "''")}'`;
@@ -212,7 +220,7 @@
       sqlModal = null;
       refresh();
     } catch (e) {
-      toast.error("Could not run statement", { description: String(e) });
+      toast.error("Could not run statement", { description: errorText(e) });
     } finally {
       sqlRunning = false;
     }
@@ -245,6 +253,23 @@
       title: `${on ? "Disable" : "Enable"} RLS, ${row.schema}.${row.table_name}`,
     };
   }
+
+  // The page is kept across connections: after a switch it went on showing the
+  // last database's roles, grants and policies. Dropping them makes the
+  // lazy loads below read the new database.
+  // svelte-ignore state_referenced_locally
+  let shownFor = connectionId;
+  $effect(() => {
+    const id = connectionId;
+    if (id === shownFor) return;
+    shownFor = id;
+    roles = null;
+    memberships = null;
+    policies = null;
+    rlsTables = null;
+    dbGrants = null;
+    selectedRole = "";
+  });
 
   $effect(() => {
     if (!supported) return;
@@ -349,7 +374,7 @@
         <p class="text-ui font-medium text-foreground">{engineLabel} does not support roles or RLS</p>
         <p class="text-ui-xs text-muted-foreground">
           Row Level Security and role management require PostgreSQL or CockroachDB.<br />
-          Use the SQL console to manage {engineLabel} users and permissions directly.
+          Use the SQL editor to manage {engineLabel} users and permissions directly.
         </p>
       </div>
     </div>
@@ -377,7 +402,7 @@
     <button
       type="button"
       class="mr-1 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-      title="Refresh (⌘R)"
+      title={`Refresh (${comboTitle('Mod+R')})`}
       onclick={refresh}
     >
       <RefreshCw class={cn("size-3.5", isLoading && "animate-spin")} />
@@ -392,7 +417,7 @@
         class="flex items-center justify-between border-b border-border/40 px-3 py-2"
       >
         <span class="text-ui-xs text-muted-foreground"
-          >{roles?.length ?? 0} roles</span
+          >{ownRoles.length} {ownRoles.length === 1 ? "role" : "roles"}{#if builtinRoles.length}{` · ${builtinRoles.length} built-in`}{/if}</span
         >
         <button
           type="button"
@@ -467,7 +492,7 @@
             </tr>
           </thead>
           <tbody>
-            {#each roles ?? [] as role (role.rolname)}
+            {#each showBuiltin ? [...ownRoles, ...builtinRoles] : ownRoles as role (role.rolname)}
               {@const isSuper = bool(role.rolsuper)}
               {@const isLogin = bool(role.rolcanlogin)}
               <tr
@@ -527,6 +552,19 @@
                 </td>
               </tr>
             {/each}
+            {#if builtinRoles.length}
+              <tr>
+                <td colspan="9" class="px-3 py-2">
+                  <button
+                    type="button"
+                    class="text-ui-xs text-muted-foreground hover:text-foreground"
+                    aria-expanded={showBuiltin}
+                    onclick={() => (showBuiltin = !showBuiltin)}
+                    >{showBuiltin ? "Hide" : "Show"} {builtinRoles.length} built-in {builtinRoles.length === 1 ? "role" : "roles"}</button
+                  >
+                </td>
+              </tr>
+            {/if}
           </tbody>
         </table>
       {/if}
@@ -797,7 +835,7 @@
                   >
                 </td>
                 <td
-                  class="max-w-[100px] truncate px-3 py-2 font-mono text-muted-foreground"
+                  class="max-w-[6.25rem] truncate px-3 py-2 font-mono text-muted-foreground"
                   >{pol.roles || "public"}</td
                 >
                 <td class="px-3 py-2">

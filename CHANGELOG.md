@@ -4,6 +4,483 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.7.5] - 2026-11-23
+
+### Bug Fixes
+- **Laggy scrolling with a proportional grid font** - With Separate fonts set to a proportional face for the grid (Inter, SF Pro), scrolling sideways dropped to about 50 fps on tables of long text. It holds 60 fps again.
+
+
+## [3.7.4] - 2026-11-22
+
+### New Features
+- **Shared console** - While sharing a database as a web studio, Open shared console (command palette) gives you one SQL tab that everyone on the link edits together, in the app and in the browser. You see each other's cursors and selections by name, and Run runs the query for whoever presses it.
+
+### Bug Fixes
+- **Skeleton rows on wide tables over a slow link** - On a big table with wide rows (HTML, JSON), the rows you scroll or jump to now show in about a second instead of after several, and scrolling sideways no longer sits on skeletons. The rows on screen are fetched first, and the background copy of the table yields to them.
+
+
+## [3.7.3] - 2026-11-22
+
+### Bug Fixes
+- **Reconnecting while offline** - With no network, the reconnect on launch no longer dials into nothing and then blames the host. It says you're offline and reconnects by itself when the network is back. A failed connect while offline says so, and repeated failures show one toast instead of a stack.
+
+
+## [3.7.2] - 2026-11-22
+
+### New Features
+- **Let an AI agent show you the database** - `npx strokedb mcp` is an MCP server for Claude Code and other agents, even ones running on another machine: it reads the database (tables, columns, read-only queries) and its show_table tool gives you a link that opens a table in the web studio or in Stroke. Later calls switch your open studio to the next table. In the app, a `stroke://studio` link opens the shared studio in a window of its own.
+- **Separate fonts** - Settings > Appearance > Separate fonts gives the interface, the SQL editor, the data grid, the AI chat and the terminal a font each, with a preview. The list has the bundled fonts and your OS's own, named for it (SF Pro, SF Mono and Menlo on a Mac; Segoe UI, Cascadia Mono and Consolas on Windows), and only the ones your machine has.
+- **Font smoothing** - Pick thin grayscale text (Stroke's look) or your OS's default smoothing.
+
+### Bug Fixes
+- **"Superseded by a newer load" after a reload** - When the window reloaded while the app kept running, every table it had open failed with "Superseded by a newer load of this table" until Stroke restarted. Tables load again, and a replaced load is never shown as an error.
+
+
+## [3.7.1] - 2026-11-22
+
+### New Features
+- **Languages** - Spanish, French, German, Portuguese and Japanese now cover the command palette, menu bar, start screen, new-tab page, table toolbar, SQL console, sidebar, status bar and most of Settings. Pick one under Settings > Appearance > Language.
+- **Live cursors on a shared studio** - When you share a database as a web studio (Labs), everyone on the link sees each other: a colored outline and name on the cell each person is on, their pointer, and what they are typing before they save. Saved changes on either side reload the table for everyone else.
+
+
+## [3.7.0] - 2026-11-22
+
+### New Features
+- **Proxy settings** - Settings > Network sends app requests, AI requests, database connections and tunnels each through its own proxy (HTTP or SOCKS5, with an optional login), or directly. Each has a Test button.
+
+### Bug Fixes
+- **Two tabs of the same table** - In All rows mode, scrolling or closing one no longer blanks the other's rows into skeletons that reload slowly.
+
+
+## [3.6.9] - 2026-11-22
+
+### New Features
+- **Kubernetes and AWS SSM tunnels** - A connection can go through kubectl port-forward (to a service, pod or deployment) or AWS Session Manager port forwarding, as well as SSH. Pick it under Tunnel in the connection form.
+
+### Bug Fixes
+- **AI chat** - Run on a SQL block in a reply shows the result. It ran, but the result was hidden whenever query cards were turned off.
+- **Stopping a large query** - Stop ends the query at once instead of after the row being read (one large JSON value could take seconds), and the next query no longer waits while the stopped one's remaining rows are drained.
+
+### Changes
+- **Select All** - No longer logs a debug line on every press.
+
+
+## [3.6.8] - 2026-11-22
+
+### New Features
+- **SQL snippets** - Settings > Snippets keeps SQL you reuse, each with a trigger word, fields Tab moves through, and the engines it applies to. The SQL editor offers them as you type, and they import and export as JSON.
+- **SQLite and DuckDB files** - "New SQLite database" and "Open a database file" on the start screen and in the command palette create or open a file in one step and connect to it.
+- **Display timezone** - Settings > Database shows timestamptz values in UTC, this computer's zone, or any zone you pick, with the offset written out. It applies in the grid and in copied rows; stored values do not change.
+- **Export and import** - Save connections, saved queries, settings and SQL snippets to one file and import it on another computer, without an account. Passwords and API keys go in only if you choose, encrypted with a passphrase. Settings > Account & Sync, or the command palette.
+
+### Bug Fixes
+- **JSON viewer** - JSON pasted as one line is laid out at once. In every code editor, text scrolled sideways no longer shows through the line numbers.
+
+
+## [3.6.7] - 2026-11-22
+
+### Bug Fixes
+- **Changing the page size during a slow load** - Rows per page and the pager stay usable while rows load, and a change stops the load it replaces on the server instead of waiting behind it. "1-1 of" no longer shows before any row has arrived.
+- **What's new and the update window** - Changes are grouped under New, Improved and Fixed, each as a title over what changed, and What's new opens on this version's changes. Updating from an older version no longer shows asterisks in the notes.
+
+### Changes
+
+#### Performance
+- **Tables with large JSON or text** - Values past 8 KB arrive as their first 512 characters and their size, and load in full when the cell is opened or edited. A page of rows holding ~600 KB documents is a third of the size it was, and the grid shows each value's start instead of "[jsonb · 15 KB, truncated]".
+
+
+## [3.6.6] - 2026-11-22
+
+### Bug Fixes
+- **Elasticsearch and OpenSearch** - "No indices yet? Create one" shows only on a cluster with no indices.
+- **New connection** - A pasted http(s) address that doesn't name its engine asks whether it is Elasticsearch, OpenSearch, CouchDB, ClickHouse or libSQL, instead of saying it isn't a connection string.
+- **SQL Server values** - decimal, numeric, uniqueidentifier and datetimeoffset columns showed NULL; they show their values, decimals at their exact scale. A datetime shows .997 instead of .996666666.
+- **SQL Server types** - Column headers say int, bit and nvarchar instead of int4, intn and bitn.
+- **Oracle on Ubuntu 24.04 and later** - When Instant Client won't load because libaio.so.1 is missing, the error says so and gives the link command for this machine, instead of only suggesting the library path.
+- **New-tab page** - The Terminal tile names the client it opens for this database (sqlcmd, sqlplus, turso, redis-cli), or the built-in SQL prompt, instead of "psql, mysql or sqlite3" everywhere.
+
+
+## [3.6.5] - 2026-11-22
+
+### Bug Fixes
+- **Booleans in the record view and row panel** - On SQLite, libSQL and D1 they show true/false like the grid, and the true/false picker starts on the stored value instead of a blank.
+- **Escape** - Closes every dialog, including What's new, which ignored it. It also leaves full screen in the ERD and diagram code views and stops a dashboard presentation, which it never reached before.
+- **MongoDB filters** - A filter that doesn't parse says what is wrong, such as "it is missing a closing }", instead of a parser diagram that pointed at the wrong place.
+- **Redis sidebar** - Says "1 client", not "1 clients".
+- **What's new and the update window** - Show each change's title in bold instead of printing its asterisks.
+- **Status bar, several databases open** - The other open databases show their engine icon, so a name like "127.0.0.1:18080" no longer reads as this connection's host.
+
+
+## [3.6.4] - 2026-11-22
+
+### Bug Fixes
+- **Booleans on SQLite, libSQL and D1** - A boolean column shows true/false instead of 1/0, and its toggle starts from the stored value instead of NULL. It still writes 1/0.
+- **ClickHouse decimals** - Keep their scale and every digit: a Decimal(10,2) of 12.50 showed 12.5, and a Decimal(38) past a double's precision came back rounded.
+- **Opening a connection** - Lands on the database the connection names instead of the first schema alphabetically (INFORMATION_SCHEMA on ClickHouse).
+- **Command palette** - Finds the activity log by "logs".
+- **MongoDB and Redis** - An empty collection list says "No collections" instead of "No tables · Nothing in this schema yet", the document browser's view picker no longer cuts "Documents" short, and a new Redis connection is named "Redis@host" instead of "0@host".
+- **Connecting a saved database again** - "Open it" in the already-saved prompt connects to the saved one when you were connecting.
+- **Notebook variables** - A value with an apostrophe (O'Neil) inside `'{{name}}'` no longer breaks the cell or lets the value write SQL: its quotes are doubled inside a string literal.
+
+
+## [3.6.3] - 2026-11-22
+
+### Bug Fixes
+- **Dropped tables** - Opening or refreshing a table that was dropped or renamed since it was listed says the table no longer exists, instead of "Unknown column: id".
+
+### Changes
+
+#### Performance
+- **Connect** - The first screen after connecting paints about 25% sooner: the new-tab page no longer renders while last session's tabs are coming back (no flash), and the sidebar's connections list and chats render a frame after the rest.
+
+#### Code
+- **New-tab page** - Shows Cmd/Ctrl+I for AI, its shortcut since 3.6.1.
+
+
+## [3.6.2] - 2026-11-22
+
+### Changes
+
+#### Performance
+- **Launch** - The first screen paints about 13% sooner: the AI client and its prompts no longer load with the app.
+- **After connecting** - A hidden terminal no longer re-measures itself on every theme or zoom change (it was the largest main-thread cost after a connect), and the sidebar, tab strip and toolbar no longer force the page to lay out in the middle of rendering. The connections list and the tab strip use one right-click menu each instead of one per row.
+- **Jumping deep into a large table** - A jump to rows nothing has loaded near shows them in about a third of the time over a remote link: the rows on screen are fetched first, and a deep page ordered by the primary key skips ahead on the key's index instead of reading every row before it.
+- **Local copy of large tables** - Fills about four times faster locally and twice as fast over a far link, and waits until the grid is quiet so it never slows the rows on screen.
+
+
+## [3.6.1] - 2026-11-22
+
+### Bug Fixes
+- **AI chat** - A reply that mentions "a ```sql block" in a sentence no longer turns the rest of the reply into a code block captioned with that sentence.
+- **Postgres backup and restore** - Backups record the extensions their tables use (uuid-ossp, citext, PostGIS and others), and leave out what those extensions own. Restoring an older backup into a fresh database adds the extensions its tables need first, instead of failing on `uuid_generate_v4()` and rolling back.
+- **Infinite scroll counter** - It counts the rows that have loaded instead of staying at "50 of 100,000".
+- **Connection latency** - The first reading waits until the connect settles: a local database no longer flashes a red "958 ms", and one database's reading no longer carries over to the next.
+- **Query history** - Errors read as the database wrote them, without "error returned from database:". Runs under a millisecond show "<1ms".
+- **Settings search** - Every word matches in any order, so "page size" and "dark mode" find their settings.
+- **Find in database** - Counts views as views, and its warning no longer starts with a stray dot or outlives the query.
+
+#### Large values
+- **Cell panel** - A JSON value of a megabyte or more (a jsonb holding a file) no longer goes blank when scrolled sideways. JSON is laid out with short lines at any size: one key per line, runs of numbers or strings packed into lines.
+- **Record view** - A value the grid fetched as a size has a Load button, and shows what it loads.
+- **Record view and row inspector** - Large values are shown cut and are edited in the cell panel (Space) instead of a field that could not draw them.
+- **Text view** - Very long cells are cut in the preview only. Copy and Download keep them whole.
+- **Console** - A new result starts at the top instead of where the last one was scrolled.
+
+### Changes
+- **Shortcuts** - The AI panel opens with Cmd/Ctrl+I. The inline AI sidebar moves to Cmd/Ctrl+Shift+E.
+
+#### Performance
+- **Deep scrolling in large tables** - A large table opened with All rows is copied in the background to a local file, in the grid's own order, and windows already copied are read from it instead of asking the database for a deep OFFSET. A jump to row 900,000 no longer waits on the server reading every row before it.
+- **Connect** - Background warm-ups (editor chunks, the terminal dock, the CLI lookup) wait until the first screen after a connect has painted, and idle work waits for the main thread to be idle rather than just for no input.
+- **Loading pill** - Says "deep in the table, fetching" when the link is fast and the query is what is slow, instead of "slow connection".
+
+
+## [3.6.0] - 2026-11-22
+
+### Changes
+- Materialized views in the sidebar, palette and diagram; data grid kept mounted between tabs (#363)
+
+
+## [3.5.9] - 2026-11-22
+
+### Changes
+- View DDL as CREATE VIEW, dark dashboard window, schema picker and diagram details (#362)
+
+
+## [3.5.8] - 2026-11-22
+
+### Changes
+- Objects page follows the connection; correct run hint; SQL Server Unicode checked live (#361)
+
+
+## [3.5.7] - 2026-11-22
+
+### Changes
+- Stop kept-alive pages showing the previous database after a switch (#360)
+
+
+## [3.5.6] - 2026-11-22
+
+### Changes
+- MySQL backups restore with the mysql client; New table on more engines (#359)
+
+
+## [3.5.5] - 2026-11-22
+
+### Changes
+- Don't overwrite editor tabs, 5x faster result map, terminal input fix (#358)
+
+
+## [3.5.4] - 2026-11-22
+
+### Changes
+- New table in each engine's own DDL; show what a run did (#357)
+
+
+## [3.5.3] - 2026-11-21
+
+### Changes
+- Quote ORM runner SQL, keep sidebar counts current, Codegen targets, screenful paging (#356)
+
+
+## [3.5.2] - 2026-11-21
+
+### Changes
+- Step over completed function parens, empty-result columns for MCP, insights inserts (#355)
+
+
+## [3.5.1] - 2026-11-21
+
+### Changes
+- Fix the Redis crash after adding a key; correct backslash and Unicode string literals (#354)
+
+
+## [3.5.0] - 2026-11-21
+
+### Changes
+- Column headers for empty results, readable diagrams without relations, and more (#353)
+
+
+## [3.4.9] - 2026-11-21
+
+### Changes
+- Fix the crash when choosing a file to import; import from the palette (#352)
+
+
+## [3.4.8] - 2026-11-21
+
+### Changes
+- Data diff across engines, steady connection list, narrow-pane map and plans, palette export (#351)
+
+
+## [3.4.7] - 2026-11-21
+
+### Changes
+- Spanner PostgreSQL dialect SQL, hidden-tab menu, narrow results toolbar, and more (#350)
+
+
+## [3.4.6] - 2026-11-21
+
+### Changes
+- Show DuckDB column types; collapse repeated toasts (#349)
+
+
+## [3.4.5] - 2026-11-21
+
+### Changes
+- Hide SQLite's own tables, name file databases by file, clearer write messages (#348)
+
+
+## [3.4.4] - 2026-11-21
+
+### Changes
+- Connect to local libsql:// servers, show libSQL types, Copy as INSERT per engine (#347)
+
+
+## [3.4.3] - 2026-11-21
+
+### Changes
+- Generate SQL that runs on its own engine: export, Open in SQL editor, upsert (#346)
+
+
+## [3.4.2] - 2026-11-21
+
+### Changes
+- Write review SQL per dialect, MySQL enum picker, MariaDB insights (#345)
+
+
+## [3.4.1] - 2026-11-21
+
+### Changes
+- Fix clipped dialogs, the terminal on engines without a CLI, and more (#344)
+
+
+## [3.4.0] - 2026-11-21
+
+### Changes
+- Send verify-full TLS on connect, keep pasted URL parameters, and more (#343)
+
+
+## [3.3.9] - 2026-11-21
+
+### Changes
+- Fix platform shortcut hints, menu row sizes, toolbar overflow and more (#342)
+
+
+## [3.3.8] - 2026-11-21
+
+### Changes
+- Fix Ctrl+Delete, multi-word palette search, and more from another sweep (#341)
+
+
+## [3.3.7] - 2026-11-21
+
+### Changes
+- Reopen a database's tabs, and fix connection identity and Advisor noise (#340)
+
+
+## [3.3.6] - 2026-11-21
+
+### Changes
+- Fix console scrolling, stuck icons, and more from a second sweep (#339)
+
+
+## [3.3.5] - 2026-11-21
+
+### Changes
+- Fix issues found in an app-wide sweep (#338)
+
+
+## [3.3.4] - 2026-11-21
+
+### Changes
+- Show saves and deletes right away, with a rollback on failure (#337)
+
+
+## [3.3.3] - 2026-11-21
+
+### Changes
+- Stop the grid bouncing; open objects in one click; no flash after Redis apply (#336)
+
+
+## [3.3.2] - 2026-11-21
+
+### Changes
+- Make the agent tools work on every engine; Spanner interleave relations; Turso .dump (#335)
+
+
+## [3.3.1] - 2026-11-21
+
+### Changes
+- Fix Shift+scroll sticking to one axis; zoom-proof layouts; provider re-auth (#334)
+
+
+## [3.3.0] - 2026-11-21
+
+### Changes
+- Rank the palette by label, and bring readable text to contrast (#333)
+
+
+## [3.2.9] - 2026-11-21
+
+### Changes
+- Fix blank screens after the AI tab setting; redesign the model picker (#332)
+
+
+## [3.2.8] - 2026-11-21
+
+### Changes
+- Make the Map page smooth on large layers (#331)
+
+
+## [3.2.7] - 2026-11-21
+
+### Changes
+- Map spatial query results beside the grid (#330)
+
+
+## [3.2.6] - 2026-11-21
+
+### Changes
+- Add InfluxDB (beta, read-only) (#329)
+
+
+## [3.2.5] - 2026-11-21
+
+### Changes
+- Add Neo4j (beta) (#328)
+
+
+## [3.2.4] - 2026-11-21
+
+### Changes
+- YugabyteDB and AlloyDB (beta) (#327)
+
+
+## [3.2.3] - 2026-11-21
+
+### Changes
+- Backup, import, transactions and SSH for Spanner, BigQuery, Snowflake and ODBC (#326)
+
+
+## [3.2.2] - 2026-11-21
+
+### Changes
+- Share any SQL database as a web studio (#325)
+
+
+## [3.2.1] - 2026-11-21
+
+### Changes
+- Sharp text on external displays, and palette subtitles for hostless engines (#324)
+
+
+## [3.2.0] - 2026-11-21
+
+### Changes
+- Grid: scroll both axes at once, and a switch for the referenced-by columns (#323)
+
+
+## [3.1.9] - 2026-11-21
+
+### Changes
+- Snowflake support (beta) (#322)
+
+
+## [3.1.8] - 2026-11-21
+
+### Changes
+- Drag the window from anywhere on the title bar (#321)
+
+
+## [3.1.7] - 2026-11-21
+
+### Changes
+- ODBC driver refresh, and nightly updates that pass their signature check (#320)
+
+
+## [3.1.6] - 2026-11-21
+
+### Changes
+- ODBC bridge with engine presets (beta) (#319)
+
+
+## [3.1.5] - 2026-11-21
+
+### Changes
+- Google BigQuery support (beta) (#318)
+
+
+## [3.1.4] - 2026-11-21
+
+### Changes
+- Google Cloud Spanner support (beta) (#317)
+
+
+## [3.1.3] - 2026-11-21
+
+### Changes
+- Queries tab, steady zoom pill, one switch geometry, access changes reach agents (#315)
+
+
+## [3.1.2] - 2026-11-21
+
+### Changes
+- Share JSON as a link; one focus edge on search fields (#313)
+
+
+## [3.1.1] - 2026-11-20
+
+### Changes
+- Real-server tests, streaming and server-side Stop for more engines, plans for document engines (#312)
+
+
+## [3.1.0] - 2026-11-20
+
+### Changes
+- Handle big plans, clean cancel, 2 GB results, open transactions and lost tunnels on every engine (#311)
+
+
 ## [3.0.0] - 2026-11-19
 
 ### New Features

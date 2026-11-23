@@ -3,12 +3,13 @@
   import { tick, onDestroy, untrack } from "svelte";
   import {
     pgArrayElem, pgArrayText, isSqlArrayType, isVectorType, foldLines, valuesEqual,
-    cellJsonString, csvCell, cellSqlLiteral, mdCell, isOversizeValue,
+    cellJsonString, csvCell, mdCell, isOversizeValue,
   } from "$lib/cell-format.js";
   import { zoomState } from '$lib/stores/canvas-zoom.svelte.js'
   // Zoom is driven through the app-level settings so the canvas scales together
   // with the rest of the UI (applySettings mirrors the app zoom into zoomState).
-  import { increaseZoom, decreaseZoom, resetZoom, appPreviewDml, appTableStyle, TABLE_STYLES, normalizeTableStyle, appVimMode, appTableAlign, appNativeScroll, appRowSpacing, appZebraRows, rowSpacingHeight, appNumberGrouping, appHighlightActiveRow, appGridFontSize, appImagePreview, appOpenUrlsOnClick, appRowNumbers } from '$lib/stores/settings.js'
+  import { increaseZoom, decreaseZoom, resetZoom, appPreviewDml, appTableStyle, TABLE_STYLES, normalizeTableStyle, appVimMode, appTableAlign, appNativeScroll, appRowSpacing, appZebraRows, rowSpacingHeight, appNumberGrouping, appHighlightActiveRow, appGridFontSize, appImagePreview, appOpenUrlsOnClick, appRowNumbers, appDisplayTimezone } from '$lib/stores/settings.js'
+  import { instantIn, resolveZone } from '$lib/timezone.js'
   import { createSmoothScroll, wheelPixels } from '$lib/smooth-scroll.js'
   import { isJsonColumnType } from '$lib/cell-expand.js'
   import { readClipboardText } from '$lib/clipboard.js'
@@ -35,6 +36,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   import Copy from "@lucide/svelte/icons/copy";
   import MoveHorizontal from "@lucide/svelte/icons/move-horizontal";
   import Type from "@lucide/svelte/icons/type";
+  import Parentheses from "@lucide/svelte/icons/parentheses";
   import CopyPlus from "@lucide/svelte/icons/copy-plus";
   import ArrowUpFromLine from "@lucide/svelte/icons/arrow-up-from-line";
   import ArrowDownFromLine from "@lucide/svelte/icons/arrow-down-from-line";
@@ -106,6 +108,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     buildRowUpdateStatements,
     buildRowDeleteStatements,
     buildInsertStatements,
+    qualifiedTable as dmlQualifiedTable,
+    quoteIdent as dmlQuoteIdent,
+    sqlLiteral as dmlSqlLiteral,
+    sqlInList,
   } from "$lib/dml-preview.js";
   import * as Dialog from "$lib/components/ui/dialog/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
@@ -276,6 +282,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
      *  cursor on a specific cell and bring it on screen - used when restoring a
      *  back/forward position. Indices are clamped to the loaded data. */
     focusCell = $bindable(/** @type {(row: number, col?: number | null) => void} */ (() => {})),
+    /** Others on a shared studio, placed on this grid: row index into `rows`,
+     *  column by name (StudioShell maps their row keys).
+     *  @type {{ id: number, name: string, color: string, cell: { rowIdx: number, col: string } | null, pointer: { rowIdx: number, col: string, fx: number, fy: number } | null, editing: { rowIdx: number, col: string, value: string } | null }[]} */
+    peers = [],
+    /** Where this side is, for the others on a shared studio: the cell cursor,
+     *  the pointer over a cell, a value being typed. Null when not shared.
+     *  @type {((p: { cell?: { rowIdx: number, col: string } | null, pointer?: { rowIdx: number, col: string, fx: number, fy: number } | null, editing?: { rowIdx: number, col: string, value: string } | null }) => void) | null} */
+    onpresence = null,
     /** Assigned by this component so the parent can persist/restore scroll per
      *  tab. getScroll() reads the live position; applyScroll() restores it once
      *  layout settles. */
@@ -350,6 +364,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     stageDeleteSelected = $bindable(/** @type {() => void} */ (() => {})),
     /** When true all write operations (edit, delete, insert) are disabled. */
     readonly = false,
+    /** What an empty grid says: a table's rows by default, a query's in the console. */
+    emptyText = 'No rows in this table',
     /** Read-only grids: a double-click opens the row here instead of editing
      *  (the document browser's JSON editor). @type {((rowIdx: number) => void) | null} */
     onrowopen = null,
@@ -391,7 +407,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     onvisiblerange = /** @type {(start: number, end: number) => void} */ (() => {}),
     /** Windowed mode: what the parent's window fetcher is doing, so the grid can
      *  say what it is waiting for instead of shimmering silently.
-     *  @type {{ slow: boolean, failed: boolean } | null} */
+     *  @type {{ slow: boolean, failed: boolean, cause?: string } | null} */
     windowStatus = null,
     /** Retry the windows that gave up (the loading pill's Retry button). */
     onretrywindows = /** @type {() => void} */ (() => {}),
@@ -1265,6 +1281,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   let _imagePreviewOn = true
   $effect(() => { _numberGroupingOn = $appNumberGrouping; _groupFmt = null; scheduleDraw() })
   $effect(() => { void $appHighlightActiveRow; scheduleDraw() })
+  let _tzZone = 'UTC'
+  $effect(() => { _tzZone = resolveZone($appDisplayTimezone); scheduleDraw() })
   // Turning previews off must also drop what was already decoded - otherwise the
   // thumbnails stay resident (up to 300 bitmaps) for a feature now switched off.
   $effect(() => {
@@ -1291,6 +1309,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const s = over ? oversizeCellText(over) : JSON.stringify(value);
       _formatCache.set(value, s);
       return s;
+    }
+    // An absolute timestamp, in the zone chosen in Settings (UTC as stored
+    // unless changed). A digit and a dash up front keep this off every other
+    // string's path.
+    if (_tzZone !== 'UTC' && typeof value === "string" && value.length >= 19 && value.charCodeAt(4) === 45 && value.charCodeAt(0) >= 48 && value.charCodeAt(0) <= 57) {
+      const shown = instantIn(value, _tzZone);
+      if (shown !== null) return shown;
     }
     return String(value);
   }
@@ -1442,6 +1467,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     _vexprTextCache.delete(idx);
     _colTfCache.delete(idx);
   }
+  /**
+   * Columns declared boolean. SQLite, libSQL and D1 store a boolean as 0 or 1,
+   * so the column said `boolean` over a grid of 0s and 1s where Postgres shows
+   * true and false. Shown the same way here; the stored value is unchanged.
+   */
+  const _boolCols = $derived(new Set(columns.flatMap((c, i) => (/^bool(ean)?$/i.test(String(c.dataType ?? c.data_type ?? '').trim()) ? [i] : []))));
   function cellDisplayText(/** @type {number} */ idx, /** @type {number} */ actualIdx, /** @type {unknown} */ value) {
     let arr = _cellTextCache.get(idx);
     if (!arr) {
@@ -1450,7 +1481,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     }
     const hit = arr[actualIdx];
     if (hit !== undefined) return hit;
-    const s = displayCell(value);
+    // libSQL's HTTP protocol sends integers as text, so "0" and "1" count too.
+    const s = (value === 0 || value === 1 || value === '0' || value === '1') && _boolCols.has(actualIdx)
+      ? displayCell(value === 1 || value === '1')
+      : displayCell(value);
     arr[actualIdx] = s;
     return s;
   }
@@ -1880,7 +1914,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         // reports no PK on purpose. Say why and point to the supported path rather
         // than the misleading generic "no primary key" message.
         description: dialect === "clickhouse"
-          ? "ClickHouse tables are browse-only here, modify data with ALTER TABLE … UPDATE in the SQL console."
+          ? "ClickHouse tables are browse-only here, modify data with ALTER TABLE … UPDATE in the SQL editor."
           : "This table has no primary key.",
       });
       return;
@@ -1896,6 +1930,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
     const startValue = effectiveCellValue(rowIdx, colIdx);
     const oversize = oversizeCellInfo(startValue);
+    if (oversize && onloadcellvalue && oversize.bytes <= INLINE_LOAD_MAX) {
+      // A wide column ships a preview of anything past a few kilobytes, so a
+      // 10KB value is a preview here too - and refusing to edit it sent people
+      // to SQL for a value the grid can hold. Load it, then edit it.
+      void loadCellInline(rowIdx, colIdx).then(() => {
+        if (!oversizeCellInfo(effectiveCellValue(rowIdx, colIdx))) startEdit(rowIdx, colIdx, initialChar);
+      });
+      return;
+    }
     if (oversize) {
       // Only a truncated preview was loaded - editing would write it back.
       toast.error("Value too large to edit", {
@@ -1905,7 +1948,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     }
     lastEditOriginalValue = startValue;
     selectOnEditFocus = initialChar === undefined;
-    const original = valueToEditString(startValue);
+    // A boolean stored as 0/1 (SQLite, libSQL, D1) starts the toggle at
+    // false/true: its draft was "0", which the toggle read as NULL.
+    const raw = valueToEditString(startValue);
+    const original = isBooleanType(dataType) && (raw === "0" || raw === "1") ? (raw === "1" ? "true" : "false") : raw;
     editingCell = {
       rowIdx,
       colIdx,
@@ -2029,11 +2075,21 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       return;
     }
 
+    // Optimistic: the cell shows the new value (as a staged edit) and the
+    // editor closes now; the write confirms it. It used to keep the editor open
+    // until the database answered. A failed write leaves the value staged, so
+    // nothing typed is lost: Apply retries it, Reset drops it.
+    const key = editKey(rowIdx, colIdx);
+    // (A parent that stages through oncellcommit gets the write alone.)
+    if (!oncellcommit) stageEdit(rowIdx, colIdx, parsed.value);
+    editingCell = null;
+    if (afterAction) navigateAfterEdit(rowIdx, colIdx, afterAction);
+    else tick().then(() => tableContainer?.focus({ preventScroll: true }));
     try {
       await onsave({ rowIdx, colIdx, value: parsed.value });
-      // Drop any staged edit for this cell - it's now persisted.
-      const key = editKey(rowIdx, colIdx);
-      if (pendingEdits.has(key)) {
+      // Persisted: the staged copy goes, unless the cell was edited again meanwhile.
+      const staged = pendingEdits.get(key);
+      if (staged && Object.is(staged.value, parsed.value)) {
         const next = new Map(pendingEdits);
         next.delete(key);
         pendingEdits = next;
@@ -2042,12 +2098,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // so an undo must not re-stage the old value and a later Apply re-write it.
       pastEdits = pastEdits.filter((e) => !(e.rowIdx === rowIdx && e.colIdx === colIdx));
       futureEdits = futureEdits.filter((e) => !(e.rowIdx === rowIdx && e.colIdx === colIdx));
-      editingCell = null;
       toast.success("Saved", { description: `${col.name} updated` });
-      if (afterAction) navigateAfterEdit(rowIdx, colIdx, afterAction);
-      else tick().then(() => tableContainer?.focus({ preventScroll: true }));
     } catch (err) {
-      toast.error("Could not save", { description: String(err) });
+      toast.error("Could not save", { description: `${String(err)}. The value is kept as a pending edit: Apply to retry, or Reset.` });
     }
   }
 
@@ -2833,6 +2886,30 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     }
   }
 
+  /**
+   * The column's distinct values as a SQL list, `('a', 'b')`, quoted for this
+   * engine, to paste after `IN`. NULLs are left out: `IN (NULL)` matches
+   * nothing, and the toast says so rather than dropping them silently.
+   * @param {string} colName
+   */
+  async function copyColumnAsInList(colName) {
+    const ai = _nameToActualIdx.get(colName) ?? -1
+    if (ai < 0) return
+    const idx = selected.size > 0 ? [...selected].sort((a, b) => a - b) : rows.map((_, i) => i)
+    const { text, count, nulls } = sqlInList(idx.map((r) => {
+      const v = rows[r]?.[ai]
+      return v !== null && typeof v === 'object' ? cellJsonString(v) : v
+    }), dialect)
+    if (!count) { toast.info('No values to copy', { description: `${colName} is NULL in every row` }); return }
+    if (await writeClipboard(text)) {
+      toast.success(`Copied ${count.toLocaleString()} distinct ${count === 1 ? 'value' : 'values'} as an IN list`, {
+        description: nulls ? `${colName} · NULL left out (IN never matches it)` : colName,
+      })
+    } else {
+      toast.error('Could not copy to clipboard')
+    }
+  }
+
   async function copyColSelection() {
     const activeCols = columns.filter((c) => selectedCols.has(c.name))
     if (!activeCols.length) return
@@ -2894,10 +2971,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const header = colNames.map(mdCell).join(' | ');
       text = `| ${header} |\n| ${sep} |\n${dataRows.map((r) => `| ${r.map(mdCell).join(' | ')} |`).join('\n')}`;
     } else if (format === 'insert') {
-      const tbl = schema ? `"${schema}"."${tableName || 'table'}"` : `"${tableName || 'table'}"`;
-      const insertCols = columns.map((c) => `"${c.name}"`).join(', ');
+      // In this engine's SQL, as the grid's own writes are: the names were
+      // always double-quoted (MySQL read them as strings) and never escaped.
+      const tbl = dmlQualifiedTable({ dialect, schema, table: tableName || 'table', columns: [], primaryKey: [] });
+      const insertCols = columns.map((c) => dmlQuoteIdent(c.name, dialect)).join(', ');
+      /** @param {unknown} v */
+      const lit = (v) => (v !== null && typeof v === 'object' ? dmlSqlLiteral(cellJsonString(v), dialect) : dmlSqlLiteral(v, dialect));
       text = allRows
-        .map((r) => `INSERT INTO ${tbl} (${insertCols}) VALUES (${r.map(cellSqlLiteral).join(', ')});`)
+        .map((r) => `INSERT INTO ${tbl} (${insertCols}) VALUES (${r.map(lit).join(', ')});`)
         .join('\n');
     }
 
@@ -3077,6 +3158,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    * column back into the page.
    * @param {number} rowIdx @param {number} colIdx
    */
+  /** Up to this size an oversize preview loads in place for an inline edit. */
+  const INLINE_LOAD_MAX = 256 * 1024;
+
   async function loadCellInline(rowIdx, colIdx) {
     if (!onloadcellvalue) return
     const key = `${rowIdx}:${colIdx}`
@@ -3140,6 +3224,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    * row: the dock reads it in pages, so this is the answer rather than a
    * message telling you to press a key yourself.
    */
+  /**
+   * Focus a row and scroll it into view, for a caller that selected it from
+   * elsewhere (the result map).
+   * @param {number} rowIdx
+   */
+  export function revealRow(rowIdx) {
+    if (rowIdx < 0 || rowIdx >= rows.length) return
+    focusedRow = rowIdx
+    scrollRowIntoView(rowIdx)
+  }
+
   export function openCellDock(rowIdx, colIdx) {
     focusedRow = rowIdx
     const vi = actualToVisColIdx(colIdx)
@@ -4351,6 +4446,52 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   function rowDocTop(/** @type {number} */ idx) {
     return HEADER_H + insertRowOffset + rowTopOf(rowTops, idx, ROW_HEIGHT)
   }
+
+  // ── Shared studio presence ──────────────────────────────────────────────
+  // The cursor and the value being typed, by column name.
+  $effect(() => {
+    if (!onpresence) return
+    const name = focusedRow !== null && focusedCol !== null ? visibleColumns[focusedCol]?.name : undefined
+    onpresence({ cell: name && focusedRow !== null ? { rowIdx: focusedRow, col: name } : null })
+  })
+  $effect(() => {
+    if (!onpresence) return
+    const name = editingCell ? columns[editingCell.colIdx]?.name : undefined
+    onpresence({ editing: editingCell && name ? { rowIdx: editingCell.rowIdx, col: name, value: String(editingCell.draft ?? '') } : null })
+  })
+  let _lastPresencePointer = 0
+  /** The pointer over a body cell, at most every 40 ms. @param {number} x @param {number} y viewport */
+  function publishPointer(x, y) {
+    if (!onpresence) return
+    const now = performance.now()
+    if (now - _lastPresencePointer < 40) return
+    _lastPresencePointer = now
+    const bodyY = y + _scrollTop - HEADER_H - insertRowOffset
+    const r = y >= HEADER_H ? rowAtContentY(rowTops, rows.length, ROW_HEIGHT, bodyY) : null
+    const hit = colAtX(x, geom, _scrollLeft)
+    if (!r?.inRowBody || !hit) { onpresence({ pointer: null }); return }
+    const top = rowTopOf(rowTops, r.idx, ROW_HEIGHT)
+    onpresence({
+      pointer: {
+        rowIdx: r.idx,
+        col: hit.col.name,
+        fx: Math.min(1, Math.max(0, (x - hit.drawnX) / hit.col.w)),
+        fy: Math.min(1, Math.max(0, (bodyY - top) / ROW_HEIGHT)),
+      },
+    })
+  }
+  /** A peer's cell in the sizer's content coordinates, or null when off screen
+   *  or under the header or the frozen columns. @param {{ rowIdx: number, col: string } | null} at */
+  function peerBox(at) {
+    if (!at || at.rowIdx < 0 || at.rowIdx >= rows.length) return null
+    const gcol = geom.cols.find((c) => c.name === at.col)
+    if (!gcol) return null
+    const top = rowDocTop(at.rowIdx)
+    if (top < _scrollTop + HEADER_H - 1 || top > _scrollTop + _viewportHeight) return null
+    const left = bandCellX(gcol)
+    if (!gcol.pinned && left - _scrollLeft < geom.frozenWidth - 1) return null
+    return { left, top, width: gcol.w, pinned: gcol.pinned }
+  }
   /** Viewport y of a body row's top. */
   function rowViewportY(/** @type {number} */ idx) {
     return rowDocTop(idx) - _scrollTop
@@ -4988,6 +5129,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   $effect(() => {
     function onCapture(/** @type {KeyboardEvent} */ e) {
       if (!isTableFocused || editingCell) return;
+      // A grid kept mounted behind another tab is display:none, and hiding a
+      // focused element does not reliably send focusout: its flag can still
+      // say focused while the keys belong to the page on screen.
+      if (!tableContainer?.getClientRects().length) return;
       // This listener is on `window`, so it runs before every other capture
       // handler in the app - including the one that gives inputs their undo
       // stack and their word deletion. Undoing a cell edit because the caret
@@ -5236,11 +5381,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   /** Read the real computed mono FAMILY off the probe; sizes come from the zoom. */
   function readFonts(/** @type {HTMLElement} */ probe) {
     const prevClass = probe.className
+    const prevFamily = probe.style.fontFamily
     // The probe supplies the FAMILY only - that one really does have to come off
-    // the DOM, because `--font-mono` is a user setting with no numeric form.
-    probe.className = 'font-mono text-ui-xs'
+    // the DOM, because the grid font is a user setting with no numeric form:
+    // `--grid-font` (Separate fonts), else the preset's `--font-mono`.
+    probe.className = 'text-ui-xs'
+    probe.style.fontFamily = 'var(--grid-font, var(--font-mono))'
     const family = getComputedStyle(probe).fontFamily
     probe.className = prevClass
+    probe.style.fontFamily = prevFamily
     // Floors keep the smallest rung legible rather than sub-pixel mush.
     const cellPx = Math.max(9, Math.round(GRID_CELL_PX * canvasZoom))
     const typePx = Math.max(7, Math.round(GRID_TYPE_PX * canvasZoom))
@@ -5307,6 +5456,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       _readColor = null
       _glyphFont = ''
       _glyphWByFont.clear()
+      _narrowByFont.clear()
       _truncCacheReset()
       _redrawToken++
     }
@@ -5859,14 +6009,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
       case "PageDown": {
         e.preventDefault();
-        const pdn = Math.min(curRow + 10, rowLen - 1);
+        // A screenful, as everywhere else Page Down goes: a fixed 10 moved less
+        // than half of a tall grid.
+        const pdn = Math.min(curRow + pageRows(), rowLen - 1);
         focusedRow = pdn; if (focusedCol === null) focusedCol = 0;
         scrollRowIntoView(pdn);
         break;
       }
       case "PageUp": {
         e.preventDefault();
-        const pup = Math.max(curRow - 10, 0);
+        const pup = Math.max(curRow - pageRows(), 0);
         focusedRow = pup; if (focusedCol === null) focusedCol = 0;
         scrollRowIntoView(pup);
         break;
@@ -5989,10 +6141,34 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     _glyphFont = font
   }
 
-  /** Width of `str` under the active font (O(1) for monospace). */
+  /** Width of `str` under the active font (O(1) for monospace). A proportional
+   *  face (Separate fonts can put Inter or SF Pro on the grid) has to measure,
+   *  and the draw loop asks for the same cells' widths every frame: 4,600
+   *  measureText calls over 400k characters in a 180-frame sideways scroll of
+   *  wide HTML rows. Each width is measured once per font. */
   function textWidth(/** @type {CanvasRenderingContext2D} */ ctx, /** @type {string} */ str) {
     _syncGlyphW(ctx)
-    return _glyphW > 0 ? str.length * _glyphW : ctx.measureText(str).width
+    if (_glyphW > 0) return str.length * _glyphW
+    const byText = _fontBucket(_widthCache, _glyphFont)
+    let w = byText.get(str)
+    if (w === undefined) {
+      w = ctx.measureText(str).width
+      if (++_widthCacheEntries > _TRUNC_CACHE_MAX) { _widthCache.clear(); _widthCacheEntries = 1 }
+      _fontBucket(_widthCache, _glyphFont).set(str, w)
+    }
+    return w
+  }
+
+  /** Proportional text widths, by font then string. @type {Map<string, Map<string, number>>} */
+  const _widthCache = new Map()
+  let _widthCacheEntries = 0
+
+  /** The per-font map inside a font-keyed cache, created on first use.
+   *  @template V @param {Map<string, Map<any, V>>} cache @param {string} font @returns {Map<any, V>} */
+  function _fontBucket(cache, font) {
+    let m = cache.get(font)
+    if (m === undefined) { m = new Map(); cache.set(font, m) }
+    return m
   }
 
   // Truncated strings, keyed by column width then by source string, for the
@@ -6004,16 +6180,22 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // re-deriving answers it had already computed. The result is a pure function
   // of (font, width, string) and all three are constant while scrolling, so each
   // combination is measured once and the rest of the scroll is map hits.
-  /** @type {Map<number, Map<string, string>>} */
+  //
+  // Keyed by font first. The draw loop switches between the cell, header and
+  // type fonts several times a frame, and a cache that held one font at a time
+  // was wiped at every switch. Monospace text rarely gets this far (the
+  // arithmetic paths answer first), so that went unnoticed until a proportional
+  // grid face sent every cell here: 14,500 measureText calls in 180 frames.
+  /** @type {Map<string, Map<number, Map<string, string>>>} */
   const _truncCache = new Map()
-  /** The font `_truncCache` was built under; a zoom or font change drops it. */
-  let _truncCacheFont = ''
   let _truncCacheEntries = 0
   const _TRUNC_CACHE_MAX = 8192
 
   function _truncCacheReset() {
     _truncCache.clear()
     _truncCacheEntries = 0
+    _widthCache.clear()
+    _widthCacheEntries = 0
   }
 
   /** Truncate `text` to fit `maxW` px under the current ctx.font, adding `…`. */
@@ -6026,15 +6208,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (_glyphW > 0 && len * _glyphW <= maxW) return text
     // Past here the string has to be measured, so consult the cache first.
     // `_glyphFont` was just refreshed from ctx.font by _syncGlyphW above.
-    if (_truncCacheFont !== _glyphFont) { _truncCacheReset(); _truncCacheFont = _glyphFont }
-    let byText = _truncCache.get(maxW)
+    let byText = _truncCache.get(_glyphFont)?.get(maxW)
     if (byText !== undefined) {
       const hit = byText.get(text)
       if (hit !== undefined) return hit
     }
     const out = _truncMeasure(ctx, text, maxW, len)
-    if (_truncCacheEntries >= _TRUNC_CACHE_MAX) { _truncCacheReset(); byText = undefined }
-    if (byText === undefined) { byText = new Map(); _truncCache.set(maxW, byText) }
+    if (_truncCacheEntries >= _TRUNC_CACHE_MAX) { _truncCache.clear(); _truncCacheEntries = 0; byText = undefined }
+    if (byText === undefined) { byText = new Map(); _fontBucket(_truncCache, _glyphFont).set(maxW, byText) }
     byText.set(text, out)
     _truncCacheEntries++
     return out
@@ -6043,6 +6224,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   /** The measuring half of truncText - only reached on a cache miss. */
   /** Printable ASCII: one glyph advance each in a monospace face. */
   const _ASCII_RE = /^[\x20-\x7e]*$/
+  /** Narrowest ASCII advance per proportional font. @type {Map<string, number>} */
+  const _narrowByFont = new Map()
+  /** @param {CanvasRenderingContext2D} ctx */
+  function _narrowW(ctx) {
+    let w = _narrowByFont.get(_glyphFont)
+    if (w === undefined) {
+      w = Math.max(1, Math.min(...[' ', 'i', 'l', '.', ',', "'", '|', '!'].map((ch) => ctx.measureText(ch).width)))
+      _narrowByFont.set(_glyphFont, w)
+    }
+    return w
+  }
   /** Width of '…' under _glyphFont (re-measured when the font changes). */
   let _ellW = 0
   let _ellFont = ''
@@ -6069,6 +6261,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     let lim = len
     if (_glyphW > 0) {
       const cap = Math.ceil(maxW / _glyphW) * 4 + 16
+      if (cap < len && ctx.measureText(text.slice(0, cap)).width > maxW) lim = cap
+    } else {
+      // Proportional face: no single advance, but no common glyph is narrower
+      // than the face's narrowest ASCII one, so twice that many characters (for
+      // combining marks) always overflow the cell. Without it, a 3,000-character
+      // HTML value was shaped whole, then binary-searched over all of it.
+      const cap = Math.ceil(maxW / _narrowW(ctx)) * 2 + 16
       if (cap < len && ctx.measureText(text.slice(0, cap)).width > maxW) lim = cap
     }
     // For truncation, always measure accurately - the monospace estimate can
@@ -6702,6 +6901,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
    *  whole fetch - placeholder rows stand in for it (see the empty states). */
   let hasHeldFrame = $state(false)
   /** Placeholder rows that fill the viewport, at the grid's own row height. */
+  /** Rows one Page Up / Page Down moves: the body's height in rows, less one
+   *  so the row at the edge stays in view. */
+  const pageRows = () => Math.max(1, Math.floor(((_viewportHeight || 800) - HEADER_H) / Math.max(1, ROW_HEIGHT)) - 1)
   const skeletonRows = $derived(Math.max(6, Math.min(60, Math.ceil(((_viewportHeight || 800) - HEADER_H) / Math.max(1, ROW_HEIGHT)))))
   let _surfaceHasFrame = false
   /** Reactivity budget: the pill re-reads at most this often, not per frame. */
@@ -7025,7 +7227,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       drawIcon(
         ctx, 'link-2',
         cellX + relPadX, ry + (rh - relIcon) / 2, relIcon,
-        isActive ? c.cPrimary : withAlpha(c.cMuted, isVHov ? 1 : 0.8),
+        isActive ? c.cPrimary : isVHov ? c.cFg : c.cMuted,
         1.8,
       )
       const relTextX = cellX + relPadX + relIcon + relGap
@@ -7598,7 +7800,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       // which lined it up with its own values and out of line with every header
       // beside it. Headers read across the row; that edge wins.
       const hdrTextX = CELL_PAD_X
-      ctx.font = _fonts.header; ctx.fillStyle = withAlpha(c.cMuted, 0.6)
+      ctx.font = _fonts.header; ctx.fillStyle = c.cMuted
       ctx.textAlign = 'left'; ctx.textBaseline = 'middle'
       ctx.fillText(truncText(ctx, vc.label, cw - hdrTextX - 12), x + hdrTextX, HEADER_H / 2 + 0.5)
       // Resize edge affordance (matches regular column behaviour)
@@ -7751,12 +7953,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
     }
 
-    // Inline datatype - secondary, lower contrast, a touch of breathing room.
+    // Inline datatype - secondary through size and colour. The muted colour at
+    // 60% alpha measured 2.6:1 on the light themes; full muted is 6:1 or more.
     const typeStartX = tx + (indicators.length ? 5 : 3)
     const typeRoom = x + w - sortReserve - typeStartX
     if (typeRoom > 24 && col.dataType) {
       ctx.font = _fonts.type
-      ctx.fillStyle = withAlpha(c.cMuted, 0.6)
+      ctx.fillStyle = c.cMuted
       ctx.fillText(truncText(ctx, col.dataType, typeRoom), typeStartX, cy + 0.5)
     }
 
@@ -7785,7 +7988,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         ctx.textAlign = 'left'
       }
     } else if (_resizeHoverCol !== col.name && hoveredColName === col.name && hoveredRow === null) {
-      drawIcon(ctx, 'chevrons-up-down', sortX, sortY, SORT_ICON, withAlpha(c.cMuted, 0.55), 1.6)
+      drawIcon(ctx, 'chevrons-up-down', sortX, sortY, SORT_ICON, withAlpha(c.cMuted, 0.8), 1.6)
     }
 
     // Column annotator strip - mini histogram (numeric) or non-null fill bar.
@@ -7987,6 +8190,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const el = tableContainer
     if (!el) return
     const easedScroll = !$appNativeScroll
+    // macOS WebKit locks a trackpad gesture to the axis it starts on (its
+    // "predominant axis" filter), so a diagonal swipe in a wide grid moved one
+    // way only. Natively scrolled there, the grid takes plain wheel events
+    // itself and applies both axes 1:1, momentum included, as a spreadsheet
+    // does. The rest of the time (and everywhere else) the OS scrolls.
+    const freeAxes = !easedScroll && typeof document !== 'undefined' && document.documentElement.dataset.os === 'macos'
     // Accumulates pinch/ctrl-wheel delta so many small gesture ticks map to whole
     // app-zoom steps instead of one step per event.
     let _zoomAccum = 0
@@ -8038,41 +8247,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       scroller?.sync()
     }
 
-    // The axis is decided once per gesture. A trackpad keeps sending wheel events
-    // for a second or more after the fingers lift (momentum), and reading Shift
-    // per event turned that coast sideways the moment Shift went down, or back
-    // to vertical when it came up. A gap of more than GESTURE_GAP ms between
-    // events starts a new gesture, which reads Shift afresh.
-    //
-    // Shift pressed during a scroll, or just after it seemed to stop, holds the
-    // scroll vertical until the wheel has been quiet for COAST_QUIET ms. A
-    // trackpad's coast thins out at its tail, and a busy frame (a focused cell
-    // redraws more) stretched the gap past GESTURE_GAP, so the rest of the
-    // coast was read as a new Shift gesture and the grid slid sideways.
-    // Gaps are timed from the events' own timestamps, which a stalled main
-    // thread does not stretch.
-    const GESTURE_GAP = 100
-    const COAST_QUIET = 350
-    let _gestureAt = -Infinity
-    let _gestureShift = false
-    let _coastHold = false
-    /** @param {WheelEvent} e @returns {boolean} the gesture scrolls sideways */
-    const gestureShift = (e) => {
-      const now = e.timeStamp || performance.now()
-      const gap = now - _gestureAt
-      if (gap > (_coastHold ? COAST_QUIET : GESTURE_GAP)) {
-        _coastHold = false
-        _gestureShift = e.shiftKey
-      }
-      _gestureAt = now
-      return _gestureShift
-    }
-    const gestureLive = () => performance.now() - _gestureAt <= (_coastHold ? COAST_QUIET : GESTURE_GAP)
-    /** Shift went down: during or right after a vertical scroll, keep it vertical. @param {KeyboardEvent} e */
-    const noteShift = (e) => {
-      if (e.type !== 'keydown' || e.key !== 'Shift' || e.repeat) return
-      if (!_gestureShift && performance.now() - _gestureAt <= COAST_QUIET) _coastHold = true
-    }
+    // Shift is read on every wheel event, as browsers and native apps do. It
+    // used to be latched once per gesture, where a gesture lasted as long as
+    // events kept coming within 100ms: a mouse wheel or a steady trackpad
+    // scroll never paused that long, so pressing Shift mid-scroll kept going
+    // vertical, and letting go of it kept going sideways, until the user
+    // stopped scrolling for a moment.
+    /** @param {WheelEvent} e @returns {boolean} this event scrolls sideways */
+    const gestureShift = (e) => e.shiftKey
 
     // Non-passive: live for every tick under eased scrolling, otherwise only while
     // a modifier that needs preventDefault is down.
@@ -8091,18 +8273,6 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const inner = e.target instanceof Element
         ? e.target.closest('[data-fk-subview-scroll]')
         : null
-      if (e.shiftKey && !sideways) {
-        // Shift went down during a vertical coast: keep it vertical. macOS may
-        // already have swapped the deltas onto X for Shift, so take either.
-        if (inner && inner !== el) return
-        const { dx, dy } = wheelPixels(e, el.clientHeight)
-        const delta = dy || dx
-        if (!delta) return
-        e.preventDefault()
-        if (scroller) scroller.push(0, delta)
-        else el.scrollTop += delta
-        return
-      }
       if (sideways) {
         // Normalize FIRST. A mouse that reports deltaMode 1 (lines) sends ±1..3,
         // and treating that as pixels moved the grid by three pixels a notch -
@@ -8124,6 +8294,20 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         e.preventDefault()
         if (scroller) scroller.push(delta, 0)
         else el.scrollLeft += delta
+        return
+      }
+      if (!scroller && freeAxes) {
+        if (inner && inner !== el) return
+        const { dx, dy } = wheelPixels(e, el.clientHeight)
+        const canY = dy < 0 ? el.scrollTop > 0 : el.scrollTop + el.clientHeight < el.scrollHeight - 1
+        const canX = dx < 0 ? el.scrollLeft > 0 : el.scrollLeft + el.clientWidth < el.scrollWidth - 1
+        const moveY = !!dy && canY
+        const moveX = !!dx && canX
+        // At the edges the tick goes on to whatever is around the grid.
+        if (!moveY && !moveX) return
+        e.preventDefault()
+        if (moveY) el.scrollTop += dy
+        if (moveX) el.scrollLeft += dx
         return
       }
       if (!scroller) return
@@ -8176,15 +8360,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     /** @param {KeyboardEvent} e */
     let _detachTimer = 0
     const onKey = (e) => {
-      noteShift(e)
-      if (easedScroll) return
+      if (easedScroll || freeAxes) return
       clearTimeout(_detachTimer)
       if (e.ctrlKey || e.shiftKey || e.altKey) { attach(); return }
-      // Shift came up mid-gesture: stay attached until the coast ends, or the
-      // rest of a sideways swipe would fall to the browser and go vertical.
-      if (!gestureLive()) { detach(); return }
-      const later = () => { if (gestureLive()) _detachTimer = window.setTimeout(later, GESTURE_GAP); else detach() }
-      _detachTimer = window.setTimeout(later, GESTURE_GAP)
+      // Modifiers up: hand plain scrolling back to the browser, which scrolls
+      // vertically from the next event on.
+      detach()
     }
     // A keyboard scroll, scrollIntoView, or a scrollbar drag moved the element
     // without us: adopt the new position so the next wheel tick eases from there.
@@ -8193,13 +8374,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // another window has focus never reaches us. Under eased scrolling the
     // listener is not modifier-gated and must survive - detaching it there would
     // leave the grid unable to scroll until the component remounted.
-    const onBlur = () => { if (!easedScroll) detach() }
+    const onBlur = () => { if (!easedScroll && !freeAxes) detach() }
 
     // A press interrupts coasting - grabbing the scrollbar, or clicking a cell
     // while the tail of an ease is still running, takes effect now.
     const onInterrupt = () => { scroller?.stop(); scroller?.sync() }
 
     el.addEventListener('wheel', onWheelPassive, { passive: true })
+    if (freeAxes) attach()
     if (easedScroll) {
       attach()
       el.addEventListener('scroll', onScrollSync, { passive: true })
@@ -8601,6 +8783,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   function onCanvasPointerMove(/** @type {PointerEvent} */ e) {
     const { x, y } = canvasXY(e)
+    publishPointer(x, y)
     if (resizingColName) return
     if (y < HEADER_H) {
       _resizeHoverCol = null
@@ -8672,6 +8855,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   }
 
   function onCanvasPointerLeave() {
+    onpresence?.({ pointer: null })
     setHover(null, null)
     if (canvasEl && canvasEl.title) canvasEl.title = ''
     _resizeHoverCol = null
@@ -8691,9 +8875,27 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     }
     window.addEventListener('resize', resync)
     window.visualViewport?.addEventListener('resize', resync)
+    // Moving the window between a Retina screen and a 1x external monitor
+    // changes the pixel density without resizing anything, so no resize event
+    // comes: the canvas kept its 2x bitmap, scaled down, and read as blurry.
+    // A media query on the current density fires when it changes; re-armed
+    // for the new one each time.
+    /** @type {MediaQueryList | null} */
+    let mq = null
+    const armDpr = () => {
+      mq?.removeEventListener('change', onDpr)
+      mq = window.matchMedia?.(`(resolution: ${window.devicePixelRatio}dppx)`) ?? null
+      mq?.addEventListener('change', onDpr)
+    }
+    function onDpr() {
+      resync()
+      armDpr()
+    }
+    armDpr()
     return () => {
       window.removeEventListener('resize', resync)
       window.visualViewport?.removeEventListener('resize', resync)
+      mq?.removeEventListener('change', onDpr)
     }
   })
 
@@ -8785,7 +8987,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
         <div
           bind:this={tableContainer}
-          data-canvas-table=""
+          data-canvas-table={embedded ? "embedded" : "full"}
           {...props}
           tabindex={-1}
           role="grid"
@@ -9025,7 +9227,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                         type="text"
                         disabled={insertSaving}
                         placeholder={dt.toLowerCase().includes('int') || dt.toLowerCase().includes('serial')
-                          ? 'auto-increment'
+                          ? 'auto'
                           : 'generated'}
                         title="The database fills this in. Type a value only to override it."
                         class="w-full min-w-0 bg-transparent font-mono text-[length:inherit] text-foreground outline-none placeholder:italic placeholder:text-muted-foreground disabled:opacity-50"
@@ -9163,6 +9365,42 @@ import FilterX from "@lucide/svelte/icons/filter-x";
               class="relative"
               style="width:{resizingColName ? Math.max(totalContentWidth, _scrollLeft + _viewportWidth) : totalContentWidth}px; height:{spacerHeight}px"
             >
+              <!-- Others on a shared studio: an outline on their cell with a
+                   name tag, the value they are typing, their pointer. -->
+              {#each peers as p (p.id)}
+                {@const at = p.editing ?? p.cell}
+                {@const box = peerBox(at)}
+                {@const ptr = p.pointer ? peerBox(p.pointer) : null}
+                {#if box}
+                  <div
+                    class="pointer-events-none absolute overflow-hidden"
+                    style="left:{box.left}px; top:{box.top}px; width:{box.width}px; height:{ROW_HEIGHT}px; z-index:{box.pinned ? 4 : 3}; box-shadow: inset 0 0 0 2px {p.color};{p.editing ? ` background: linear-gradient(${p.color}1f, ${p.color}1f), var(--background);` : ''}"
+                    aria-hidden="true"
+                  >
+                    {#if p.editing}
+                      <span class="flex h-full items-center truncate px-2 font-mono text-ui-xs text-foreground">{p.editing.value}<span class="ms-px inline-block h-3.5 w-px animate-pulse" style="background:{p.color}"></span></span>
+                    {/if}
+                  </div>
+                  <!-- Above the cell, or under it when the header leaves no room. -->
+                  {@const below = box.top - 16 < _scrollTop + HEADER_H}
+                  <span
+                    class={cn('pointer-events-none absolute px-1.5 text-ui-3xs leading-4 font-medium whitespace-nowrap text-white', below ? 'rounded-b-sm' : '-translate-y-full rounded-t-sm')}
+                    style="left:{box.left}px; top:{below ? box.top + ROW_HEIGHT : box.top}px; z-index:5; background:{p.color}"
+                    aria-hidden="true"
+                  >{p.name}{p.editing ? ' is typing' : ''}</span>
+                {/if}
+                {#if ptr && p.pointer}
+                  <div
+                    class="pointer-events-none absolute"
+                    style="left:{ptr.left + p.pointer.fx * ptr.width}px; top:{ptr.top + p.pointer.fy * ROW_HEIGHT}px; z-index:6; transition: left 75ms linear, top 75ms linear"
+                    aria-hidden="true"
+                  >
+                    <svg width="14" height="18" viewBox="0 0 14 18" class="drop-shadow-sm"><path d="M1 1l11.5 9.5-5.2.6 3 5.6-2.2 1.1-3-5.6L1 16z" fill={p.color} stroke="white" stroke-width="1.2" stroke-linejoin="round" /></svg>
+                    <span class="ms-3 -mt-1 block w-max rounded-full px-1.5 text-ui-3xs leading-4 font-medium text-white" style="background:{p.color}">{p.name}</span>
+                  </div>
+                {/if}
+              {/each}
+
               <!-- JSON expand panels (independent from FK sub-view).
                    Same pin pattern as the FK sub-view: outer absolute for vertical
                    position, inner position:sticky;left:0 for the horizontal pin. This
@@ -9290,7 +9528,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                      showed up on every platform because nothing about it was
                      platform-specific. -->
                 {@const eShift = editorTextShift(_fonts?.cell)}
-                {@const eFontStyle = `font-size:${gridMetrics.cellPx}px;font-weight:400;letter-spacing:0;font-optical-sizing:none;${eShift ? `transform:translateY(${eShift}px);` : ''}`}
+                {@const eFontStyle = `font-family:var(--grid-font, var(--font-mono));font-size:${gridMetrics.cellPx}px;font-weight:400;letter-spacing:0;font-optical-sizing:none;${eShift ? `transform:translateY(${eShift}px);` : ''}`}
                 {@const eFieldStyle = `padding-left:${CELL_PAD_X}px;padding-right:${CELL_PAD_X}px;text-align:${eAlignRight ? 'right' : 'left'};${eFontStyle}`}
                 <!-- The date editor carries a calendar button beside its field, so
                      it pads only the side the text is anchored to and lets the
@@ -9543,7 +9781,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   {/if}
                 {:else}
                   <Table2 class="size-8 text-muted-foreground" />
-                  <p class="text-ui-sm text-muted-foreground">No rows in this table</p>
+                  <p class="text-ui-sm text-muted-foreground">{emptyText}</p>
                 {/if}
               </div>
             </div>
@@ -9587,7 +9825,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                       <span class="text-muted-foreground">of {rows.length.toLocaleString()}</span>
                     </span>
                     {#if windowStatus?.slow}
-                      <span class="text-ui-2xs text-muted-foreground">· slow connection</span>
+                      <span class="text-ui-2xs text-muted-foreground">· {windowStatus.cause === 'query' ? 'deep in the table, fetching' : 'slow connection'}</span>
                     {/if}
                   {/if}
                 </div>
@@ -9750,6 +9988,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
               <span class="ml-auto text-ui-3xs tabular-nums text-muted-foreground">
                 {(selected.size > 0 ? selected.size : rows.length).toLocaleString()}
               </span>
+            </ContextMenu.Item>
+            <ContextMenu.Item onSelect={() => runMenuAction(() => void copyColumnAsInList(hcol))}>
+              <Parentheses />
+              As SQL IN list
             </ContextMenu.Item>
             <ContextMenu.Item onSelect={() => runMenuAction(() => void writeClipboard(hcol))}>
               <Type />

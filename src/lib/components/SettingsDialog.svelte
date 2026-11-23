@@ -1,15 +1,21 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import { tick, untrack } from "svelte";
   import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
   import AddThemeDialog from './AddThemeDialog.svelte';
   import { detectOs } from '$lib/platform.js';
+  import { facesFor, faceStack, normalizeFontSettings } from '$lib/fonts.js';
   import { importedThemes, activeImportedId, removeImportedTheme, applyImportedTheme } from '$lib/stores/imported-themes.js';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
   import { trackInstalled, trackInstall, trackOpen } from '$lib/api.js'
   import { updateState, updateActions } from '$lib/stores/update-state.js'
   import KeybindingsSettings from './KeybindingsSettings.svelte'
+  import SnippetsSettings from './SnippetsSettings.svelte'
+  import NetworkSettings from './NetworkSettings.svelte'
+  import { openTransfer } from '$lib/stores/transfer-ui.js'
+  import { listTimezones, resolveZone } from '$lib/timezone.js'
   import { bindingFor } from '$lib/stores/keybindings.js'
   import { startTelemetry, stopTelemetry } from "$lib/telemetry.js";
   import Minus from "@lucide/svelte/icons/minus";
@@ -26,7 +32,7 @@
   import { getThemeDefinition, themesByGroup } from "$lib/themes/registry.js";
   import { sidebarSideStore, setSidebarSide } from "$lib/stores/layout.js";
   import { pluginState, isPluginEnabled, setPluginEnabled } from "$lib/stores/plugins.js";
-  import { t, locale, LOCALES, setLocale } from "$lib/i18n.js";
+  import { t, tx, locale, LOCALES, setLocale } from "$lib/i18n.js";
   import { licenseStatus } from "$lib/stores/license.js";
   import AccountCard from "./AccountCard.svelte";
   import SyncSection from "./SyncSection.svelte";
@@ -54,9 +60,6 @@
     DEFAULT_GRID_FONT_SIZE,
     MOTION_MODES,
     DEFAULT_MAX_QUERY_HISTORY,
-    DEFAULT_CONNECT_TIMEOUT_MS,
-    DEFAULT_SOCKET_TIMEOUT_MS,
-    DEFAULT_MAX_ALLOWED_PACKET,
     DEFAULT_SESSION_TIMEZONE,
     AGENT_FONT_SIZES,
     THINKING_STYLES,
@@ -130,6 +133,8 @@
     { id: 'account',      label: 'Account & Sync', icon: 'cloud' },
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
     { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
+    { id: 'snippets',     label: 'Snippets',     icon: 'braces' },
+    { id: 'network',      label: 'Network',      icon: 'globe' },
     { id: 'labs',         label: 'Labs',         icon: 'flask-conical' },
     { id: 'about',        label: 'About',        icon: 'info' },
   ];
@@ -140,8 +145,14 @@
   const q = $derived(query.trim().toLowerCase());
   const searching = $derived(q.length > 0);
   /** Row visibility under the current search query. */
-  const show = (/** @type {string} */ title, /** @type {string} */ desc = '') =>
-    !q || `${title} ${desc}`.toLowerCase().includes(q);
+  // Every word, in any order: "page size" has to find "Rows per page ... page
+  // size", and "theme dark" the dark theme row.
+  const qWords = $derived(q.split(/\s+/).filter(Boolean));
+  const show = (/** @type {string} */ title, /** @type {string} */ desc = '') => {
+    if (!q) return true;
+    const hay = `${title} ${desc}`.toLowerCase();
+    return qWords.every((w) => hay.includes(w));
+  };
   const activeCategory = $derived(CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[0]);
   // A caller asking for a page (the command palette's "Keyboard shortcuts")
   // sets `section` and opens the dialog programmatically, which may not go
@@ -201,7 +212,7 @@
     try {
       await setLockPrefs(prefs);
     } catch (e) {
-      toast.error('Could not save the lock setting', { description: String(e) });
+      toast.error('Could not save the lock setting', { description: errorText(e) });
     }
   }
 
@@ -253,6 +264,35 @@
     if (font === settings.font) return;
     settings = updateSettings({ font });
   }
+
+  // ── Separate fonts and smoothing (src/lib/fonts.js) ──
+  /** Each surface that can take a face of its own, with what it covers. */
+  const FONT_SURFACE_ROWS = /** @type {const} */ ([
+    { key: 'ui', label: 'Interface', desc: 'Menus, the sidebar, dialogs: everything outside the editor, the grid and the terminal.', kinds: ['sans', 'serif'], sample: 'Show the 20 newest orders over $100 and who placed them.' },
+    { key: 'code', label: 'SQL editor', desc: 'The SQL editor and the query consoles.', kinds: ['mono'], sample: "SELECT id, email FROM users WHERE created_at > now() - interval '7 days'; -- 0O 1lI" },
+    { key: 'grid', label: 'Data grid', desc: 'Cells, column headers and the cell editor.', kinds: ['mono', 'sans'], sample: '1042  ada@lovelace.dev  2024-01-03  9.50' },
+    { key: 'chat', label: 'AI chat', desc: 'Your prompts and the replies.', kinds: ['sans', 'serif'], sample: 'Which customers ordered twice this week but never paid?' },
+    { key: 'terminal', label: 'Terminal', desc: 'Database shells like psql and mysql in the Terminal tab.', kinds: ['mono'], sample: 'app=# \\dt public.*' },
+  ]);
+  /** The faces this machine has, per surface; probing installed fonts once is enough. */
+  const faceLists = Object.fromEntries(FONT_SURFACE_ROWS.map((r) => [r.key, facesFor([...r.kinds])]));
+  const fontsCfg = $derived(normalizeFontSettings(settings.fonts));
+  /** @param {Partial<import('$lib/fonts.js').FontSettings>} patch */
+  function setFonts(patch) {
+    settings = updateSettings({ fonts: { ...normalizeFontSettings(settings.fonts), ...patch } });
+  }
+  /** The stack a surface draws in right now, for its preview. @param {string} key */
+  function surfaceStack(key) {
+    const own = faceStack(/** @type {any} */ (fontsCfg)[key]);
+    if (own) return own;
+    const preset = FONT_PRESETS[settings.font] ?? FONT_PRESETS[DEFAULT_FONT];
+    if (key === 'ui' || key === 'chat') return preset.sans;
+    if (key === 'grid') return preset.mono;
+    return 'var(--editor-font-family)';
+  }
+  const smoothingDesc = detectOs() === 'macos'
+    ? 'Grayscale draws thinner text than the macOS default. System uses the macOS smoothing.'
+    : 'Grayscale draws thin, even text. System leaves it to the OS renderer.';
   // The default face leads the list (SF Pro on a Mac, Geist elsewhere).
   const fontEntries = Object.entries(FONT_PRESETS).sort(([a], [b]) => Number(b === DEFAULT_FONT) - Number(a === DEFAULT_FONT));
   const iconStyleEntries = Object.entries(ICON_STYLES);
@@ -371,6 +411,9 @@
 
   function toggleRowNumbers() {
     settings = updateSettings({ showRowNumbers: !settings.showRowNumbers });
+  }
+  function toggleRelationColumns() {
+    settings = updateSettings({ showRelationColumns: settings.showRelationColumns === false });
   }
 
   function toggleMenuBar() {
@@ -510,9 +553,6 @@
     { id: 'keyset',   label: 'Keyset',   icon: 'key-round', hint: 'Same as cursor (keyset on the primary key)' },
     { id: 'temporal', label: 'Temporal', icon: 'clock', hint: 'Keyset on a timestamp column, newest-first' },
   ];
-  const paginationOption = $derived(
-    PAGINATION_OPTIONS.find((o) => o.id === settings.paginationMode) ?? PAGINATION_OPTIONS[0],
-  );
   /** @param {string} v */
   function setPaginationMode(v) {
     if (v) settings = updateSettings({ paginationMode: v });
@@ -685,7 +725,9 @@
       <!-- ── Left: search + category nav ─────────────────────────── -->
       <aside class="flex min-h-0 flex-col gap-3 border-r border-border/40 bg-muted/[0.015] p-3">
         <SearchField bind:value={query} placeholder="Search" label="Search settings" rank={30} />
-        <nav class="flex flex-col gap-0.5">
+        <!-- Scrolls when zoomed: at 150% in a small window the last sections
+             (Labs, About) sat below the dialog with no way to reach them. -->
+        <nav class="app-scroll -mx-1 flex min-h-0 flex-col gap-0.5 overflow-y-auto overscroll-contain px-1">
           {#each CATEGORIES as c (c.id)}
             <button
               type="button"
@@ -741,6 +783,10 @@
                 {@render agentContent()}
               {:else if category === 'keybindings'}
                 <KeybindingsSettings />
+              {:else if category === 'snippets'}
+                <SnippetsSettings />
+              {:else if category === 'network'}
+                <NetworkSettings />
               {:else if category === 'account'}
                 {@render accountContent()}
               {:else if category === 'integrations'}
@@ -817,6 +863,14 @@
       () => { settings = updateSettings({ treeFocusOnSwitch: settings.treeFocusOnSwitch !== true }) },
     )}
   {/if}
+  {#if show('Boring connection bar', 'Labs, group saved connections into a folder per database kind')}
+    {@render switchRow(
+      'Boring connection bar',
+      'Saved connections sit in one folder per database kind (PostgreSQL, MySQL, Redis, ...) in the connections list, instead of one long list by last use.',
+      settings.boringConnectionBar === true,
+      () => { settings = updateSettings({ boringConnectionBar: settings.boringConnectionBar !== true }) },
+    )}
+  {/if}
   {#if show('Live mode', 'Labs, auto-refresh the active table when its data changes')}
     {@render switchRow('Live mode', 'Shows the Live toggle in the status bar, which refreshes the open table when its data changes.', settings.liveModeEnabled, toggleLiveMode)}
   {/if}
@@ -832,25 +886,22 @@
   {#if !searching}
     <!-- No rule of its own: the first row's top border is the line under it.
          Both drew one, which is the double line under every heading. -->
-    <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground first:mt-0">{text}</p>
+    <p class="mt-8 mb-1 text-ui-2xs font-semibold uppercase tracking-[0.06em] text-muted-foreground first:mt-0">{$tx('sec.' + text, text)}</p>
   {/if}
 {/snippet}
 
 {#snippet switchRow(/** @type {string} */ label, /** @type {string} */ desc, /** @type {boolean} */ checked, /** @type {() => void} */ ontoggle)}
   <div class={rowCls}>
     <div class="min-w-0">
-      <p class="text-ui-sm font-medium text-foreground">{label}</p>
-      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{desc}</p>
+      <p class="text-ui-sm font-medium text-foreground">{$tx('set.' + label, label)}</p>
+      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx('set.' + label + '.desc', desc)}</p>
     </div>
     <button
-      type="button" role="switch" aria-checked={checked} aria-label={label}
+      type="button" role="switch" aria-checked={checked} aria-label={$tx('set.' + label, label)}
       onclick={ontoggle}
-      class={cn(
-        'relative inline-flex h-5 w-9 shrink-0 cursor-pointer items-center rounded-full px-0.5 transition-[background-color,transform] duration-150 ease-[cubic-bezier(0.23,1,0.32,1)] active:scale-[0.98]',
-        checked ? 'bg-primary' : 'bg-muted',
-      )}
+      class="app-switch cursor-pointer"
     >
-      <span class={cn('pointer-events-none block size-4 rounded-full bg-background shadow-sm transition-transform duration-150 ease-[cubic-bezier(0.23,1,0.32,1)]', checked ? 'translate-x-4' : 'translate-x-0')}></span>
+      <span class="app-switch-thumb"></span>
     </button>
   </div>
 {/snippet}
@@ -859,12 +910,12 @@
   <div class={rowCls}>
     <div class="min-w-0">
       <p class="flex items-center gap-2 text-ui-sm font-medium text-foreground">
-        {label}
+        {$tx('set.' + label, label)}
         {#if badge}<span class="h-5 px-1.5 text-ui-3xs font-semibold {badge.class}">{badge.label}</span>{/if}
       </p>
-      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{desc}</p>
+      <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx('set.' + label + '.desc', desc)}</p>
     </div>
-    <Button type="button" variant="outline" size="sm" class="shrink-0" {onclick}>{btn}</Button>
+    <Button type="button" variant="outline" size="sm" class="shrink-0" {onclick}>{$tx('set.btn.' + btn, btn)}</Button>
   </div>
 {/snippet}
 
@@ -962,6 +1013,26 @@
     </div>
   {/if}
 
+  {#if show('Display timezone', 'Timezone time zone timestamps timestamptz display exports utc auto local offset')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">Display timezone</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">Shows timestamps that carry a zone (timestamptz) in this zone, in the grid and in what you copy. Auto follows this computer. Values are stored unchanged.</p>
+      </div>
+      <SelectMenu
+        ariaLabel="Display timezone"
+        value={settings.displayTimezone ?? 'utc'}
+        onValueChange={(v) => { if (v) settings = updateSettings({ displayTimezone: v }); }}
+        items={[
+          { value: 'utc', label: 'UTC', hint: 'as stored', keywords: ['utc', 'gmt', 'zulu'] },
+          { value: 'auto', label: 'Auto', hint: resolveZone('auto'), keywords: ['auto', 'local', 'system', resolveZone('auto')] },
+          ...listTimezones().filter((z) => z !== 'UTC').map((z) => ({ value: z, label: z.replace(/_/g, ' '), keywords: [z, ...z.split('/')] })),
+        ]}
+        searchPlaceholder="Search zones…"
+      />
+    </div>
+  {/if}
+
   {@render secLabel('Result Ordering')}
   {#if show('Null sort order', 'Applied to quick-query ordering on databases that support explicit null placement')}
     <div class={rowCls}>
@@ -984,15 +1055,6 @@
   {/if}
 
   {@render secLabel($t('settings.sec.connectionDefaults'))}
-  {#if show($t('settings.maxAllowedPacket'), $t('settings.maxAllowedPacket.desc'))}
-    {@render numberRow($t('settings.maxAllowedPacket'), $t('settings.maxAllowedPacket.desc'), 'maxAllowedPacket', DEFAULT_MAX_ALLOWED_PACKET, 'bytes', 1024)}
-  {/if}
-  {#if show($t('settings.socketTimeout'), $t('settings.socketTimeout.desc'))}
-    {@render numberRow($t('settings.socketTimeout'), $t('settings.socketTimeout.desc'), 'socketTimeoutMs', DEFAULT_SOCKET_TIMEOUT_MS, 'ms', 0)}
-  {/if}
-  {#if show($t('settings.connectTimeout'), $t('settings.connectTimeout.desc'))}
-    {@render numberRow($t('settings.connectTimeout'), $t('settings.connectTimeout.desc'), 'connectTimeoutMs', DEFAULT_CONNECT_TIMEOUT_MS, 'ms', 0)}
-  {/if}
   {#if show($t('settings.timezone'), $t('settings.timezone.desc'))}
     {@render textRow($t('settings.timezone'), $t('settings.timezone.desc'), 'sessionTimezone', DEFAULT_SESSION_TIMEZONE)}
   {/if}
@@ -1229,6 +1291,14 @@
   {#if show($t('settings.autoReconnect'), $t('settings.autoReconnect.desc'))}
     {@render switchRow($t('settings.autoReconnect'), $t('settings.autoReconnect.desc'), settings.autoReconnectOnStartup, toggleAutoReconnect)}
   {/if}
+  {#if show('Reopen tabs', 'Restore the tabs a database had open when you connect to it again')}
+    {@render switchRow(
+      'Reopen tabs',
+      'Connecting to a database opens the tabs it had open last time.',
+      settings.reopenTabs !== false,
+      () => { settings = updateSettings({ reopenTabs: settings.reopenTabs === false }); },
+    )}
+  {/if}
   {#if show($t('settings.previewSql'), $t('settings.previewSql.desc'))}
     {@render switchRow($t('settings.previewSql'), $t('settings.previewSql.desc'), settings.previewDmlBeforeApply, togglePreviewDml)}
   {/if}
@@ -1236,7 +1306,7 @@
     {@render switchRow('Wrap JSON', 'Soft-wrap long values (embeddings, document chunks) in every JSON view instead of running off the right edge. Off keeps the structure easier to scan.', settings.jsonWordWrap, toggleJsonWordWrap)}
   {/if}
   {#if show('Load large values on demand', 'Fetch a column that averages megabytes as a size, and load a cell when you open it')}
-    {@render switchRow('Load large values on demand', 'A column averaging half a megabyte a row arrives as its size, and the value loads when you open the cell. Off fetches every value with the page, which is what it did before, and what makes such a table take ten seconds to open. PostgreSQL.', settings.lazyWideColumns, toggleLazyWideColumns)}
+    {@render switchRow('Load large values on demand', 'PostgreSQL only. A column averaging half a megabyte a row shows each value\'s size, and the value loads when you open the cell. Off fetches every value with the page, which can make such a table take seconds to open.', settings.lazyWideColumns, toggleLazyWideColumns)}
   {/if}
   {#if show($t('settings.mcpAutostart'), $t('settings.mcpAutostart.desc'))}
     {@render switchRow($t('settings.mcpAutostart'), $t('settings.mcpAutostart.desc'), settings.mcpAutoStart, toggleMcpAutoStart)}
@@ -1370,7 +1440,7 @@
 {#snippet appearanceContent()}
   {@render secLabel($t('settings.sec.themeTypeface'))}
 
-  {#if show($t('settings.theme'), $t('settings.theme.desc'))}
+  {#if show($t('settings.theme'), `${$t('settings.theme.desc')} dark mode light mode appearance colour color`)}
     <div class={rowCls}>
       <div class="min-w-0">
         <p class="text-ui-sm font-medium text-foreground">{$t('settings.theme')}</p>
@@ -1469,6 +1539,59 @@
           <span class="flex size-5 shrink-0 items-center justify-center rounded border border-border/40 bg-muted/30 text-ui-2xs font-semibold text-foreground/70" style="font-family: {it.sans}" aria-hidden="true">Aa</span>
         {/snippet}
       </SelectMenu>
+    </div>
+  {/if}
+
+  {#if show('Separate fonts', 'Set the interface, SQL editor, data grid, AI chat and terminal fonts separately')}
+    {@render switchRow(
+      'Separate fonts',
+      'Set the interface, SQL editor, data grid, AI chat and terminal fonts separately instead of one theme font.',
+      fontsCfg.separate,
+      () => setFonts({ separate: !fontsCfg.separate }),
+    )}
+    {#if fontsCfg.separate}
+      <div class="mb-2 flex flex-col gap-3 rounded-lg border border-border/40 bg-muted/15 p-3">
+        {#each FONT_SURFACE_ROWS as row (row.key)}
+          {@const current = /** @type {any} */ (fontsCfg)[row.key]}
+          <div class="flex flex-col gap-2">
+            <div class="flex items-center justify-between gap-4">
+              <div class="min-w-0">
+                <p class="text-ui-sm font-medium text-foreground">{$tx('set.font.' + row.key, row.label)}</p>
+                <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx('set.font.' + row.key + '.desc', row.desc)}</p>
+              </div>
+              <SelectMenu
+                ariaLabel="{row.label} font"
+                value={current || 'theme'}
+                onValueChange={(v) => setFonts({ [row.key]: v && v !== 'theme' ? v : '' })}
+                items={[
+                  { value: 'theme', label: $tx('set.font.theme', 'Theme font'), sans: surfaceStack(row.key === 'ui' || row.key === 'chat' ? 'ui' : row.key === 'grid' ? 'grid' : 'code'), keywords: ['theme', 'default'] },
+                  ...faceLists[row.key].map((f) => ({ value: f.id, label: f.label, sans: f.stack, keywords: [f.label, f.kind] })),
+                ]}
+                searchPlaceholder="Search fonts…"
+              >
+                {#snippet lead(it)}
+                  <span class="flex size-5 shrink-0 items-center justify-center rounded border border-border/40 bg-muted/30 text-ui-2xs font-semibold text-foreground/70" style="font-family: {it.sans}" aria-hidden="true">Aa</span>
+                {/snippet}
+              </SelectMenu>
+            </div>
+            <!-- What the surface will look like, in its face. -->
+            <p
+              class={cn('truncate rounded-md border border-border/30 bg-background px-2.5 py-1.5 text-foreground', row.kinds.includes('mono') && row.key !== 'grid' ? 'text-ui-xs' : 'text-ui-sm')}
+              style="font-family: {surfaceStack(row.key)}"
+            >{row.sample}</p>
+          </div>
+        {/each}
+      </div>
+    {/if}
+  {/if}
+
+  {#if show('Font smoothing', 'Thinner grayscale text smoothing or the OS default')}
+    <div class={rowCls}>
+      <div class="min-w-0">
+        <p class="text-ui-sm font-medium text-foreground">{$tx('set.Font smoothing', 'Font smoothing')}</p>
+        <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx(detectOs() === 'macos' ? 'set.smoothing.desc.mac' : 'set.smoothing.desc', smoothingDesc)}</p>
+      </div>
+      {@render segmented('Font smoothing', [{ value: 'grayscale', label: $tx('set.smoothing.grayscale', 'Grayscale') }, { value: 'system', label: $tx('set.smoothing.system', 'System') }], fontsCfg.smoothing, (v) => setFonts({ smoothing: v }))}
     </div>
   {/if}
 
@@ -1720,7 +1843,7 @@
       toggleFkAutoExpandJson,
     )}
   {/if}
-  {#if show('Rows per page', 'How many rows a newly opened table fetches')}
+  {#if show('Rows per page', 'How many rows a newly opened table fetches, page size, limit')}
     <div class="flex items-center justify-between gap-4 py-2">
       <div class="min-w-0 flex-1">
         <p class="text-ui-sm font-medium text-foreground">Rows per page</p>
@@ -1832,6 +1955,14 @@
       toggleRowNumbers,
     )}
   {/if}
+  {#if show('Referenced-by columns', 'Columns linking to rows in tables whose foreign keys point here')}
+    {@render switchRow(
+      'Referenced-by columns',
+      'A column for each table whose foreign key points at this one, linking to the rows that reference the row. Off, they are not loaded or drawn.',
+      settings.showRelationColumns !== false,
+      toggleRelationColumns,
+    )}
+  {/if}
   {#if show('Cell alignment', 'Which side grid cell text sits on')}
     <div class={rowCls}>
       <div class="min-w-0">
@@ -1917,6 +2048,14 @@
         <Button type="button" size="sm" class="shrink-0" onclick={() => void signInWithToast()}>Sign in</Button>
       </div>
     {/if}
+  {/if}
+
+  {@render secLabel('Move to another computer')}
+  {#if show('Export connections and settings', 'Export import file backup transfer connections settings snippets saved queries passwords without sync')}
+    {@render actionRow('Export to a file', 'Connections, saved queries, settings and snippets in one file, to set up Stroke elsewhere without sync. Passwords only if you choose, encrypted.', 'Export…', () => { open = false; openTransfer('export'); })}
+  {/if}
+  {#if show('Import connections and settings', 'Import export file restore transfer connections settings snippets')}
+    {@render actionRow('Import from a file', 'Shows what a Stroke export holds before anything changes; connections already here are kept unless you replace them.', 'Import…', () => { open = false; openTransfer('import'); })}
   {/if}
 
   {@render secLabel('Sharing')}

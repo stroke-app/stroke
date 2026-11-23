@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { renderSafeMarkdown } from '$lib/markdown-safe.js'
   import { markdownEnter, markdownIndent } from '$lib/md-input.js'
   import { tick } from 'svelte'
@@ -130,7 +131,7 @@
           >
             md source
           </span>
-          <span class="text-ui-3xs text-muted-foreground">Esc or ⌘↵ to preview</span>
+          <span class="text-ui-3xs text-muted-foreground">Esc or {comboTitle('Mod+Enter')} to preview</span>
         </div>
         <textarea
           bind:this={textareaEl}

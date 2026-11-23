@@ -12,7 +12,7 @@
   } from '$lib/chart-utils.js'
   import { isCurrentThemeDark } from '$lib/stores/settings.js'
   import { chartGroups, saveChart, addGroup } from '$lib/stores/saved-charts.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { saveExportAs } from '$lib/api.js'
   import { canvasToPngBlob, copyPngToClipboard } from '$lib/svg-png.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
@@ -248,7 +248,7 @@
       if (!path) return  // dialog cancelled
       toast.success('Chart saved', { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Could not save the chart', { description: String(e) })
+      toast.error('Could not save the chart', { description: errorText(e) })
     }
   }
 
@@ -257,7 +257,7 @@
       await copyPngToClipboard(await canvasToPngBlob(chartCanvas()))
       toast.success('Chart copied as PNG')
     } catch (e) {
-      toast.error('Copy failed', { description: String(e) })
+      toast.error('Copy failed', { description: errorText(e) })
     }
   }
 
@@ -285,7 +285,7 @@
       if (!path) return  // dialog cancelled
       toast.success('Chart saved as SVG', { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Could not save the chart', { description: String(e) })
+      toast.error('Could not save the chart', { description: errorText(e) })
     } finally {
       host.remove()
     }
@@ -317,7 +317,8 @@
   /** A fresh form each time the popover opens. @param {boolean} open */
   function onSaveOpenChange(open) {
     if (!open) return
-    saveName = ''; saveGroup = $chartGroups[0] ?? 'Default'
+    // Named for what it plots, selected, so typing replaces it.
+    saveName = yCol && xCol ? `${yCol} by ${xCol}` : ''; saveGroup = $chartGroups[0] ?? 'Default'
     newGroupMode = false; newGroupName = ''
   }
 
@@ -407,7 +408,7 @@
             class="absolute left-0 top-full z-50 mt-1 w-[34rem] overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim"
           >
             <!-- Search -->
-            <div data-slot="menu-search" class="flex h-11 items-center gap-2 px-3">
+            <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
               <Search class="size-4 shrink-0 text-muted-foreground" />
               <input
                 type="text"
@@ -416,7 +417,7 @@
                 class="no-focus-ring flex-1 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-muted-foreground"
               />
               {#if pickerSearch}
-                <button type="button" onclick={() => (pickerSearch = '')} class="text-muted-foreground hover:text-foreground">
+                <button aria-label="Clear search" title="Clear search" type="button" onclick={() => (pickerSearch = '')} class="text-muted-foreground hover:text-foreground">
                   <X class="size-3.5 shrink-0" />
                 </button>
               {/if}
@@ -553,6 +554,7 @@
                   placeholder="Chart name…"
                   bind:value={saveName}
                   autofocus
+                  onfocus={(e) => e.currentTarget.select()}
                   class="no-field-frame h-8 w-full rounded-md border-0 bg-sidebar-accent/50 px-2.5 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-sidebar-accent"
                 />
               </label>

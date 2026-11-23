@@ -70,7 +70,7 @@
         <!-- svelte-ignore a11y_autofocus -->
         <Input
           id="create-schema-name"
-          class="h-9 font-mono text-ui-sm placeholder:text-muted-foreground/50"
+          class="h-9 font-mono text-ui-sm placeholder:text-muted-foreground"
           placeholder={PLACEHOLDER}
           bind:value={name}
           autofocus
@@ -90,7 +90,7 @@
       <div class="flex flex-col gap-1.5">
         <span class="text-ui-xs font-medium text-foreground/80">SQL preview</span>
         <pre
-          class="overflow-x-auto rounded-lg border border-border/60 bg-muted/30 px-3.5 py-3 font-mono text-ui-2xs leading-relaxed whitespace-pre-wrap break-all {trimmed ? 'text-muted-foreground' : 'text-muted-foreground/50'}"
+          class="overflow-x-auto rounded-lg border border-border/60 bg-muted/30 px-3.5 py-3 font-mono text-ui-2xs leading-relaxed whitespace-pre-wrap break-all {trimmed ? 'text-muted-foreground' : 'text-muted-foreground'}"
         >{sql}</pre>
       </div>
     </div>

@@ -6,17 +6,26 @@ use tauri::Emitter;
 // One client for the whole process lifetime. reqwest maintains an internal
 // connection pool, so subsequent requests to the same host reuse the TLS
 // session and avoid the ~300-700 ms handshake on every call.
-static AI_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
+/// The AI client and the proxy-settings generation it was built for: a change
+/// in Settings > Network rebuilds it on the next request.
+static AI_CLIENT: std::sync::Mutex<Option<(u64, reqwest::Client)>> = std::sync::Mutex::new(None);
 
-fn ai_http_client() -> &'static reqwest::Client {
-    AI_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .tcp_keepalive(std::time::Duration::from_secs(60))
-            .pool_max_idle_per_host(4)
-            .pool_idle_timeout(std::time::Duration::from_secs(90))
-            .build()
-            .expect("failed to build AI HTTP client")
-    })
+fn ai_http_client() -> reqwest::Client {
+    let generation = crate::proxy::generation();
+    let mut guard = AI_CLIENT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((g, c)) = guard.as_ref() {
+        if *g == generation {
+            return c.clone();
+        }
+    }
+    let client = crate::proxy::http_builder(crate::proxy::Kind::Ai)
+        .tcp_keepalive(std::time::Duration::from_secs(60))
+        .pool_max_idle_per_host(4)
+        .pool_idle_timeout(std::time::Duration::from_secs(90))
+        .build()
+        .expect("failed to build AI HTTP client");
+    *guard = Some((generation, client.clone()));
+    client
 }
 
 // ── Streaming cancellation ────────────────────────────────────────────────────
@@ -417,7 +426,7 @@ use crate::db::{
     SqlResult, SqliteConfig, TableInfo, TableRowCount, TableRows, TriggerInfo, SequenceInfo,
     ColumnStructureRow, TableColumnStructure, IncomingForeignKey, InsertRowResult, TunnelState,
     apply_table_changes, ApplyChangesResult, RowUpdate,
-    explain_pg, explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan,
+    explain_mysql, explain_sqlite, explain_from_text_lines, explain_from_sqlite_plan,
 };
 use crate::db::connection::{require_conn, ClickhouseConfig, DuckdbConfig, MssqlConfig, MysqlConfig, OracleConfig, RedisConfig};
 use crate::db::ActiveConnection;
@@ -522,8 +531,8 @@ pub async fn test_clickhouse(config: ClickhouseConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_clickhouse_db(state: Db<'_>, config: ClickhouseConfig) -> Result<(), String> {
-    connect_clickhouse(state, config).await
+pub async fn connect_clickhouse_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: ClickhouseConfig) -> Result<(), String> {
+    connect_clickhouse(state, tunnel_state, config).await
 }
 
 // ── Redis ─────────────────────────────────────────────────────────────────────
@@ -534,8 +543,8 @@ pub async fn test_redis(config: RedisConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_redis_db(state: Db<'_>, config: RedisConfig) -> Result<(), String> {
-    connect_redis(state, config).await
+pub async fn connect_redis_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: RedisConfig) -> Result<(), String> {
+    connect_redis(state, tunnel_state, config).await
 }
 
 /// Non-blocking keyspace iteration for the active Redis connection. Returns one
@@ -675,12 +684,13 @@ pub async fn dynamodb_request(
 
 #[tauri::command]
 pub async fn test_couchdb(config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_couch_ssh(config).await?;
     crate::db::couchdb::ping(&config).await
 }
 
 #[tauri::command]
-pub async fn connect_couchdb_db(state: Db<'_>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
-    crate::db::connection::connect_couchdb(state, config).await
+pub async fn connect_couchdb_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    crate::db::connection::connect_couchdb(state, tunnel_state, config).await
 }
 
 /// One CouchDB HTTP call (path allowlisted) on the active connection.
@@ -703,12 +713,13 @@ pub async fn couchdb_request(
 /// Connection test; answers which engine and version the server is.
 #[tauri::command]
 pub async fn test_elastic(config: crate::db::elastic::EsConfig) -> Result<crate::db::elastic::ServerInfo, String> {
+    let (config, _tunnel) = crate::db::connection::resolve_elastic_ssh(config).await?;
     crate::db::elastic::ping(&config).await
 }
 
 #[tauri::command]
-pub async fn connect_elastic_db(state: Db<'_>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
-    crate::db::connection::connect_elastic(state, config).await
+pub async fn connect_elastic_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+    crate::db::connection::connect_elastic(state, tunnel_state, config).await
 }
 
 /// One REST call (path allowlisted) on the active connection.
@@ -746,12 +757,13 @@ pub async fn elastic_import(
 
 #[tauri::command]
 pub async fn test_mongo(config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_mongo_ssh(config).await?;
     crate::db::mongo::connect(&config).await.map(|_| ())
 }
 
 #[tauri::command]
-pub async fn connect_mongo_db(state: Db<'_>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
-    crate::db::connection::connect_mongo(state, config).await
+pub async fn connect_mongo_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    crate::db::connection::connect_mongo(state, tunnel_state, config).await
 }
 
 fn require_mongo(state: &Db<'_>) -> Result<crate::db::mongo::MongoHandle, String> {
@@ -923,6 +935,147 @@ pub async fn connect_firestore_db(state: Db<'_>, config: crate::db::firestore::F
     crate::db::connection::connect_firestore(state, config).await
 }
 
+/// Google Cloud Spanner (beta): the database answers, with these credentials.
+#[tauri::command]
+pub async fn test_spanner(config: crate::db::spanner::SpannerConfig) -> Result<(), String> {
+    let h = crate::db::spanner::connect(&config).await?;
+    crate::db::spanner::ping(&h).await
+}
+
+#[tauri::command]
+pub async fn connect_spanner_db(state: Db<'_>, config: crate::db::spanner::SpannerConfig) -> Result<String, String> {
+    crate::db::connection::connect_spanner(state, config).await
+}
+
+/// Google BigQuery (beta): the project answers, with these credentials.
+#[tauri::command]
+pub async fn test_bigquery(config: crate::db::bigquery::BigQueryConfig) -> Result<(), String> {
+    let h = crate::db::bigquery::connect(&config).await?;
+    crate::db::bigquery::ping(&h).await
+}
+
+#[tauri::command]
+pub async fn connect_bigquery_db(state: Db<'_>, config: crate::db::bigquery::BigQueryConfig) -> Result<(), String> {
+    crate::db::connection::connect_bigquery(state, config).await
+}
+
+/// A database through ODBC (beta): the driver connects and the link is alive.
+/// Returns what the driver reports itself as (`DB2/LINUXX8664`, `HDB`, ...).
+#[tauri::command]
+pub async fn test_odbc(config: crate::db::odbc::OdbcConfig) -> Result<String, String> {
+    let (config, _tunnel) = crate::db::connection::resolve_odbc_ssh(config).await?;
+    let h = crate::db::odbc::connect(&config).await?;
+    crate::db::odbc::ping(&h).await?;
+    Ok(h.info.dbms.clone())
+}
+
+#[tauri::command]
+pub async fn connect_odbc_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::odbc::OdbcConfig) -> Result<crate::db::odbc::OdbcSummary, String> {
+    crate::db::connection::connect_odbc(state, tunnel_state, config).await
+}
+
+/// The ODBC drivers installed on this machine.
+#[tauri::command]
+pub async fn odbc_drivers() -> Result<Vec<crate::db::odbc::OdbcDriver>, String> {
+    crate::db::odbc::drivers().await
+}
+
+/// The ODBC data sources (DSNs) configured on this machine.
+#[tauri::command]
+pub async fn odbc_data_sources() -> Result<Vec<crate::db::odbc::OdbcDataSource>, String> {
+    crate::db::odbc::data_sources().await
+}
+
+/// Snowflake (beta): signs in and the warehouse answers.
+#[tauri::command]
+pub async fn test_snowflake(config: crate::db::snowflake::SnowflakeConfig) -> Result<(), String> {
+    crate::db::snowflake::connect(&config).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn connect_snowflake_db(state: Db<'_>, config: crate::db::snowflake::SnowflakeConfig) -> Result<(), String> {
+    crate::db::connection::connect_snowflake(state, config).await
+}
+
+// ── Neo4j (beta) ──────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_neo4j(config: crate::db::neo4j::Neo4jConfig) -> Result<(), String> {
+    crate::db::neo4j::connect(&config).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn connect_neo4j_db(state: Db<'_>, config: crate::db::neo4j::Neo4jConfig) -> Result<(), String> {
+    crate::db::connection::connect_neo4j(state, config).await
+}
+
+fn require_neo4j(state: &Db<'_>) -> Result<crate::db::neo4j::Neo4jConfig, String> {
+    match require_conn(state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Neo4j(cfg)) => Ok(cfg),
+        _ => Err("Not connected to Neo4j".into()),
+    }
+}
+
+/// Node labels with their node counts.
+#[tauri::command]
+pub async fn neo4j_labels(state: Db<'_>) -> Result<Vec<(String, i64)>, String> {
+    crate::db::neo4j::labels(&require_neo4j(&state)?).await
+}
+
+#[tauri::command]
+pub async fn neo4j_describe(state: Db<'_>, label: String) -> Result<serde_json::Value, String> {
+    crate::db::neo4j::describe(&require_neo4j(&state)?, &label).await
+}
+
+#[tauri::command]
+pub async fn neo4j_page(state: Db<'_>, label: String, filter: Option<String>, skip: i64, limit: i64) -> Result<serde_json::Value, String> {
+    crate::db::neo4j::page(&require_neo4j(&state)?, &label, filter.as_deref().unwrap_or(""), skip, limit).await
+}
+
+#[tauri::command]
+pub async fn neo4j_save(state: Db<'_>, label: String, doc: serde_json::Value) -> Result<serde_json::Value, String> {
+    crate::db::neo4j::save(&require_neo4j(&state)?, &label, &doc).await
+}
+
+#[tauri::command]
+pub async fn neo4j_delete(state: Db<'_>, id: String) -> Result<(), String> {
+    crate::db::neo4j::remove(&require_neo4j(&state)?, &id).await
+}
+
+// ── InfluxDB (beta) ───────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_influx(config: crate::db::influx::InfluxConfig) -> Result<(), String> {
+    crate::db::influx::connect(&config).await.map(|_| ())
+}
+
+#[tauri::command]
+pub async fn connect_influx_db(state: Db<'_>, config: crate::db::influx::InfluxConfig) -> Result<(), String> {
+    crate::db::connection::connect_influx(state, config).await
+}
+
+fn require_influx(state: &Db<'_>) -> Result<crate::db::influx::InfluxConfig, String> {
+    match require_conn(state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Influx(cfg)) => Ok(cfg),
+        _ => Err("Not connected to InfluxDB".into()),
+    }
+}
+
+#[tauri::command]
+pub async fn influx_measurements(state: Db<'_>) -> Result<Vec<String>, String> {
+    crate::db::influx::measurements(&require_influx(&state)?).await
+}
+
+#[tauri::command]
+pub async fn influx_describe(state: Db<'_>, measurement: String) -> Result<serde_json::Value, String> {
+    crate::db::influx::describe(&require_influx(&state)?, &measurement).await
+}
+
+#[tauri::command]
+pub async fn influx_page(state: Db<'_>, measurement: String, filter: Option<String>, skip: i64, limit: i64) -> Result<serde_json::Value, String> {
+    crate::db::influx::page(&require_influx(&state)?, &measurement, filter.as_deref().unwrap_or(""), skip, limit).await
+}
+
 /// One Firestore REST call (document paths of this database only).
 #[tauri::command]
 pub async fn firestore_request(
@@ -942,12 +1095,13 @@ pub async fn firestore_request(
 
 #[tauri::command]
 pub async fn test_cassandra(config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    let (config, _tunnel) = crate::db::connection::resolve_cassandra_ssh(config).await?;
     crate::db::cassandra::connect(&config).await.map(|_| ())
 }
 
 #[tauri::command]
-pub async fn connect_cassandra_db(state: Db<'_>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
-    crate::db::connection::connect_cassandra(state, config).await
+pub async fn connect_cassandra_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    crate::db::connection::connect_cassandra(state, tunnel_state, config).await
 }
 
 fn require_cassandra(state: &Db<'_>) -> Result<crate::db::cassandra::CassandraHandle, String> {
@@ -1018,8 +1172,8 @@ pub async fn test_mssql(config: MssqlConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_mssql_db(state: Db<'_>, config: MssqlConfig) -> Result<(), String> {
-    connect_mssql(state, config).await
+pub async fn connect_mssql_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: MssqlConfig) -> Result<(), String> {
+    connect_mssql(state, tunnel_state, config).await
 }
 
 // ── Oracle ──────────────────────────────────────────────────────────────────────
@@ -1030,8 +1184,8 @@ pub async fn test_oracle(config: OracleConfig) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn connect_oracle_db(state: Db<'_>, config: OracleConfig) -> Result<(), String> {
-    connect_oracle(state, config).await
+pub async fn connect_oracle_db(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: OracleConfig) -> Result<(), String> {
+    connect_oracle(state, tunnel_state, config).await
 }
 
 /// The Oracle container the active connection is in (FREEPDB1, CDB$ROOT).
@@ -1144,9 +1298,18 @@ pub async fn pg_explain_sql(
     state: Db<'_>,
     sql: String,
     analyze: Option<bool>,
+    // Names the run for `cancel_query`, like a console run's queryId.
+    query_id: Option<String>,
 ) -> Result<ExplainResult, String> {
     match require_conn(&state)? {
-        ActiveConnection::Postgres(pool) => explain_pg(&pool, &sql, analyze.unwrap_or(true)).await,
+        ActiveConnection::Postgres(pool) => {
+            let (tx, rx) = tokio::sync::oneshot::channel::<()>();
+            let key = query_id.unwrap_or_else(|| "default".to_string());
+            crate::db::connection::register_cancel(&state, &key, tx);
+            let r = crate::db::explain::explain_pg_stoppable(&pool, &sql, analyze.unwrap_or(true), Some(rx)).await;
+            crate::db::connection::unregister_cancel(&state, &key);
+            r
+        }
         ActiveConnection::Mysql(pool) => explain_mysql(&pool, &sql).await,
         ActiveConnection::Sqlite(pool) => explain_sqlite(&pool, &sql).await,
         ActiveConnection::Duckdb(h) => {
@@ -1221,7 +1384,56 @@ pub async fn pg_explain_sql(
             let lines = crate::db::oracle::explain_lines(&h, &sql).await?;
             Ok(explain_from_text_lines(lines, "oracle"))
         }
-        _ => Err("EXPLAIN isn't supported for this engine yet".into()),
+        ActiveConnection::LibSql(cfg) => {
+            // libSQL is SQLite: the same (id, parent, notused, detail) rows.
+            let res = crate::db::libsql::query(&cfg, &format!("EXPLAIN QUERY PLAN {sql}"), vec![]).await?;
+            Ok(explain_from_sqlite_plan(&res, "libsql"))
+        }
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(m)) => Ok(ExplainResult {
+            plan: crate::db::mongo::explain_plan(&m, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "mongodb".into(),
+        }),
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(cfg)) => Ok(ExplainResult {
+            plan: crate::db::elastic::explain_plan(&cfg, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "elasticsearch".into(),
+        }),
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(cfg)) => Ok(ExplainResult {
+            plan: crate::db::couchdb::explain_plan(&cfg, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "couchdb".into(),
+        }),
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Neo4j(cfg)) => Ok(ExplainResult {
+            plan: crate::db::neo4j::explain_plan(&cfg, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "neo4j".into(),
+        }),
+        // Redis, DynamoDB, Firestore, Cassandra/ScyllaDB and PostHog's HogQL
+        // API expose no query plan.
+        ActiveConnection::Spanner(h) => Ok(ExplainResult {
+            plan: crate::db::spanner::explain_plan(&h, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "spanner".into(),
+        }),
+        ActiveConnection::Bigquery(h) => Ok(ExplainResult {
+            plan: crate::db::bigquery::explain_plan(&h, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "bigquery".into(),
+        }),
+        ActiveConnection::Snowflake(h) => Ok(ExplainResult {
+            plan: crate::db::snowflake::explain_plan(&h, &sql).await?,
+            planning_time: 0.0,
+            execution_time: 0.0,
+            driver: "snowflake".into(),
+        }),
+        _ => Err("This engine doesn't expose a query plan".into()),
     }
 }
 
@@ -1461,7 +1673,10 @@ pub async fn pg_get_table_rows(
     // like every other column, which is what the app did before and what the
     // setting turns back on for anyone who wants it.
     preview_wide: Option<bool>,
+    // The grid view this fetch is for; a newer load of the tab cancels it.
+    fetch_tag: Option<crate::db::FetchTag>,
 ) -> Result<TableRows, String> {
+    let _foreground = ForegroundFetch::begin();
     get_table_rows(
         state,
         schema,
@@ -1480,6 +1695,7 @@ pub async fn pg_get_table_rows(
         keyset,
         nulls_order,
         preview_wide.unwrap_or(true),
+        fetch_tag,
     )
     .await
 }
@@ -1726,6 +1942,190 @@ pub async fn pg_execute_sql_stream(
     result
 }
 
+/// The key a table mirror walks by: the same seek the grid's windows use
+/// (`seekKeyFor` in src/lib/keyset.js), plus where it sits in a row.
+#[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[allow(dead_code)] // The view's key; its presence is what makes paging by offset exact.
+pub struct MirrorSeek {
+    column: String,
+    sql_type: String,
+    desc: bool,
+    index: usize,
+}
+
+/// Rows per page while a table mirror streams. Large enough that a far link
+/// is not all round trips, small enough that a page in flight holds up a
+/// window the user asks for by well under a second.
+const MIRROR_PAGE: i64 = 5_000;
+
+/// Mirror pages in flight at once.
+const MIRROR_PARALLEL: usize = 2;
+
+/// How long the grid must have been quiet (no row fetch running or just
+/// finished) before a mirror page starts. Opening a table or jumping fires
+/// several window fetches in a row; a copy page squeezed in between them
+/// shared the link with the next one and made the rows on screen slower.
+const MIRROR_QUIET: std::time::Duration = std::time::Duration::from_millis(750);
+
+/// When the last grid row fetch finished, as ms since the first one (0 = never).
+static FOREGROUND_LAST_END_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static FOREGROUND_EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+fn foreground_now_ms() -> u64 {
+    FOREGROUND_EPOCH.get_or_init(std::time::Instant::now).elapsed().as_millis() as u64
+}
+
+/// Wait until no grid fetch is running and none has for MIRROR_QUIET.
+async fn wait_for_quiet_grid() {
+    loop {
+        let busy = FOREGROUND_ROW_FETCHES.load(std::sync::atomic::Ordering::SeqCst) > 0;
+        let last = FOREGROUND_LAST_END_MS.load(std::sync::atomic::Ordering::SeqCst);
+        let since = foreground_now_ms().saturating_sub(last);
+        if !busy && (last == 0 || since >= MIRROR_QUIET.as_millis() as u64) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    }
+}
+
+/// Grid row fetches in flight (`pg_get_table_rows`). A table mirror is
+/// background work sharing the same link and pool: it waits while any is
+/// running, so the rows on screen never queue behind the copy.
+static FOREGROUND_ROW_FETCHES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// Counts one foreground fetch for as long as it lives.
+struct ForegroundFetch;
+impl ForegroundFetch {
+    fn begin() -> Self {
+        FOREGROUND_ROW_FETCHES.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        ForegroundFetch
+    }
+}
+impl Drop for ForegroundFetch {
+    fn drop(&mut self) {
+        FOREGROUND_LAST_END_MS.store(foreground_now_ms().max(1), std::sync::atomic::Ordering::SeqCst);
+        FOREGROUND_ROW_FETCHES.fetch_sub(1, std::sync::atomic::Ordering::SeqCst);
+    }
+}
+
+/// Copy a windowed table view into the result store, in its own order, so the
+/// grid can read any window locally.
+///
+/// Scrolled deep into a large table, every window was a remote `OFFSET n`:
+/// the server reads and throws away n rows first, so row 196,000 of a remote
+/// table took seconds and the grid sat on skeletons labelled "slow
+/// connection". This reads the same query once, a few pages at a time, and
+/// spools the rows under `id` in order. The window reads whatever has landed
+/// with `result_window` and fetches the rest as before. Same rows, same shape
+/// (wide-column previews included): it is the grid's query, not the console's.
+///
+/// Returns the number of rows mirrored. Stops quietly once `id` is dropped (a
+/// reload, a sort or filter change, an edit, the tab closing) or at `max_rows`.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn table_mirror(
+    state: Db<'_>,
+    store: State<'_, crate::db::result_store::ResultStore>,
+    id: String,
+    schema: String,
+    table: String,
+    search: Option<String>,
+    search_is_regex: Option<bool>,
+    search_case_sensitive: Option<bool>,
+    sort_column: Option<String>,
+    sort_direction: Option<String>,
+    sorts: Option<Vec<crate::db::SortSpec>>,
+    filters: Option<Vec<crate::db::RowFilter>>,
+    nulls_order: Option<String>,
+    preview_wide: Option<bool>,
+    seek: MirrorSeek,
+    max_rows: usize,
+    page_rows: Option<i64>,
+    parallel: Option<usize>,
+) -> Result<usize, String> {
+    use futures::StreamExt;
+    let mut writer = store.create(&id)?;
+    // Sized by the grid from the row width (pickMirrorPage): a page in flight
+    // is what a scroll waits behind, so it is kept to a few hundred KB.
+    let page_limit = page_rows.unwrap_or(MIRROR_PAGE).clamp(100, MIRROR_PAGE);
+    let page_rows = page_limit as usize;
+    let parallel = parallel.unwrap_or(MIRROR_PARALLEL).clamp(1, MIRROR_PARALLEL);
+    let chunks = max_rows.div_ceil(page_rows).max(1);
+    // Every page is addressed by its offset, which on a single-column primary
+    // key is an index skip (see get_table_rows), so pages need not wait on the
+    // one before them for a key: MIRROR_PARALLEL are in flight at once and
+    // written in order. A far link is then bandwidth-bound instead of a round
+    // trip per page. The view's order is a unique key (the mirror only starts
+    // with a seek), so page k is exactly rows k*page..(k+1)*page.
+    let _ = &seek;
+    let fetch_page = |k: usize| {
+        let state = state.clone();
+        let (store, id) = (store.clone(), id.clone());
+        let (schema, table) = (schema.clone(), table.clone());
+        let (search, sort_column, sort_direction) = (search.clone(), sort_column.clone(), sort_direction.clone());
+        let (filters, sorts, nulls_order) = (filters.clone(), sorts.clone().unwrap_or_default(), nulls_order.clone());
+        async move {
+            // Rows on screen first: start only once the grid has been quiet.
+            wait_for_quiet_grid().await;
+            // Dropped by the window: the view it mirrors is gone.
+            if store.get(&id).is_none() {
+                return Ok(None);
+            }
+            get_table_rows(
+                state,
+                schema,
+                table,
+                page_limit,
+                (k * page_rows) as i64,
+                search,
+                search_is_regex.unwrap_or(false),
+                search_case_sensitive.unwrap_or(false),
+                sort_column,
+                sort_direction,
+                filters,
+                k == 0,
+                false,
+                sorts,
+                None,
+                nulls_order,
+                preview_wide.unwrap_or(true),
+                None,
+            )
+            .await
+            .map(Some)
+        }
+    };
+    let mut pages = futures::stream::iter(0..chunks).map(fetch_page).buffered(parallel);
+    let mut total = 0usize;
+    let mut first = true;
+    while let Some(res) = pages.next().await {
+        let page = match res {
+            Ok(Some(p)) => p,
+            Ok(None) => return Ok(total),
+            Err(e) => {
+                store.drop_result(&id);
+                return Err(e);
+            }
+        };
+        if first {
+            writer.start(page.columns.clone())?;
+            first = false;
+        }
+        let take = page.rows.len().min(max_rows.saturating_sub(total));
+        for row in &page.rows[..take] {
+            writer.push(row)?;
+        }
+        total += take;
+        writer.flush()?;
+        if page.rows.len() < page_rows || total >= max_rows {
+            break;
+        }
+    }
+    writer.finish()?;
+    Ok(total)
+}
+
 /// Rows `[start, start + count)` of a stored result, in its current order, as
 /// a JSON array of row arrays (sent as stored, never re-encoded).
 #[tauri::command]
@@ -1879,6 +2279,7 @@ pub async fn cancel_query(
     state: Db<'_>,
     query_id: Option<String>,
 ) -> Result<(), String> {
+    log::info!("cancel_query: {}", query_id.as_deref().unwrap_or("(all)"));
     if let Ok(mut map) = state.cancels.lock() {
         match query_id {
             Some(id) => {

@@ -2,16 +2,17 @@
   import Kbd from './Kbd.svelte'
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
+  import { engineId } from '$lib/connection-provider.js'
   import { workspaces, activeWorkspaceId, inWorkspace } from '$lib/stores/workspaces.js'
 
   import { comboTitle } from '$lib/shortcuts.js'
-  import { untrack } from "svelte";
+  import { untrack, onDestroy, onMount } from "svelte";
   import { getAppScale } from '$lib/app-zoom.js';
   import { createCommandHotkey } from "$lib/command-hotkey.js";
   import { bindingFor, withShortcut } from "$lib/stores/keybindings.js";
   import Icon from "./Icon.svelte";
   import SearchableMenu from "./SearchableMenu.svelte";
-  import FindReplacePanel from "./FindReplacePanel.svelte";
+
   import { listDatabases, canSwitchDatabase, currentDatabaseKey, isCurrentDatabase } from "$lib/databases.js";
   import { dbAdminKind, dbActionBlocker } from "$lib/database-admin.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -20,25 +21,25 @@
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from "$lib/stores/read-only.js";
   import { appNativeScroll, appSidebarComments, appSidebarStyle, appZoom } from "$lib/stores/settings.js";
   import { rootPxFor } from "$lib/type-scale.js";
-  import SidebarObjects from "./SidebarObjects.svelte";
-  import SidebarTree from "./SidebarTree.svelte";
   import { treeConnectionScope } from "$lib/stores/sidebar-tree.js";
   import { objectsVersion } from "$lib/stores/sidebar-objects.svelte.js";
   import { listObjectComments } from "$lib/api.js";
   import { smoothScroll } from "$lib/smooth-scroll.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
+  import ConfirmDialog from "./ConfirmDialog.svelte";
+  import { setConnectionMeta } from "$lib/stores/connections.js";
   import PanelRight from "@lucide/svelte/icons/panel-right";
   import PanelLeft from "@lucide/svelte/icons/panel-left";
   import ResizeHandle from "./ResizeHandle.svelte";
   import ConnectionsSidebarPanel from "./ConnectionsSidebarPanel.svelte";
   import RedisSidebarNav from "./RedisSidebarNav.svelte";
-  import ExtensionsSidebarPanel from "./ExtensionsSidebarPanel.svelte";
+
   import { Button } from '$lib/components/ui/button/index.js'
   import { cn } from "$lib/utils.js";
   import { CRASH_WORD, isMagic, armCrash } from '$lib/games/easter-eggs.js'
   import { flushSync, tick } from "svelte";
-  import { t } from "$lib/i18n.js";
+  import { t, tx } from "$lib/i18n.js";
   import { visibleRowCount, soleMatch } from "$lib/sidebar-filter.js";
   import { splitSchemas, isSystemSchema } from "$lib/system-schemas.js";
   import { aiChatList, requestChat } from "$lib/stores/ai-chat-bridge.js";
@@ -107,6 +108,8 @@
     updateState = /** @type {'' | 'available' | 'ready'} */ (''),
     /** @type {(id: string) => void} */
     onremoveconnection = () => {},
+    /** Open a saved connection's form in the connect dialog. @type {(c: any) => void} */
+    oneditconnection = () => {},
     /** @type {(id: string, group: string | null) => void} */
     onsetconnectiongroup = () => {},
     /** A connection's colour or workspace changed; carries the saved list. @type {(list: any[]) => void} */
@@ -167,6 +170,8 @@
     onviewddl = /** @type {(table: string) => void} */ (() => {}),
     onexportsql = /** @type {(table: string) => void} */ (() => {}),
     onexportdata = /** @type {(table: string) => void} */ (() => {}),
+    /** Open a table and its Import data dialog. @type {((table: string) => void) | null} */
+    onimportdata = null,
     /** Names of tables that currently have an open tab (current schema). @type {string[]} */
     openTables = [],
     onclosetable = /** @type {(table: string) => void} */ (() => {}),
@@ -188,6 +193,9 @@
     /** False for NoSQL engines: hides the SQL-only table actions (DDL, structure,
      *  export as SQL, generate SQL, new table/schema, ...). */
     sqlTables = true,
+    /** What the engine calls its tables (Labels, Measurements, Collections...);
+     *  empty for the SQL engines, which use the translated "Tables". */
+    tablesLabel = '',
     // ── Find & replace panel ────────────────────────────────────────────────
     // The panel works on the rows the grid has loaded, so the data comes from
     // the shell rather than being fetched again here.
@@ -239,8 +247,11 @@
    * unless something is attached, so there it shows only past one schema.
    */
   const SINGLE_FILE_ENGINES = new Set(["sqlite", "d1", "libsql", "duckdb"])
+  // No namespaces at all: the backend lists one placeholder schema, "main"
+  // (docdb::FLAT_SCHEMA), so a picker would offer a choice of one made-up name.
+  const FLAT_ENGINES = new Set(["couchdb", "firestore", "elasticsearch", "opensearch", "neo4j", "influxdb", "dynamodb"])
   const showSchemaPicker = $derived(
-    schemas.length > 1 || (schemas.length === 1 && !SINGLE_FILE_ENGINES.has(connection?.type ?? "")),
+    schemas.length > 1 || (schemas.length === 1 && !SINGLE_FILE_ENGINES.has(connection?.type ?? "") && !FLAT_ENGINES.has(connection?.type ?? "")),
   )
 
   let localFilter = $state(untrack(() => tableFilter));
@@ -561,8 +572,9 @@
   $effect(() => {
     openFindReplace = () => {
       sidebarTab = 'search'
-      // After the tab renders, or the field is not in the DOM yet.
-      tick().then(() => focusFindField())
+      // After the panel's code has loaded (it is lazy) and the tab renders,
+      // or the field is not in the DOM yet.
+      import('./FindReplacePanel.svelte').then(() => tick()).then(() => tick()).then(() => focusFindField())
     }
     showTablesTab = () => { sidebarTab = $appSidebarStyle === 'tree' ? 'tree' : 'tables' }
   })
@@ -739,7 +751,9 @@
 
   /** How many rows each tab holds, after the filter. @type {Record<SidebarTab, number>} */
   const tabCounts = $derived({
-    tables: filteredRegularTables.length + filteredPinnedTables.length,
+    // Views and materialized views list under the tables (see "Views" below),
+    // so a schema holding only views isn't an empty Tables tab.
+    tables: filteredRegularTables.length + filteredPinnedTables.length + filteredViews.length + filteredMatViews.length,
     objects: objectsShown,
     recent: Math.min(filteredRecent.length, 5),
     databases: filteredDbEntries.length,
@@ -771,7 +785,12 @@
   const SYSTEM_TOGGLE = '\u0000system-schemas'
   const schemaMenuItems = $derived([
     ...splitSchemaList.user.map((sc) => ({ value: sc, label: sc })),
-    ...(showSystemSchemas ? splitSchemaList.system.map((sc) => ({ value: sc, label: sc })) : []),
+    // The schema open now stays in the list even when it is a hidden system
+    // one (tiger, picked from the diagram): the picker showed public and
+    // schools with neither ticked, and no sign of where the sidebar was.
+    ...(showSystemSchemas
+      ? splitSchemaList.system.map((sc) => ({ value: sc, label: sc }))
+      : splitSchemaList.system.filter((sc) => sc === activeSchema).map((sc) => ({ value: sc, label: sc }))),
     ...(splitSchemaList.system.length
       ? [{
           value: SYSTEM_TOGGLE,
@@ -803,6 +822,10 @@
   // the per-row cost to a <button>, which is what makes an unwindowed list of a
   // few thousand tables affordable.
   let menuTable = $state('')
+
+  /** A saved connection waiting on "Delete connection?". @type {any} */
+  let pendingConnRemove = $state(null)
+  let confirmConnRemoveOpen = $state(false)
 
   // ── Selection state ───────────────────────────────────────────────────────
   /** @type {Set<string>} */
@@ -1094,7 +1117,7 @@
   );
 
   /** Name of the open list, for the filter's accessible name and its live region. */
-  const activeTabLabel = $derived(SIDEBAR_TABS.find((t) => t.id === sidebarTab)?.label ?? 'items')
+  const activeTabLabel = $derived((sidebarTab === 'tables' && tablesLabel) || (SIDEBAR_TABS.find((t) => t.id === sidebarTab)?.label ?? 'items'))
 
   /** Everything the filter rule counts, in the shape `sidebar-filter.js` wants. */
   const filterLists = $derived({
@@ -1493,8 +1516,20 @@
     void tableListEl
     void loadingTables
     void activePanel
-    untrack(measureTables)
+    // In the frame, not now: this runs in the middle of a render (the catalog
+    // landing on connect, the loading flag flipping), and reading layout here
+    // forced the browser to lay the page out early, again for each change.
+    // A frame callback runs after the DOM writes and before the paint, so it
+    // costs the one layout the paint needs anyway.
+    untrack(scheduleMeasureTables)
   })
+
+  let _measureFrame = 0
+  function scheduleMeasureTables() {
+    if (_measureFrame) return
+    _measureFrame = requestAnimationFrame(() => { _measureFrame = 0; measureTables() })
+  }
+  onDestroy(() => cancelAnimationFrame(_measureFrame))
 
   /**
    * Scroll the scroller so row `i` of the Tables list is fully in view, nearest
@@ -1519,10 +1554,15 @@
     const name = activeTable
     if (name === revealedTable) return
     revealedTable = name
+    // In the frame: it reads the scroller's size, and on a tab switch this runs
+    // inside the render (see scheduleMeasureTables).
     untrack(() => {
       if (!name || activePanel !== 'tables') return
-      const i = tableIndexByName.get(name)
-      if (i !== undefined) revealTableRow(i)
+      requestAnimationFrame(() => {
+        if (revealedTable !== name) return
+        const i = tableIndexByName.get(name)
+        if (i !== undefined) revealTableRow(i)
+      })
     })
   })
   const dbEntriesToRender = $derived(filteredDbEntries)
@@ -1530,9 +1570,9 @@
   // ── Objects tab ─────────────────────────────────────────────────────────
   /** True while the Objects tab loads, for the bar's refresh spinner. */
   let objectsLoading = $state(false)
-  /** @type {SidebarObjects | null} */
+  /** @type {import('./SidebarObjects.svelte').default | null} */
   let objectsPanel = $state(null)
-  /** The Tree sidebar (beta), when it is the open tab. @type {SidebarTree | null} */
+  /** The Tree sidebar (beta), when it is the open tab. @type {import('./SidebarTree.svelte').default | null} */
   let treePanel = $state(null)
 
   /**
@@ -1631,8 +1671,10 @@
     renamingChatId = null
     if (!id || !title) return
     if (liveChats) return requestChat({ type: 'rename', id, title })
-    await updateConversation(id, { title }).catch(() => {})
+    // Optimistic: shown now, put back if the store refuses.
+    const before = storedChats
     storedChats = storedChats.map((c) => (c.id === id ? { ...c, title } : c))
+    await updateConversation(id, { title }).catch(() => { storedChats = before })
   }
   /** @param {string} id */
   async function deleteChat(id) {
@@ -1645,8 +1687,9 @@
     confirmDeleteChatId = null
     clearTimeout(confirmDeleteTimer)
     if (liveChats) return requestChat({ type: 'delete', id })
-    await deleteConversation(id).catch(() => {})
+    const before = storedChats
     storedChats = storedChats.filter((c) => c.id !== id)
+    await deleteConversation(id).catch(() => { storedChats = before })
   }
   /** Focus and select a field as it mounts. @param {HTMLInputElement} el */
   function selectOnMount(el) {
@@ -1669,13 +1712,25 @@
       [c.name, c.type, c.host, c.database, /** @type {any} */ (c).filePath].some((v) => v && String(v).toLowerCase().includes(q)),
     )
   })
-  /** This workspace's connections: pinned first, then most recently used. */
-  const wsConnections = $derived(
-    inWorkspace(connections, $activeWorkspaceId, $workspaces)
-      .filter((c) => !(/** @type {any} */ (c).origin))
+  /**
+   * This workspace's connections: pinned first, then most recently used. The
+   * same rows the connection dialog lists and the workspace switcher counts,
+   * so a Docker container or local server you connected to is here too.
+   */
+  const wsConnections = $derived.by(() => {
+    const list = inWorkspace(connections, $activeWorkspaceId, $workspaces)
       .slice()
-      .sort((a, b) => (Number(!!b.pinned) - Number(!!a.pinned)) || ((b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0))),
-  )
+      .sort((a, b) => (Number(!!b.pinned) - Number(!!a.pinned)) || ((b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0)))
+    // While the pointer is on the list, rows keep their places: clicking one
+    // made it the most recent, it jumped to the top, and the next row slid
+    // under the pointer for a second click to open. New rows go last.
+    const frozen = connsFrozenOrder
+    if (!frozen) return list
+    const at = (/** @type {string} */ id) => { const i = frozen.indexOf(id); return i < 0 ? frozen.length : i }
+    return list.sort((a, b) => at(a.id) - at(b.id))
+  })
+  /** Row order kept while the pointer is over the list. @type {string[] | null} */
+  let connsFrozenOrder = $state(null)
   /** "3m", "2h", "1d", "5w": the T3 style. @param {number | null | undefined} ts */
   function ago(ts) {
     if (!ts) return ''
@@ -1686,6 +1741,21 @@
     return `${Math.round(s / (86400 * 7))}w`
   }
   /** @type {{ c: any, x: number, y: number } | null} */
+  /**
+   * The connections list and the AI chats render a frame after the rest. The
+   * sidebar mounts with a connect, in the same synchronous render as the rest
+   * of the connected layout and ahead of the catalog's reply; these two lists
+   * (a row, an engine icon and a hover card per saved connection) are not
+   * what anyone looks at in that first frame.
+   */
+  let lowerReady = $state(false)
+  onMount(() => {
+    const id = requestAnimationFrame(() => { lowerReady = true })
+    return () => cancelAnimationFrame(id)
+  })
+
+  /** The connection the list's right-click menu is for. @type {any} */
+  let connMenuFor = $state(null)
   let connHover = $state(null)
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let connHoverTimer
@@ -1694,8 +1764,18 @@
     clearTimeout(connHoverTimer)
     const r = /** @type {HTMLElement} */ (el)?.getBoundingClientRect?.()
     if (!r) return
-    connHoverTimer = setTimeout(() => { connHover = { c, x: Math.round(r.right + 8), y: Math.round(r.top - 4) } }, 350)
+    connHoverTimer = setTimeout(() => { connCardTop = Math.round(r.top - 4); connHover = { c, x: Math.round(r.right + 8), y: connCardTop } }, 350)
   }
+  /** @type {HTMLElement | null} */
+  let connCardEl = $state(null)
+  /** The card's top, kept inside the window: a row near the bottom put a
+   *  wrapped file path's card past the window's edge. */
+  let connCardTop = $state(0)
+  $effect(() => {
+    const h = connHover, el = connCardEl
+    if (!h || !el) return
+    connCardTop = Math.max(8, Math.min(h.y, window.innerHeight - el.offsetHeight - 8))
+  })
   function hideConnCard() {
     clearTimeout(connHoverTimer)
     connHover = null
@@ -1764,7 +1844,7 @@
   <ContextMenu.Separator />
   <ContextMenu.Item onSelect={() => onopeninconsole(name)}>
     <Icon name="terminal" />
-    Open in SQL console
+    Open in SQL editor
   </ContextMenu.Item>
   {#if sqlTables}
   <ContextMenu.Item onSelect={() => ongeneratesql(name)}>
@@ -1802,6 +1882,17 @@
     <Icon name="download" />
     Export data
   </ContextMenu.Item>
+  {#if onimportdata}
+  <!-- Export was here and import only in the open table's menu. -->
+  <ContextMenu.Item
+    disabled={$readOnlyMode}
+    title={$readOnlyMode ? READ_ONLY_HINT : undefined}
+    onSelect={() => onimportdata?.(name)}
+  >
+    <Icon name="file-up" />
+    Import data…
+  </ContextMenu.Item>
+  {/if}
   {/if}
   {#if tableDdl}
   <ContextMenu.Separator />
@@ -2136,7 +2227,7 @@
             <div class="max-w-[8rem] shrink-0">
                     <SearchableMenu
                       contentClass="min-w-60"
-                      placeholder="Search schemas…"
+                      placeholder={$tx('sidebar.searchSchemas', 'Search schemas…')}
                       empty="No schema"
                       items={schemaMenuItems}
                       onselect={(it) => {
@@ -2175,7 +2266,7 @@
                                  `information_schema` into an ellipsis to label the
                                  thing it had just made unreadable. -->
                             <span class="flex shrink-0 items-center" title="System schema" aria-label="System schema">
-                              <Icon name="lock" class="size-3 shrink-0 text-muted-foreground/70" />
+                              <Icon name="lock" class="size-3 shrink-0 text-muted-foreground" />
                             </span>
                           {/if}
                           {#if it.value === activeSchema}<Icon name="check" class="size-3.5 shrink-0 text-primary" />{/if}
@@ -2195,7 +2286,7 @@
             bind:this={filterEl}
             data-slash-focus="10"
             aria-keyshortcuts="/"
-            placeholder={connectionName ? "Search" : "Not connected"}
+            placeholder={connectionName ? $tx('tile.Search', 'Search') : $tx('sb.notConnected', 'Not connected')}
             value={localFilter}
             disabled={!connectionName}
             oninput={(e) => handleFilterInput(e.currentTarget.value)}
@@ -2268,7 +2359,7 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="peer no-field-frame h-8 w-full min-w-0 rounded-md bg-sidebar-accent/35 pl-[34px] pr-7 text-ui-sm text-foreground outline-none transition-colors duration-150 placeholder:text-muted-foreground hover:bg-sidebar-accent/50 focus-visible:bg-sidebar-accent/70 disabled:cursor-not-allowed disabled:opacity-40 [&::-webkit-search-cancel-button]:hidden"
+            class="peer search-box no-field-frame w-full min-w-0 pl-[2.125rem] pr-8 text-ui-sm"
             aria-label="Filter {activeTabLabel.toLowerCase()}"
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter
@@ -2330,6 +2421,8 @@
       {/if}
       {#if connectionName && panelMounted('objects')}
         <div class={activePanel === 'objects' ? 'contents' : 'hidden'}>
+          <!-- Loaded with the tab: most sessions never open it. -->
+          {#await import('./SidebarObjects.svelte') then { default: SidebarObjects }}
           <SidebarObjects
             bind:this={objectsPanel}
             bind:busyLoading={objectsLoading}
@@ -2350,10 +2443,12 @@
             bind:total={objectsTotal}
             bind:shown={objectsShown}
           />
+          {/await}
         </div>
       {/if}
       {#if panelMounted('tree')}
         <div class={activePanel === 'tree' ? 'contents' : 'hidden'}>
+          {#await import('./SidebarTree.svelte') then { default: SidebarTree }}
           <SidebarTree
             bind:this={treePanel}
             {connection}
@@ -2390,10 +2485,11 @@
             {onconnectionmeta}
             {onremoveconnection}
           />
+          {/await}
         </div>
       {/if}
       {#if activePanel === 'search'}
-        <FindReplacePanel
+        {#await import('./FindReplacePanel.svelte') then { default: FindReplacePanel }}<FindReplacePanel
           bind:focusFind={focusFindField}
           bind:findText={frFind}
           bind:replaceText={frReplace}
@@ -2407,7 +2503,7 @@
           tableName={frEnabled ? frTableName : null}
           onapply={onfindreplaceapply}
           onreveal={onrevealcell}
-        />
+        />{/await}
       {/if}
       <!-- One mounted panel per list tab, each with its own scroller: a shared
            one re-rendered every row on each return to Tables. -->
@@ -2698,7 +2794,7 @@
                         }}
                       >
                         {#if item.tableKind === 'view'}
-                          <Icon name="table-view" class="size-4 shrink-0 text-muted-foreground" />
+                          <Icon name="eye" class="size-4 shrink-0 text-muted-foreground" />
                         {:else if item.tableKind === 'materialized_view'}
                           <Icon name="layers" class="size-4 shrink-0 text-muted-foreground" />
                         {:else}
@@ -2929,6 +3025,16 @@
                           <Icon name="download" />
                           Export data
                         </ContextMenu.Item>
+                        {#if onimportdata}
+                        <ContextMenu.Item
+                          disabled={$readOnlyMode}
+                          title={$readOnlyMode ? READ_ONLY_HINT : undefined}
+                          onSelect={() => onimportdata?.(tableName)}
+                        >
+                          <Icon name="file-up" />
+                          Import data…
+                        </ContextMenu.Item>
+                        {/if}
                         {/if}
                         {/if}
                       </ContextMenu.Content>
@@ -2950,7 +3056,7 @@
                    filtering it out - counting against `regularTables` would read
                    as "one table went missing" every time one is pinned. -->
               <div class="flex w-full items-center gap-1 px-2.5 pt-2 pb-1">
-                <span class="text-ui-xs font-medium text-muted-foreground">{$t('sidebar.tables')}</span>
+                <span class="text-ui-xs font-medium text-muted-foreground">{tablesLabel || $t('sidebar.tables')}</span>
                 {#if regularTablesUnpinned.length > 0}
                   {@render countBadge(filteredRegularTables.length, regularTablesUnpinned.length)}
                 {/if}
@@ -3122,9 +3228,48 @@
             {/if}
             {/if}
 
+            <!-- Views and materialized views, under the tables. They were only
+                 in the Objects panel, so a materialized view, which holds rows
+                 and opens like a table, was nowhere in the list people look in. -->
+            {#if lt === 'tables' && filteredViews.length + filteredMatViews.length > 0}
+              <div class="flex w-full items-center gap-1 px-2.5 pt-3 pb-1">
+                <span class="text-ui-xs font-medium text-muted-foreground">{$t('sidebar.views')}</span>
+                {@render countBadge(filteredViews.length + filteredMatViews.length, views.length + matViews.length)}
+              </div>
+              <ul class="w-full px-1.5 pb-1">
+                {#each [...filteredMatViews.map((v) => ({ v, mat: true })), ...filteredViews.map((v) => ({ v, mat: false }))] as { v, mat } (v.name)}
+                  <li class="pb-0.5">
+                    <button
+                      type="button"
+                      data-sidebar-row="view:{v.name}"
+                      data-sidebar-current={activeTable === v.name ? '' : undefined}
+                      class={cn(
+                        'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors',
+                        activeTable === v.name
+                          ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
+                          : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                      )}
+                      title={mat ? `${v.name} (materialized view)` : `${v.name} (view)`}
+                      onclick={() => ontableselect(v.name)}
+                    >
+                      <span class="relative size-4 shrink-0"><Icon name={mat ? 'layers' : 'eye'} class={cn('absolute inset-0 size-4', mat ? 'text-warning' : 'text-muted-foreground')} /></span>
+                      <span class="truncate text-ui-sm leading-4">{v.name}</span>
+                      {#if showRowCount && mat && v.rowCount != null}
+                        <span class="flex min-w-[4ch] shrink-0 items-center justify-end font-mono text-ui-2xs leading-4 tabular-nums text-muted-foreground">{formatTableRowCount(v.rowCount)}</span>
+                      {:else}<span></span>{/if}
+                    </button>
+                  </li>
+                {/each}
+              </ul>
+            {/if}
+
             <!-- ── Empty state, one per tab ──────────────────────── -->
             {#if isTabEmpty(lt)}
-              {@const empty = TAB_EMPTY[lt]}
+              <!-- In the engine's own words: MongoDB has collections in a
+                   database, not tables in a schema. -->
+              {@const empty = lt === 'tables' && tablesLabel
+                ? { ...TAB_EMPTY.tables, title: `No ${tablesLabel.toLowerCase()}`, hint: 'Nothing in this database yet.' }
+                : TAB_EMPTY[lt]}
               <div class="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-16 text-center">
                 <Icon name={isTabEmptyFromFilter(lt) ? 'search' : empty.icon} class="size-5 shrink-0 text-muted-foreground" />
                 <div class="max-w-[16rem]">
@@ -3211,7 +3356,7 @@
         ondisconnect={ondisconnectconnection}
       />
     {:else if navSidebarPanel === "extensions"}
-      <ExtensionsSidebarPanel onopendetail={onopenextensiondetail} />
+      {#await import('./ExtensionsSidebarPanel.svelte') then { default: ExtensionsSidebarPanel }}<ExtensionsSidebarPanel onopendetail={onopenextensiondetail} />{/await}
     {/if}
 
     <!-- Footer, as in T3: app-wide controls as plain icons, one round action. -->
@@ -3286,7 +3431,7 @@
   <!-- AI chats (beta, AI in a tab): the T3 thread list. A chat that is
        replying says so in place of its time, so you can read a table while it
        works and see when it is done. -->
-  {#if aiInTab && aiChatId}
+  {#if aiInTab && aiChatId && lowerReady}
     <div class="flex max-h-[40%] shrink-0 flex-col pt-2">
       <div class="flex h-9 shrink-0 items-center gap-1 pr-2 pl-4">
         <button
@@ -3298,7 +3443,7 @@
             try { localStorage.setItem('stroke:sidebar-chats-open', chatsOpen ? '1' : '0') } catch {}
           }}
         >
-          <span class="flex-1 text-left">Chats</span>
+          <span class="flex-1 text-left">{$tx('sidebar.chats', 'Chats')}</span>
           {#if chats.length}<span class="font-mono text-ui-2xs tabular-nums">{chats.length}</span>{/if}
           <Icon name={chatsOpen ? 'chevron-down' : 'chevron-right'} class="size-3 shrink-0" />
         </button>
@@ -3361,7 +3506,7 @@
                   {#if busy}
                     <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-primary" aria-label="Working" />
                   {:else}
-                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80', !confirming && 'group-hover/chat:invisible group-focus-within/chat:invisible')}>{confirming ? '' : ago(chat.updatedAt)}</span>
+                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground', !confirming && 'group-hover/chat:invisible group-focus-within/chat:invisible')}>{confirming ? '' : ago(chat.updatedAt)}</span>
                   {/if}
                 </button>
                 {#if !busy}
@@ -3446,7 +3591,7 @@
             </DropdownMenu.Trigger>
             <DropdownMenu.Content align="start" class="min-w-52">
               <div class="px-2 pt-1 pb-1.5 text-ui-2xs text-muted-foreground leading-relaxed">
-                <span class="font-mono tabular-nums text-foreground/80">{regularTables.length}</span> tables{#if views.length} · <span class="font-mono tabular-nums text-foreground/80">{views.length}</span> views{/if}{#if matViews.length} · <span class="font-mono tabular-nums text-foreground/80">{matViews.length}</span> mat.{/if}
+                <span class="font-mono tabular-nums text-foreground/80">{regularTables.length}</span> tables{#if views.length}{' '}· <span class="font-mono tabular-nums text-foreground/80">{views.length}</span> views{/if}{#if matViews.length}{' '}· <span class="font-mono tabular-nums text-foreground/80">{matViews.length}</span> mat.{/if}
                 {#if hiddenCount > 0}<br /><span class="text-warning">{hiddenCount} hidden by filters</span>{/if}
               </div>
               <DropdownMenu.Separator />
@@ -3514,7 +3659,7 @@
   <!-- Connections, pinned to the sidebar's foot (T3's "Settled" pattern): a
        header that folds the list away, quiet rows with the engine and when you
        last used it, "Show more", and a hover card with the details. -->
-  {#if wsConnections.length}
+  {#if wsConnections.length && lowerReady}
     <div class="flex max-h-[45%] shrink-0 flex-col pt-2">
       <button
         type="button"
@@ -3527,39 +3672,58 @@
           if (connsOpen) tick().then(() => connsSearchEl?.focus())
         }}
       >
-        <span class="flex-1 text-left">Connections</span>
+        <span class="flex-1 text-left">{$tx('sidebar.connections', 'Connections')}</span>
         <span class="font-mono text-ui-2xs tabular-nums">{wsConnections.length}</span>
         <Icon name={connsOpen ? 'chevron-down' : 'chevron-right'} class="size-3 shrink-0" />
       </button>
       {#if connsOpen}
         {#if wsConnections.length > 5}
-          <!-- Frameless search, T3-style: focus fills it, × clears it, Esc too. -->
-          <div class="mx-2 mb-1 flex h-8 shrink-0 items-center gap-2 rounded-md px-2 focus-within:bg-sidebar-accent/60">
-            <Icon name="search" class="size-3.5 shrink-0 text-muted-foreground" />
+          <!-- The shared search box (DESIGN_SYSTEM.md): × clears it, Esc too. -->
+          <div class="relative mx-2 mb-1 shrink-0">
+            <Icon name="search" class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               bind:this={connsSearchEl}
               bind:value={connsQuery}
               type="text"
-              placeholder="Search connections"
+              placeholder={$tx('sb.searchConnections', 'Search connections…')}
               aria-label="Search connections"
-              class="no-field-frame h-full min-w-0 flex-1 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-muted-foreground"
+              class="search-box no-field-frame w-full min-w-0 pl-8 pr-8 text-ui-sm"
               onkeydown={(e) => {
                 if (e.key === 'Escape') { connsQuery = ''; e.stopPropagation() }
                 else if (e.key === 'Enter' && connsShown.length === 1 && connsShown[0].id !== activeConnectionId) onswitchconnection(connsShown[0])
               }}
             />
             {#if connsQuery}
-              <button type="button" class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label="Clear search" onclick={() => (connsQuery = '')}>
+              <button type="button" class="hit-area absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:text-foreground" aria-label="Clear search" onclick={() => (connsQuery = '')}>
                 <Icon name="x" class="size-3 shrink-0" />
               </button>
             {/if}
           </div>
         {/if}
-        <div class="app-scroll min-h-0 overflow-y-auto px-2 pb-2">
+        <div
+          class="app-scroll min-h-0 overflow-y-auto px-2 pb-2"
+          role="presentation"
+          onpointerenter={() => (connsFrozenOrder = wsConnections.map((c) => c.id))}
+          onpointerleave={() => (connsFrozenOrder = null)}
+        >
+          <!-- Right-click: what the Connections panel offers, here too. It
+               used to fall through to the sidebar's own menu ("Move sidebar
+               to the right") with nothing about the connection. One menu for
+               the list, told which row was clicked: a menu per row mounted a
+               bits-ui menu tree for every saved connection on each connect. -->
+          <ContextMenu.Root>
+          <ContextMenu.Trigger
+            class="block w-full"
+            oncontextmenu={(e) => {
+              const id = /** @type {HTMLElement | null} */ (/** @type {Element} */ (e.target).closest('[data-conn-id]'))?.dataset.connId
+              connMenuFor = connsShown.find((x) => x.id === id) ?? null
+            }}
+          >
           {#each connsShown as c (c.id)}
             {@const current = c.id === activeConnectionId}
             <button
               type="button"
+              data-conn-id={c.id}
               class={cn(
                 'flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm',
                 current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
@@ -3568,12 +3732,46 @@
               onpointerenter={(e) => showConnCard(c, e.currentTarget)}
               onpointerleave={hideConnCard}
             >
-              <DbIcon id={c.type} class="size-4 shrink-0" />
+              <DbIcon id={engineId(c)} class="size-4 shrink-0" />
               <span class="min-w-0 flex-1 truncate">{c.name || c.database || c.host || c.filePath || 'Connection'}</span>
               {#if c.pinned}<Icon name="pin" class="size-3 shrink-0 opacity-60" />{/if}
-              <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground/80">{ago(c.lastConnectedAt)}</span>
+              <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(c.lastConnectedAt)}</span>
             </button>
           {/each}
+          </ContextMenu.Trigger>
+          <ContextMenu.Content class="min-w-52">
+            {#if connMenuFor}
+              {@const c = connMenuFor}
+              {@const current = c.id === activeConnectionId}
+              {#if !current}
+                <ContextMenu.Item onSelect={() => { connHover = null; onswitchconnection(c) }}>
+                  <Icon name="arrow-right" />
+                  Connect
+                </ContextMenu.Item>
+              {/if}
+              <ContextMenu.Item onSelect={() => { connHover = null; oneditconnection(c) }}>
+                <Icon name="pencil" />
+                Edit…
+              </ContextMenu.Item>
+              <ContextMenu.Item onSelect={() => onconnectionmeta(setConnectionMeta(c.id, { pinned: !c.pinned }))}>
+                <Icon name="pin" />
+                {c.pinned ? 'Unpin' : 'Pin'}
+              </ContextMenu.Item>
+              <ContextMenu.Separator />
+              {#if current}
+                <ContextMenu.Item onSelect={() => ondisconnectconnection()}>
+                  <Icon name="unplug" />
+                  Disconnect
+                </ContextMenu.Item>
+              {:else}
+                <ContextMenu.Item variant="destructive" onSelect={() => { pendingConnRemove = c; confirmConnRemoveOpen = true }}>
+                  <Icon name="trash-2" />
+                  Delete…
+                </ContextMenu.Item>
+              {/if}
+            {/if}
+          </ContextMenu.Content>
+          </ContextMenu.Root>
           {#if connsQuery.trim() && !connsShown.length}
             <p class="px-2 py-2 text-ui-xs text-muted-foreground">No connection matches “{connsQuery.trim()}”.</p>
           {/if}
@@ -3594,16 +3792,19 @@
 
   {#if connHover}
     <div
-      class="pointer-events-none fixed z-[90] min-w-52 rounded-[10px] border border-border/60 bg-popover px-3 py-2.5 text-ui-xs elevate-2-rim"
+      bind:this={connCardEl}
+      class="pointer-events-none fixed z-[90] min-w-52 max-w-80 rounded-[10px] border border-border/60 bg-popover px-3 py-2.5 text-ui-xs elevate-2-rim"
       style:left="{connHover.x}px"
-      style:top="{connHover.y}px"
+      style:top="{connCardEl ? connCardTop : connHover.y}px"
       role="tooltip"
     >
       <p class="mb-1.5 font-medium text-foreground">{connHover.c.name || connHover.c.database || 'Connection'}</p>
       <div class="flex flex-col gap-1 text-muted-foreground">
-        <span class="flex items-center gap-2"><DbIcon id={connHover.c.type} class="size-3.5 shrink-0" /> {connHover.c.type}</span>
+        <span class="flex items-center gap-2"><DbIcon id={engineId(connHover.c)} class="size-3.5 shrink-0" /> {engineId(connHover.c)}</span>
         {#if connHover.c.host || connHover.c.filePath}
-          <span class="flex items-center gap-2"><Icon name="server" class="size-3.5 shrink-0" /> <span class="truncate">{connHover.c.host ?? connHover.c.filePath}</span></span>
+          <!-- A file path wraps: on one line a DuckDB file in a deep folder
+               stretched the card across most of the window. -->
+          <span class="flex items-start gap-2"><Icon name="server" class="mt-px size-3.5 shrink-0" /> <span class="min-w-0 break-all">{connHover.c.host ?? connHover.c.filePath}</span></span>
         {/if}
         {#if connHover.c.database}
           <span class="flex items-center gap-2"><Icon name="database" class="size-3.5 shrink-0" /> {connHover.c.database}</span>
@@ -3619,3 +3820,19 @@
   {@const at = lf ? String(text).toLowerCase().indexOf(lf) : -1}
   {#if at >= 0}{String(text).slice(0, at)}<mark class="rounded-[2px] bg-primary/25 text-inherit">{String(text).slice(at, at + lf.length)}</mark>{String(text).slice(at + lf.length)}{:else}{text}{/if}
 {/snippet}
+
+<ConfirmDialog
+  bind:open={confirmConnRemoveOpen}
+  icon="trash-2"
+  title="Delete connection?"
+  description={`"${pendingConnRemove?.name || pendingConnRemove?.database || pendingConnRemove?.host || pendingConnRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
+  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
+  confirmLabel="Delete"
+  confirmIcon="trash-2"
+  variant="destructive"
+  onconfirm={() => {
+    if (pendingConnRemove) onremoveconnection(pendingConnRemove.id);
+    pendingConnRemove = null;
+  }}
+  oncancel={() => (pendingConnRemove = null)}
+/>

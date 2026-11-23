@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { executeSql, getTableColumnStructure } from '$lib/api.js'
   import { Input } from '$lib/components/ui/input/index.js'
@@ -82,7 +83,7 @@
       toast.success(`Sequence "${name.trim()}" created`)
       onrefresh(); reset(); open = false
     } catch (e) {
-      toast.error('Could not create sequence', { description: String(e) })
+      toast.error('Could not create sequence', { description: errorText(e) })
     } finally { saving = false }
   }
 

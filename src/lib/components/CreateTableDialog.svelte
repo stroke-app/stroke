@@ -11,7 +11,7 @@
     buildTableSql, validateTable, tableFamily, typeDef, indexName, fkActions,
     COLUMN_TYPES, DEFAULT_SUGGESTIONS, hasPlaceholder, placeholderText, toSnippet,
   } from '$lib/ddl-builders.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import Plus from '@lucide/svelte/icons/plus'
   import X from '@lucide/svelte/icons/x'
   import GripVertical from '@lucide/svelte/icons/grip-vertical'
@@ -43,7 +43,10 @@
    */
 
   const family = $derived(tableFamily(dbType))
-  const typeItems = $derived(COLUMN_TYPES[family].map((t) => ({
+  // DuckDB writes Postgres-style DDL but has no serial or bigserial types:
+  // "Type with name serial does not exist", the moment New table was submitted.
+  const noSerial = $derived(dbType === 'duckdb')
+  const typeItems = $derived(COLUMN_TYPES[family].filter((t) => !(noSerial && /serial$/.test(t.name))).map((t) => ({
     value: t.name, group: t.group, hint: t.params === 2 ? '(p, s)' : t.params === 1 ? '(n)' : '',
   })))
   const canComment = $derived(family !== 'sqlite')
@@ -62,6 +65,7 @@
     const cols = [
       family === 'sqlite' ? col('id', 'INTEGER', { pk: true, notNull: true })
         : family === 'mysql' ? col('id', 'INT', { pk: true, notNull: true, defaultVal: 'AUTO_INCREMENT' })
+        : dbType === 'duckdb' ? col('id', 'integer', { pk: true, notNull: true })
         : col('id', 'serial', { pk: true, notNull: true }),
     ]
     if (family === 'postgres') cols.push(col('created_at', 'timestamptz', { notNull: true, defaultVal: 'now()' }))
@@ -215,7 +219,7 @@
       try {
         await onexecute(create)
       } catch (e) {
-        toast.error('Could not create table', { description: String(e) })
+        toast.error('Could not create table', { description: errorText(e) })
         return
       }
       // Comments and indexes run after the table exists, one at a time: not
@@ -247,7 +251,7 @@
   const cell = 'no-field-frame h-7 w-full min-w-0 rounded-md bg-transparent px-2 font-mono text-ui-sm text-foreground outline-none placeholder:text-muted-foreground hover:bg-accent/60 focus:bg-accent'
   const flag = (/** @type {boolean} */ on) => cn(
     'inline-flex h-6 min-w-7 items-center justify-center rounded-md px-1 font-mono text-ui-2xs transition-colors',
-    on ? 'bg-primary/15 font-semibold text-primary' : 'text-muted-foreground/70 hover:bg-accent hover:text-foreground',
+    on ? 'bg-primary/15 font-semibold text-primary' : 'text-muted-foreground hover:bg-accent hover:text-foreground',
   )
   const iconBtn = 'hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97] hover:bg-accent hover:text-foreground'
   const sectionHead = 'flex items-center gap-2'

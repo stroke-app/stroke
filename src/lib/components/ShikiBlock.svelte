@@ -47,7 +47,11 @@
   })
 
   const appTheme = $derived($appThemeId)
-  const isJsonInteractive = $derived(jsonInteractive && lang === 'json')
+  /** Past this many characters a block is not highlighted. */
+  const HIGHLIGHT_MAX = 200_000
+  /** Past this many, only the start is shown. */
+  const SHOW_MAX = 1_000_000
+  const isJsonInteractive = $derived(jsonInteractive && lang === 'json' && (code ?? '').length <= HIGHLIGHT_MAX)
 
   $effect(() => {
     const source = code ?? ''
@@ -57,6 +61,19 @@
     // JSON / plaintext never touch shiki - keeps the heavy highlighter (and its
     // wasm engine) out of the startup bundle, since the data-browsing path only
     // ever renders these. Other languages lazy-load shiki on demand.
+    // A value of megabytes (a jsonb holding a file) highlighted into one span
+    // per token is hundreds of thousands of nodes. Past HIGHLIGHT_MAX it is
+    // plain text, and past SHOW_MAX only its start is put on screen; Copy still
+    // takes all of it.
+    if (source.length > HIGHLIGHT_MAX) {
+      const shown = source.length > SHOW_MAX ? source.slice(0, SHOW_MAX) : source
+      const note = source.length > SHOW_MAX
+        ? `<p class="px-3 pb-3 font-sans text-ui-2xs text-muted-foreground">Showing the first ${(SHOW_MAX / 1e6).toFixed(0)} MB of ${(source.length / 1e6).toFixed(1)} MB. Copy takes all of it.</p>`
+        : ''
+      html = `<pre class="p-3 font-mono text-ui-sm text-foreground whitespace-pre-wrap break-all">${escapeHtml(shown)}</pre>${note}`
+      loading = false
+      return
+    }
     if (language === 'json') { html = highlightJson(source); loading = false; return }
     if (!language || language === 'plaintext') {
       html = `<pre class="p-3 font-mono text-ui-sm text-foreground whitespace-pre-wrap break-all">${escapeHtml(source)}</pre>`

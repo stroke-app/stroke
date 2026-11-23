@@ -34,3 +34,14 @@ describe('engineLabel', () => {
     expect(engineLabel('mystery')).toBe('mystery')
   })
 })
+
+describe('engineId', () => {
+  it('names a ScyllaDB connection by its flavor and everything else by type', async () => {
+    const { engineId, engineLabel } = await import('./connection-provider.js')
+    expect(engineId({ type: 'cassandra', flavor: 'scylladb' })).toBe('scylladb')
+    expect(engineId({ type: 'cassandra' })).toBe('cassandra')
+    expect(engineId({ type: 'postgres', flavor: 'scylladb' })).toBe('postgres')
+    expect(engineId(null)).toBe('')
+    expect(engineLabel('scylladb')).toBe('ScyllaDB')
+  })
+})

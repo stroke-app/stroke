@@ -1,4 +1,4 @@
-import { quoteName, tableRef } from './sql-ident.js'
+import { quoteName, tableRef, spannerIsPg } from './sql-ident.js'
 import { normalizeForeignKeys } from '$lib/foreign-key-nav.js'
 
 /** Sentinel used when the filter should match across every column. */
@@ -264,15 +264,40 @@ export function hasTableQuery(search, filters, sort) {
  * @returns {string}
  */
 export function buildSelectSql({ schema, table, columns = [], filters = [], search = '', sort = null, limit = 100, engine = 'postgres', quote = 'always', qualify = true }) {
-  const mysql = engine === 'mysql' || engine === 'mariadb'
-  const pg = !mysql // postgres/sqlite/etc. use double-quote identifiers + ILIKE-ish
+  // The engine family: wire-compatible engines write the same SQL.
+  const fam = ['cockroachdb', 'yugabytedb', 'alloydb', 'redshift'].includes(engine) ? 'postgres'
+    : engine === 'mariadb' ? 'mysql'
+    : engine
+  const google = fam === 'bigquery' || (fam === 'spanner' && !spannerIsPg())
   /** quote identifier, per Settings → SQL editor → Quote object names */
   const q = (/** @type {string} */ id) => quoteName(id, engine, quote)
-  /** quote a string literal */
-  const lit = (/** @type {string} */ v) => `'${String(v).replace(/'/g, "''")}'`
-  const like = pg ? 'ILIKE' : 'LIKE'
-  /** text-cast a column for substring search */
-  const asText = (/** @type {string} */ col) => (engine === 'postgres' ? `${col}::text` : col)
+  /** quote a string literal: GoogleSQL escapes with a backslash, the rest double the quote */
+  // MySQL and ClickHouse read a backslash in a string as an escape too, so it
+  // is doubled there: an equals filter on C:\new looked for "C:" and a newline.
+  const backslashEscapes = fam === 'mysql' || fam === 'clickhouse'
+  const lit = (/** @type {string} */ v) => google
+    ? `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`
+    : backslashEscapes
+      ? `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "''")}'`
+      // SQL Server: N'...' keeps non-ASCII text Unicode (see dml-preview's quoteString).
+      : `${fam === 'mssql' && /[^\x00-\x7f]/.test(String(v)) ? 'N' : ''}'${String(v).replace(/'/g, "''")}'`
+  /** A LIKE pattern's text: in MySQL and ClickHouse the backslash is also LIKE's
+   *  own escape, so a literal one is doubled once for the pattern, then again
+   *  for the string. @param {string} v */
+  const likeText = (v) => (backslashEscapes ? v.replace(/\\/g, '\\\\') : v)
+  // ILIKE is Postgres's alone (DuckDB has it too). Everywhere else LIKE, which
+  // is case-insensitive under MySQL's and SQL Server's usual collations.
+  const like = fam === 'postgres' || fam === 'duckdb' ? 'ILIKE' : 'LIKE'
+  /** text-cast a column for substring search, so a number or date can be searched too */
+  const asText = (/** @type {string} */ col) =>
+    fam === 'postgres' ? `${col}::text`
+    : fam === 'duckdb' ? `CAST(${col} AS VARCHAR)`
+    : google ? `CAST(${col} AS STRING)`
+    : fam === 'spanner' ? `CAST(${col} AS VARCHAR)`
+    : fam === 'mssql' ? `CAST(${col} AS NVARCHAR(MAX))`
+    : fam === 'oracle' ? `TO_CHAR(${col})`
+    : fam === 'clickhouse' ? `toString(${col})`
+    : col
 
   const target = tableRef({ schema, table, engine, mode: quote, qualify })
   // SELECT * keeps the generated query clean and avoids referencing virtual /
@@ -290,10 +315,10 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
       case 'gte': return `${col} >= ${lit(v)}`
       case 'lt': return `${col} < ${lit(v)}`
       case 'lte': return `${col} <= ${lit(v)}`
-      case 'contains': return `${asText(col)} ${like} ${lit('%' + v + '%')}`
-      case 'not_contains': return `${asText(col)} NOT ${like} ${lit('%' + v + '%')}`
-      case 'starts_with': return `${asText(col)} ${like} ${lit(v + '%')}`
-      case 'ends_with': return `${asText(col)} ${like} ${lit('%' + v)}`
+      case 'contains': return `${asText(col)} ${like} ${lit('%' + likeText(v) + '%')}`
+      case 'not_contains': return `${asText(col)} NOT ${like} ${lit('%' + likeText(v) + '%')}`
+      case 'starts_with': return `${asText(col)} ${like} ${lit(likeText(v) + '%')}`
+      case 'ends_with': return `${asText(col)} ${like} ${lit('%' + likeText(v))}`
       case 'sql': return `(${v})`
       case 'is_null': return `${col} IS NULL`
       case 'is_not_null': return `${col} IS NOT NULL`
@@ -311,7 +336,7 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
   // Cross-column search (only when we know the columns)
   const s = search.trim()
   if (s && columns.length) {
-    const ors = columns.map((c) => `${asText(q(c.name))} ${like} ${lit('%' + s + '%')}`)
+    const ors = columns.map((c) => `${asText(q(c.name))} ${like} ${lit('%' + likeText(s) + '%')}`)
     where.push(`(${ors.join(' OR ')})`)
   }
 
@@ -333,6 +358,11 @@ export function buildSelectSql({ schema, table, columns = [], filters = [], sear
     }
   }
   if (sort?.column) sql += ` ORDER BY ${q(sort.column)} ${sort.direction === 'desc' ? 'DESC' : 'ASC'}`
-  if (limit && limit > 0 && limit !== MAX_PAGE_SIZE) sql += ` LIMIT ${limit}`
+  if (limit && limit > 0 && limit !== MAX_PAGE_SIZE) {
+    // SQL Server has no LIMIT: TOP after SELECT. Oracle: FETCH FIRST (12c+).
+    if (fam === 'mssql') sql = sql.replace(/^SELECT /, `SELECT TOP ${limit} `)
+    else if (fam === 'oracle') sql += ` FETCH FIRST ${limit} ROWS ONLY`
+    else sql += ` LIMIT ${limit}`
+  }
   return sql + ';'
 }

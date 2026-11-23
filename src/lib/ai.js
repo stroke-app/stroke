@@ -15,50 +15,11 @@
  */
 
 import { formatCompactCount } from '$lib/table-list.js'
-import { queryLanguageFor, queryLanguagePrompt, runnableFences } from '$lib/ai-query-languages.js'
+import { queryLanguageFor, queryLanguagePrompt } from '$lib/ai-query-languages.js'
+import { getQueryFences } from '$lib/ai-query-engine.js'
 import { engineLabel } from '$lib/db-capabilities.js'
 
-/**
- * Reduce a driver error to the sentence a human needs.
- *
- * Engines wrap the useful part in transport noise: D1 returns the whole HTTP
- * envelope (`D1 API error 400 Bad Request: {"messages":[],"result":[],…}`) around
- * a five-word cause. Dumping that raw makes a one-line "no such column: activated"
- * read as a stack trace. The full text is still available on the tool channel and
- * in the query log; this is only what gets shown.
- *
- * Returns the input trimmed when nothing better can be extracted - never empty.
- * @param {string} raw
- * @returns {string}
- */
-export function humanizeDbError(raw) {
-  const text = String(raw ?? '').replace(/^Error:\s*/i, '').trim()
-  if (!text) return 'Query failed'
-
-  // Cloudflare-style envelope: pull the innermost `"message"` out of the JSON tail.
-  const jsonStart = text.search(/[{[]/)
-  if (jsonStart !== -1) {
-    try {
-      const parsed = JSON.parse(text.slice(jsonStart))
-      const errs = Array.isArray(parsed) ? parsed : parsed?.errors
-      const msg = Array.isArray(errs) ? errs.find((e) => e?.message)?.message : parsed?.message
-      if (typeof msg === 'string' && msg.trim()) return cleanEngineMessage(msg)
-    } catch { /* not JSON, fall through to the regex below */ }
-    // Unparseable tail (truncated payload) - lift the first "message" it contains.
-    const m = text.slice(jsonStart).match(/"message"\s*:\s*"((?:[^"\\]|\\.)*)"/)
-    if (m) return cleanEngineMessage(m[1].replace(/\\"/g, '"'))
-  }
-  return cleanEngineMessage(text)
-}
-
-/** Trim engine bookkeeping that means nothing to the reader. */
-function cleanEngineMessage(msg) {
-  return String(msg)
-    // SQLite appends its own error class and a byte offset into the statement.
-    .replace(/\s+at offset \d+/i, '')
-    .replace(/:\s*SQLITE_ERROR$/i, '')
-    .trim() || 'Query failed'
-}
+export { humanizeDbError } from '$lib/db-error-text.js'
 
 /**
  * Classify a DB error string into an actionable hint for the AI.
@@ -1507,16 +1468,7 @@ export function stripThinkTags(content) {
  */
 const SQL_LANGS = new Set(['sql', 'pgsql', 'postgresql', 'plpgsql', 'sqlite', 'tsql', 'mysql', 'mariadb'])
 
-/** Extra fences that hold runnable queries on the active connection (```javascript for MongoDB, ...). */
-let _queryFences = /** @type {Set<string> | null} */ (null)
-/**
- * Called when the connection changes: a NoSQL engine's own query fences get
- * a Run button like SQL blocks do.
- * @param {string | null | undefined} engine
- */
-export function setQueryEngine(engine) {
-  _queryFences = runnableFences(engine)
-}
+export { setQueryEngine } from '$lib/ai-query-engine.js'
 
 export function parseAssistantMessage(rawContent) {
   // Strip internal chain-of-thought
@@ -1555,7 +1507,7 @@ export function parseAssistantMessage(rawContent) {
           else parts.push({ type: 'code', lang: 'json', content: code })
         } else if (lang === 'mermaid' || lang === 'mmd' || MERMAID_HEAD_RE.test(code)) {
           parts.push({ type: 'mermaid', content: code })
-        } else if (SQL_LANGS.has(lang) || _queryFences?.has(lang) || (!lang && looksLikeQuery(code))) {
+        } else if (SQL_LANGS.has(lang) || getQueryFences()?.has(lang) || (!lang && looksLikeQuery(code))) {
           // An unlabelled block is only a query when it reads like one. A
           // text-art chart or a plain listing used to get the SQL card and
           // its Run button, and running it failed.
@@ -1606,7 +1558,7 @@ export function parseAssistantMessage(rawContent) {
     } else if (lang === 'mermaid' || lang === 'mmd' || MERMAID_HEAD_RE.test(code.trimStart())) {
       parts.push({ type: 'pending', kind: 'diagram', content: code })
     } else if (code.trim()) {
-      if (!lang || SQL_LANGS.has(lang) || _queryFences?.has(lang)) parts.push({ type: 'sql', content: code.trim() })
+      if (!lang || SQL_LANGS.has(lang) || getQueryFences()?.has(lang)) parts.push({ type: 'sql', content: code.trim() })
       else parts.push({ type: 'code', lang, content: code.trim() })
     } else if (nl === -1 && !lang) {
       // Just the opening backticks so far: nothing worth drawing yet.

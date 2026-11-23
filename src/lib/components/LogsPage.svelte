@@ -196,7 +196,7 @@
       <input
         type="text"
         placeholder="Search logs…"
-        class= "field-surface h-7 w-full bg-background/40 pl-7 pr-2.5 font-mono text-ui-xs text-foreground outline-none placeholder:text-muted-foreground transition-colors hover:bg-background/60"
+        class="search-box no-field-frame h-7 w-full pl-7 pr-2.5 font-mono text-ui-xs"
         bind:this={searchEl}
         bind:value={search}
       />
@@ -220,7 +220,7 @@
           class={cn(
             "inline-flex h-6 items-center rounded-md px-2 font-mono text-ui-2xs transition-colors",
             typeFilter === f.id
-              ? "bg-card text-foreground shadow-sm ring-1 ring-border/50"
+              ? "bg-card text-foreground ring-1 ring-border/50"
               : "text-muted-foreground hover:text-foreground",
           )}
           onclick={() => {
@@ -322,7 +322,7 @@
 
             <!-- Time -->
             <span
-              class="w-[58px] shrink-0 text-right font-mono text-ui-2xs tabular-nums text-muted-foreground"
+              class="w-[3.625rem] shrink-0 text-right font-mono text-ui-2xs tabular-nums text-muted-foreground"
               >{fmtTime(entry.timestamp)}</span
             >
 

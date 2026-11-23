@@ -122,6 +122,19 @@ describe('connection secrets in the keychain', () => {
     { id: 'lite', type: 'sqlite', name: 'lite', filePath: '/x.db' },
   ]
 
+  it('lists connections before the keychain answers, and fills passwords for a connect once it has', async () => {
+    vault = JSON.stringify({ pg: { password: 'hunter2' } })
+    diskPayload = JSON.stringify({ connections: [{ id: 'pg', type: 'postgres', name: 'pg', host: 'h' }] })
+    const store = await import('./connections.js')
+    // What startup does: the list is in, the keychain read keeps going.
+    await store.hydrateConnectionsFromDisk({ waitForSecrets: false })
+    expect(store.loadSavedConnections().map((c) => c.id)).toEqual(['pg'])
+    const ready = await store.withSecrets(store.loadSavedConnections()[0])
+    expect(ready.password).toBe('hunter2')
+    // A field the caller set wins over the stored one.
+    expect((await store.withSecrets({ id: 'pg', password: 'typed' })).password).toBe('typed')
+  })
+
   it('moves inline secrets to the keychain at startup and strips them from disk', async () => {
     localStorage.setItem('stroke:connections', JSON.stringify(legacy))
     const store = await import('./connections.js')
@@ -211,5 +224,57 @@ describe('set-aside pools on edit and delete', () => {
     removeConnection('p')
     await flush()
     expect(closedParked).toEqual(['p'])
+  })
+})
+
+// Workspaces: a one-click connect (provider, Docker, local server, D1) builds a
+// fresh row each time, and writing it over the saved one used to drop its
+// workspace, colour and group, sending it back to Personal.
+describe('workspace filing on save', () => {
+  beforeEach(() => {
+    installLocalStorage()
+    vi.resetModules()
+  })
+
+  it('files a new connection under the workspace on screen', async () => {
+    const { upsertConnection, loadSavedConnections } = await import('./connections.js')
+    const ws = await import('./workspaces.js')
+    ws.activeWorkspaceId.set('work')
+    upsertConnection({ id: 'n', type: 'postgres', name: 'neon-db', host: 'ep.neon.tech' })
+    expect(loadSavedConnections()[0].workspaceId).toBe('work')
+  })
+
+  it('leaves a new connection in the default workspace when that is on screen', async () => {
+    const { upsertConnection, loadSavedConnections } = await import('./connections.js')
+    upsertConnection({ id: 'n', type: 'postgres', name: 'x' })
+    expect(loadSavedConnections()[0].workspaceId).toBeUndefined()
+  })
+
+  it('keeps the workspace, colour and group when a fresh row is written over a saved one', async () => {
+    const { upsertConnection, loadSavedConnections } = await import('./connections.js')
+    upsertConnection({ id: 'local-pg', type: 'postgres', name: 'pg', workspaceId: 'work', color: 'red', group: 'Local' })
+    // What connectionFor / providerToSaved hand back on the next connect.
+    upsertConnection({ id: 'local-pg', type: 'postgres', name: 'pg', host: '127.0.0.1', lastConnectedAt: 5 })
+    const row = loadSavedConnections()[0]
+    expect([row.workspaceId, row.color, row.group, row.lastConnectedAt]).toEqual(['work', 'red', 'Local', 5])
+  })
+
+  it('lets the edit form move or clear them by naming the field', async () => {
+    const { upsertConnection, loadSavedConnections } = await import('./connections.js')
+    upsertConnection({ id: 'a', type: 'postgres', name: 'a', workspaceId: 'work', color: 'red' })
+    upsertConnection({ id: 'a', type: 'postgres', name: 'a', workspaceId: undefined, color: 'blue' })
+    const row = loadSavedConnections()[0]
+    expect([row.workspaceId, row.color]).toEqual([undefined, 'blue'])
+  })
+
+  it('stores a synced row exactly as it came', async () => {
+    const { upsertConnection, loadSavedConnections } = await import('./connections.js')
+    const ws = await import('./workspaces.js')
+    ws.activeWorkspaceId.set('work')
+    upsertConnection({ id: 'a', type: 'postgres', name: 'a', workspaceId: 'home', color: 'red' })
+    upsertConnection({ id: 'a', type: 'postgres', name: 'a' }, { exact: true })
+    upsertConnection({ id: 'b', type: 'postgres', name: 'b' }, { exact: true })
+    const [a, b] = loadSavedConnections()
+    expect([a.workspaceId, a.color, b.workspaceId]).toEqual([undefined, undefined, undefined])
   })
 })

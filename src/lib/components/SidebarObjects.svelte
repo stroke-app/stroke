@@ -37,7 +37,7 @@
   import {
     objectGroups, objectsVersion, bumpObjects, openDefinition, copyDefinition, openTemplate,
   } from '$lib/stores/sidebar-objects.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
 
   /** @typedef {import('$lib/object-templates.js').ObjectKind} ObjectKind */
   /** @typedef {import('$lib/objects-tree.js').TreeRow} TreeRow */
@@ -389,13 +389,10 @@
     kbd = false
     active = hit.r.key
     scroller?.focus({ preventScroll: true })
-    if (hit.r.t !== 'item') toggle(hit.r)
-  }
-
-  /** @param {MouseEvent} e */
-  function onDblClick(e) {
-    const hit = rowAt(e)
-    if (hit?.r.t === 'item') void openItem(hit.r.item)
+    // One click opens an object, as one click opens a table in the Tables
+    // tree; it used to take two here, with nothing to say so.
+    if (hit.r.t === 'item') void openItem(hit.r.item)
+    else toggle(hit.r)
   }
 
   /** Focus the tree from outside (ArrowDown in the filter box). */
@@ -450,7 +447,7 @@
       }
       bumpObjects()
     } catch (e) {
-      toast.error(`Couldn't drop ${item.name}`, { description: String(e) })
+      toast.error(`Couldn't drop ${item.name}`, { description: errorText(e) })
     }
   }
 
@@ -460,7 +457,7 @@
       await navigator.clipboard.writeText(text)
       toast.success('Copied')
     } catch (e) {
-      toast.error('Copy failed', { description: String(e) })
+      toast.error('Copy failed', { description: errorText(e) })
     }
   }
 
@@ -552,7 +549,6 @@
             onblur={() => (focused = false)}
             onpointerdown={(e) => { kbd = false; props.onpointerdown?.(e) }}
             onclick={onClick}
-            ondblclick={onDblClick}
             oncontextmenu={(e) => {
               const hit = rowAt(e)
               if (!hit) { e.preventDefault(); return }
@@ -657,7 +653,7 @@
                     {#if busy === item.key}
                       <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-muted-foreground" />
                     {:else if item.right}
-                      <span class="max-w-[40%] shrink-0 truncate text-right font-mono text-ui-2xs tabular-nums text-muted-foreground/80">{item.right}</span>
+                      <span class="max-w-[40%] shrink-0 truncate text-right font-mono text-ui-2xs tabular-nums text-muted-foreground">{item.right}</span>
                     {/if}
                   </div>
                 {/if}
@@ -748,16 +744,10 @@
         role="switch"
         aria-checked={dropCascade}
         aria-label="Cascade"
-        class={cn(
-          'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
-          dropCascade ? 'bg-destructive' : 'bg-muted',
-        )}
+        class={cn('app-switch', dropCascade && '!bg-destructive')}
         onclick={() => (dropCascade = !dropCascade)}
       >
-        <span class={cn(
-          'pointer-events-none block size-3.5 rounded-full bg-white shadow-sm transition-transform duration-200',
-          dropCascade ? 'translate-x-[14px]' : 'translate-x-0',
-        )}></span>
+        <span class="app-switch-thumb"></span>
       </button>
     </div>
     <div class="h-px bg-border/25"></div>

@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   /**
    * One SQL cell: a header (run counter, the {{variables}} it uses, status,
    * actions), the editor sized to its query, and the result.
@@ -14,7 +15,7 @@
   import Copy from '@lucide/svelte/icons/copy'
   import CopyPlus from '@lucide/svelte/icons/copy-plus'
   import Braces from '@lucide/svelte/icons/braces'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { saveExportAs } from '$lib/api.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { variableNames } from '$lib/notebook.js'
@@ -110,7 +111,7 @@
       const path = await saveExportAs([header, ...rows].join('\n'), `query-${cellIndex + 1}.csv`, { name: 'CSV', extensions: ['csv'] })
       if (path) toast.success('Exported as CSV', { description: `Saved to ${path}` })
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 
@@ -168,7 +169,7 @@
         type="button"
         onclick={onrun}
         disabled={running || !content.trim()}
-        title="Run (⌘↵) · run and go to the next cell (⇧↵)"
+        title={`Run (${comboTitle('Mod+Enter')}) · run and go to the next cell (${comboTitle('Shift+Enter')})`}
         class="inline-flex h-6 items-center gap-1 rounded-md bg-primary/90 px-2 text-ui-2xs font-medium text-primary-foreground transition-colors hover:bg-primary disabled:pointer-events-none disabled:opacity-40"
       >
         <Play class="size-3 shrink-0" />Run
@@ -244,7 +245,7 @@
                   <tr class={cn('border-b border-border/10 hover:bg-muted/20', ri % 2 === 1 && 'bg-muted/[0.04]')}>
                     <td class="border-r border-border/20 px-3 py-1 text-right font-mono text-ui-3xs text-muted-foreground select-none">{ri + 1}</td>
                     {#each row as cell, ci (ci)}
-                      <td class="max-w-[320px] border-r border-border/10 px-4 py-1 font-mono">
+                      <td class="max-w-[20rem] border-r border-border/10 px-4 py-1 font-mono">
                         {#if cell === null || cell === undefined}
                           <span class="text-muted-foreground italic">NULL</span>
                         {:else}
@@ -254,6 +255,9 @@
                     {/each}
                   </tr>
                 {/each}
+                {#if !result.rows.length}
+                  <tr><td colspan={result.columns.length + 1} class="px-4 py-3 text-center text-ui-xs text-muted-foreground">The query returned no rows</td></tr>
+                {/if}
                 {#if truncated}
                   <tr><td colspan={result.columns.length + 1} class="px-4 py-2 text-center text-ui-xs text-muted-foreground italic">Showing first {MAX_DISPLAY_ROWS} of {result.rows.length} rows</td></tr>
                 {/if}

@@ -40,5 +40,5 @@
   )}
 >
   <WrapText class="size-3 shrink-0" />
-  {#if !compact}<span>Wrap</span>{/if}
+  {#if !compact}<span class="@max-[34rem]/jv:sr-only">Wrap</span>{/if}
 </button>

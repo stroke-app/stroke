@@ -1,3 +1,4 @@
+import { comboTitle } from './shortcuts.js'
 /**
  * A SQL prompt drawn in xterm for engines with no interactive CLI (Cloudflare
  * D1: `wrangler d1 execute` runs one command and exits). Nothing is spawned:
@@ -202,7 +203,7 @@ export function createSqlRepl({ write, run, name, historyKey, language = 'SQL', 
         `  ↑ ↓ history · Ctrl+C cancel the statement · Ctrl+U clear the line`,
       ].join('\r\n') + '\r\n')
     } else if (c === '.exit' || c === '.quit') {
-      write(`${DIM}Close the panel with ⌘J. Nothing to exit: the prompt runs over the app's connection.${RESET}\r\n`)
+      write(`${DIM}Close the panel with ${comboTitle('Mod+J')}. Nothing to exit: the prompt runs over the app's connection.${RESET}\r\n`)
     } else if (c === '.tables' && listTables) {
       await shown(listTables)
     } else if (c === '.schema' && describe) {

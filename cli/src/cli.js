@@ -11,6 +11,7 @@ const HELP = `strokedb - open your project's database in Stroke
 Usage
   npx strokedb [connection]        Desktop app if installed, else the web studio
   npx strokedb --web [connection]  Always the web studio
+  npx strokedb mcp [connection]    An MCP server for AI agents (see below)
 
   connection   A URL (postgres://, mysql://, ...) or a SQLite file. Left out,
                it's read from ${URL_KEYS.slice(0, 3).join(', ')}, ... in the
@@ -26,12 +27,25 @@ Options
                    device, through stroke.click's relay. Read-only: browse
                    and run SELECTs. End-to-end encrypted; the key is only in
                    the link. Needs Node 22+.
-  --write          With --share: let the link edit rows and run any SQL
+  --write          With --share or mcp: allow edits (read-only otherwise)
+  --table <table>  Open on this table (schema.table or just its name)
+  --json           Print the links as one JSON line, for scripts and agents
   -h, --help       Show this help
   -v, --version    Show the version
 
 The web studio talks to a bridge on 127.0.0.1 that only answers the tab this
-command opens. It stops when you press Ctrl+C.`
+command opens. It stops when you press Ctrl+C.
+
+AI agents
+  An agent on another machine (a cloud box, a container) can show you the
+  database. Add the MCP server to it once:
+
+    claude mcp add strokedb -- npx -y strokedb mcp
+
+  It reads the database (list_tables, describe_table, query) and its
+  show_table tool hands you a link that opens a table in the web studio or
+  the Stroke app; later calls switch your open studio to the next table.
+  Without MCP: npx strokedb --share --no-open --json --table users`
 
 /** @param {string[]} argv */
 export async function main(argv) {
@@ -46,6 +60,8 @@ export async function main(argv) {
       'no-open': { type: 'boolean' },
       share: { type: 'boolean' },
       write: { type: 'boolean' },
+      table: { type: 'string' },
+      json: { type: 'boolean' },
       help: { type: 'boolean', short: 'h' },
       version: { type: 'boolean', short: 'v' },
     },
@@ -57,15 +73,44 @@ export async function main(argv) {
   }
 
   const cwd = process.cwd()
-  const found = findConnection({ arg: positionals[0], cwd })
+  const mcp = positionals[0] === 'mcp'
+  const found = findConnection({ arg: positionals[mcp ? 1 : 0], cwd })
+  if (mcp) {
+    // stdout belongs to the protocol: everything else goes to stderr.
+    if (!found) {
+      console.error('strokedb mcp: no database found. Pass one (npx strokedb mcp postgres://...), or set DATABASE_URL.')
+      return 1
+    }
+    const engine = engineOf(found.uri)
+    if (!engine) {
+      console.error('strokedb mcp: PostgreSQL, MySQL and SQLite only.')
+      return 1
+    }
+    quietSqliteWarning()
+    console.error(`strokedb mcp: ${redact(found.uri)} (from ${found.source})${values.write ? ', writable' : ', read-only'}`)
+    const { runMcp } = await import('./mcp.js')
+    await runMcp({
+      uri: found.uri,
+      engine,
+      name: values.name ?? path.basename(cwd),
+      write: !!values.write,
+      studio: process.env.STROKE_STUDIO_URL || `${STUDIO_ORIGIN}/studio`,
+    })
+    return 0
+  }
   if (!found) {
     console.error(`No database found here.\n\nPass one (npx strokedb postgres://user:pass@host/db), set DATABASE_URL in .env,\nor run this in a folder with a .db or .sqlite file.`)
     return 1
   }
   const name = values.name ?? path.basename(cwd)
-  console.log(`Database: ${redact(found.uri)}  (from ${found.source})`)
+  // --json keeps stdout to the one line; the rest goes to stderr.
+  const say = values.json ? (/** @type {string} */ m) => console.error(m) : (/** @type {string} */ m) => console.log(m)
+  say(`Database: ${redact(found.uri)}  (from ${found.source})`)
+  const openTable = values.table?.trim() || ''
+  /** The table to open first, as a fragment parameter. */
+  const withTable = (/** @type {string} */ link) => (openTable ? `${link}&${new URLSearchParams({ open: openTable })}` : link)
 
-  if (values.write && !values.share) {
+  if (values.write && !values.share && !mcp) {
     console.error('--write goes with --share.')
     return 1
   }
@@ -106,9 +151,11 @@ export async function main(argv) {
     origins: [new URL(studio).origin],
     port: values.port ? Number(values.port) : 0,
   })
-  const link = studioUrl({ studio, port: bridge.port, token: bridge.token })
+  const link = withTable(studioUrl({ studio, port: bridge.port, token: bridge.token }))
   const opened = !values['no-open'] ? await openUrl(link) : false
-  console.log(`\n${opened ? 'Opened' : 'Open'} the studio${opened ? '' : ' at'}:\n  ${link}\n\nThe link is the key to this session; don't share it. Press Ctrl+C to stop.`)
+  say(`\n${opened ? 'Opened' : 'Open'} the studio${opened ? '' : ' at'}:\n  ${link}\n\nThe link is the key to this session; don't share it. Press Ctrl+C to stop.`)
+  /** @type {Record<string, string>} */
+  const out = { database: redact(found.uri), studio: link }
 
   /** @type {{ close(): void } | null} */
   let relay = null
@@ -124,13 +171,18 @@ export async function main(argv) {
         routes: makeRoutes({ engine: sharedDb, name, shared: true, write: !!values.write }),
         ...share,
         base: new URL(studio).origin,
-        onStatus: (status, detail) => console.log(status === 'online' ? '  Sharing: online' : `  Sharing: ${detail ?? 'offline'}`),
+        onStatus: (status, detail) => say(status === 'online' ? '  Sharing: online' : `  Sharing: ${detail ?? 'offline'}`),
       })
-      console.log(`\nShare link (Labs, ${values.write ? 'can edit' : 'read-only'}):\n  ${shareUrl({ studio, ...share })}\n\nAnyone with this link can ${values.write ? 'read and change' : 'read'} this database while this runs. It's\nend-to-end encrypted: the key is only in the link, stroke.click sees ciphertext.`)
+      const shared = withTable(shareUrl({ studio, ...share }))
+      out.share = shared
+      out.app = `stroke://studio?${new URLSearchParams({ relay: share.room, key: share.key, ...(openTable ? { open: openTable } : {}) })}`
+      say(`\nShare link (Labs, ${values.write ? 'can edit' : 'read-only'}):\n  ${shared}\n\nIn the Stroke app:\n  ${out.app}\n\nAnyone with this link can ${values.write ? 'read and change' : 'read'} this database while this runs. It's\nend-to-end encrypted: the key is only in the link, stroke.click sees ciphertext.`)
     } catch (e) {
       console.error(`Could not start sharing: ${e instanceof Error ? e.message : e}`)
     }
   }
+
+  if (values.json) console.log(JSON.stringify(out))
 
   await new Promise((resolve) => {
     const stop = () => resolve(undefined)

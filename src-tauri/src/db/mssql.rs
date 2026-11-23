@@ -3,12 +3,102 @@ use super::query::{ColumnInfo, ForeignKeyInfo, RowFilter, SqlResult, TableRows};
 use super::schema::{ColumnStructureRow, IndexInfo, TableInfo};
 use serde_json::Value;
 use std::collections::HashMap;
+use chrono::Timelike;
 use std::time::Instant;
 use tiberius::{AuthMethod, Client, Config, EncryptionLevel, Row};
 use tokio::net::TcpStream;
 use tokio_util::compat::{Compat, TokioAsyncWriteCompatExt};
 
 pub type MssqlClient = Client<Compat<TcpStream>>;
+
+// ── Stop ─────────────────────────────────────────────────────────────────────
+//
+// tiberius has no way to send SQL Server's attention signal, and dropping a
+// query's future mid-stream leaves the TDS reply half read on the socket: the
+// next query on that client would read the rest of the old one. So Stop does
+// two things: `KILL`s the session from a second connection, which ends the
+// statement on the server, and then `reset` swaps in a fresh client.
+//
+// The handle does not carry its config, so it is kept here, keyed by the
+// handle's address, with the session id (`@@SPID`) to kill.
+
+static SESSIONS: std::sync::LazyLock<std::sync::Mutex<HashMap<usize, (MssqlConfig, i16)>>> =
+    std::sync::LazyLock::new(Default::default);
+
+fn key(handle: &MssqlHandle) -> usize {
+    std::sync::Arc::as_ptr(handle) as *const () as usize
+}
+
+async fn spid(client: &mut MssqlClient) -> Option<i16> {
+    let row = client.simple_query("SELECT CAST(@@SPID AS smallint)").await.ok()?.into_row().await.ok()??;
+    row.get::<i16, _>(0)
+}
+
+/// Remember how to reach a handle's session, so Stop can kill it.
+pub async fn remember(handle: &MssqlHandle, cfg: &MssqlConfig) {
+    let id = spid(&mut *handle.lock().await).await;
+    if let Some(id) = id {
+        SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).insert(key(handle), (cfg.clone(), id));
+    }
+}
+
+/// Drop a handle's registry entry once the handle is done with (a
+/// transaction's own client). The entry holds the login, and the address it
+/// is keyed by can be reused by the next handle.
+pub fn forget(handle: &MssqlHandle) {
+    SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).remove(&key(handle));
+}
+
+/// A new client on the same server and login, for a transaction: on the
+/// shared client every other query would have run inside it.
+pub async fn open_tx_client(handle: &MssqlHandle) -> Result<MssqlHandle, String> {
+    let cfg = SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get(&key(handle)).map(|(c, _)| c.clone());
+    let cfg = cfg.ok_or("This SQL Server connection can't open a second session. Reconnect and try again.")?;
+    let client = connect(&cfg).await?;
+    let h = std::sync::Arc::new(tokio::sync::Mutex::new(client));
+    remember(&h, &cfg).await;
+    Ok(h)
+}
+
+/// One batch on the handle, for BEGIN / COMMIT / ROLLBACK.
+pub async fn batch(handle: &MssqlHandle, sql: &str) -> Result<(), String> {
+    let mut client = handle.lock().await;
+    client.simple_query(sql).await.map_err(|e| format!("MS SQL error: {e}"))?.into_results().await.map_err(|e| format!("MS SQL error: {e}"))?;
+    Ok(())
+}
+
+/// End the handle's running statement on the server. Best effort: KILL needs
+/// ALTER ANY CONNECTION, and without it `reset` closing the socket is what
+/// stops the work.
+pub async fn cancel(handle: &MssqlHandle) {
+    let Some((cfg, id)) = SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get(&key(handle)).cloned() else { return };
+    let kill = async {
+        let mut other = connect(&cfg).await?;
+        other.simple_query(format!("KILL {id}")).await.map_err(|e| e.to_string())?.into_results().await.map_err(|e| e.to_string())?;
+        Ok::<(), String>(())
+    };
+    match tokio::time::timeout(std::time::Duration::from_secs(10), kill).await {
+        Ok(Ok(())) => {}
+        Ok(Err(e)) => log::info!("mssql stop: KILL {id} refused ({e}); closing the connection instead"),
+        Err(_) => log::info!("mssql stop: KILL {id} timed out; closing the connection instead"),
+    }
+}
+
+/// Replace the handle's client after a Stop: the old socket is closed (which
+/// also makes the server abandon anything still running) and the next query
+/// gets a clean protocol stream.
+pub async fn reset(handle: &MssqlHandle) -> Result<(), String> {
+    let Some((cfg, _)) = SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).get(&key(handle)).cloned() else {
+        return Err("The connection was stopped and can't be reopened here. Reconnect to keep working.".into());
+    };
+    let mut fresh = connect(&cfg).await?;
+    let id = spid(&mut fresh).await;
+    *handle.lock().await = fresh;
+    if let Some(id) = id {
+        SESSIONS.lock().unwrap_or_else(|e| e.into_inner()).insert(key(handle), (cfg, id));
+    }
+    Ok(())
+}
 
 // ── Connect ──────────────────────────────────────────────────────────────────
 
@@ -18,7 +108,10 @@ pub type MssqlClient = Client<Compat<TcpStream>>;
 /// bounds the whole attempt and reports which phase stalled.
 pub async fn connect(cfg: &MssqlConfig) -> Result<MssqlClient, String> {
     let config = build_config(cfg);
-    let addr = config.get_addr();
+    // Through an SSH tunnel the socket goes to the tunnel's local end while
+    // the config keeps the server's name, which TLS checks the certificate
+    // against.
+    let addr = cfg.via.map(|a| a.to_string()).unwrap_or_else(|| config.get_addr());
     let tcp = TcpStream::connect(&addr)
         .await
         .map_err(|e| format!("Can't reach {addr}: {e}"))?;
@@ -100,6 +193,22 @@ pub async fn ping(handle: &MssqlHandle) -> Result<(), String> {
 
 // ── Cell conversion ──────────────────────────────────────────────────────────
 
+/// A decimal's digits at its scale; a scale of 0 has no point.
+fn numeric_text(n: tiberius::numeric::Numeric) -> String {
+    if n.scale() == 0 { n.value().to_string() } else { n.to_string() }
+}
+
+/// A datetime as text. The legacy `datetime` counts in 1/300 s ticks, so .997
+/// arrived as .996666666; it is rounded to the millisecond SQL Server shows.
+fn datetime_text(d: chrono::NaiveDateTime, legacy: bool) -> String {
+    if !legacy {
+        return d.format("%Y-%m-%d %H:%M:%S%.f").to_string();
+    }
+    let ms = (d.and_utc().timestamp_subsec_nanos() as i64 + 500_000) / 1_000_000;
+    let d = d.with_nanosecond(0).unwrap_or(d) + chrono::Duration::milliseconds(ms);
+    d.format("%Y-%m-%d %H:%M:%S%.3f").to_string()
+}
+
 /// Convert one cell to JSON by probing the column's concrete Rust type.
 /// tiberius `try_get` fails (not panics) on a type mismatch, so the cascade
 /// lands on the first type whose `FromSql` matches the column.
@@ -133,8 +242,25 @@ fn cell_to_json(row: &Row, i: usize) -> Value {
     try_scalar!(f64, |f| serde_json::Number::from_f64(f).map(Value::Number).unwrap_or(Value::Null));
     try_scalar!(f32, |f| serde_json::Number::from_f64(f as f64).map(Value::Number).unwrap_or(Value::Null));
 
+    // decimal/numeric as exact text: an f64 would round a decimal(38) and drop
+    // the scale's trailing zeros (12.50 became 12.5). Before this case the
+    // cascade found no match and every decimal cell read NULL.
+    if let Ok(v) = row.try_get::<tiberius::numeric::Numeric, usize>(i) {
+        return v.map(|n| Value::String(numeric_text(n))).unwrap_or(Value::Null);
+    }
+    // uniqueidentifier, upper case as SQL Server prints it (it read NULL too).
+    if let Ok(v) = row.try_get::<tiberius::Uuid, usize>(i) {
+        return v.map(|u| Value::String(u.to_string().to_uppercase())).unwrap_or(Value::Null);
+    }
+    if let Ok(v) = row.try_get::<chrono::DateTime<chrono::FixedOffset>, usize>(i) {
+        return v.map(|d| Value::String(d.format("%Y-%m-%d %H:%M:%S%.f %:z").to_string())).unwrap_or(Value::Null);
+    }
     if let Ok(v) = row.try_get::<chrono::NaiveDateTime, usize>(i) {
-        return v.map(|d| Value::String(d.format("%Y-%m-%d %H:%M:%S%.f").to_string())).unwrap_or(Value::Null);
+        let legacy = matches!(
+            row.columns().get(i).map(|c| c.column_type()),
+            Some(tiberius::ColumnType::Datetime | tiberius::ColumnType::Datetimen)
+        );
+        return v.map(|d| Value::String(datetime_text(d, legacy))).unwrap_or(Value::Null);
     }
     if let Ok(v) = row.try_get::<chrono::NaiveDate, usize>(i) {
         return v.map(|d| Value::String(d.to_string())).unwrap_or(Value::Null);
@@ -148,13 +274,54 @@ fn cell_to_json(row: &Row, i: usize) -> Value {
     Value::Null
 }
 
+/// A result column's type as SQL Server names it. The wire type's Rust name
+/// (`format!("{:?}")`) showed `int4`, `intn`, `bitn` and `datetimen` in the
+/// grid. The nullable wire types (`Intn`, `Floatn`, `Datetimen`) don't carry
+/// their width, so they read as the family name: a nullable bigint is `int`.
+fn type_name(t: tiberius::ColumnType) -> &'static str {
+    use tiberius::ColumnType as T;
+    match t {
+        T::Null => "null",
+        T::Bit | T::Bitn => "bit",
+        T::Int1 => "tinyint",
+        T::Int2 => "smallint",
+        T::Int4 | T::Intn => "int",
+        T::Int8 => "bigint",
+        T::Float4 => "real",
+        T::Float8 | T::Floatn => "float",
+        T::Money => "money",
+        T::Money4 => "smallmoney",
+        T::Decimaln => "decimal",
+        T::Numericn => "numeric",
+        T::Datetime | T::Datetimen => "datetime",
+        T::Datetime4 => "smalldatetime",
+        T::Datetime2 => "datetime2",
+        T::DatetimeOffsetn => "datetimeoffset",
+        T::Daten => "date",
+        T::Timen => "time",
+        T::Guid => "uniqueidentifier",
+        T::BigVarChar => "varchar",
+        T::BigChar => "char",
+        T::NVarchar => "nvarchar",
+        T::NChar => "nchar",
+        T::BigVarBin => "varbinary",
+        T::BigBinary => "binary",
+        T::Text => "text",
+        T::NText => "ntext",
+        T::Image => "image",
+        T::Xml => "xml",
+        T::Udt => "udt",
+        T::SSVariant => "sql_variant",
+    }
+}
+
 fn rows_to_result(rows: &[Row], elapsed: u64) -> SqlResult {
     let columns: Vec<ColumnInfo> = rows
         .first()
         .map(|r| {
             r.columns()
                 .iter()
-                .map(|c| ColumnInfo::new(c.name().to_string(), format!("{:?}", c.column_type()).to_lowercase()))
+                .map(|c| ColumnInfo::new(c.name().to_string(), type_name(c.column_type()).to_string()))
                 .collect()
         })
         .unwrap_or_default();
@@ -255,11 +422,62 @@ pub async fn execute_sql(handle: &MssqlHandle, sql: &str) -> Result<SqlResult, S
             columns: vec![],
             rows: vec![],
             row_count: Some(affected as i64),
-            message: Some(format!("{affected} row(s) affected")),
+            message: Some(super::query::affected_message(sql, affected as i64)),
             query_ms: t0.elapsed().as_millis() as u64,
             sql: sql.to_string(),
         })
     }
+}
+
+/// A read query's first result set, streamed into the console's sink as the
+/// server sends it rather than collected. Later result sets are read and
+/// dropped, so the protocol stream ends clean. Stop is the caller's (it races
+/// this and resets the client, see query::run_one_cancellable).
+pub async fn stream_into(handle: &MssqlHandle, sql: &str, sink: &mut super::query::RowSink) -> Result<SqlResult, String> {
+    use futures::TryStreamExt;
+    let t0 = Instant::now();
+    let mut client = handle.lock().await;
+    let mut stream = client.simple_query(sql).await.map_err(|e| format!("MS SQL error: {e}"))?;
+    let mut columns: Vec<ColumnInfo> = Vec::new();
+    let mut total = 0usize;
+    let mut sink_err: Option<String> = None;
+    while let Some(item) = stream.try_next().await.map_err(|e| format!("MS SQL error: {e}"))? {
+        match item {
+            tiberius::QueryItem::Metadata(m) if m.result_index() == 0 => {
+                columns = m
+                    .columns()
+                    .iter()
+                    .map(|c| ColumnInfo::new(c.name().to_string(), type_name(c.column_type()).to_string()))
+                    .collect();
+            }
+            tiberius::QueryItem::Row(r) if r.result_index() == 0 && sink_err.is_none() => {
+                if total == 0 {
+                    if let Err(e) = sink.start(columns.clone()) {
+                        sink_err = Some(e);
+                        continue;
+                    }
+                }
+                match sink.push((0..r.columns().len()).map(|i| cell_to_json(&r, i)).collect()) {
+                    Ok(()) => total += 1,
+                    Err(e) => sink_err = Some(e),
+                }
+            }
+            _ => {}
+        }
+    }
+    drop(stream);
+    if let Some(e) = sink_err {
+        return Err(e);
+    }
+    if total > 0 {
+        sink.finish()?;
+    }
+    Ok(SqlResult { columns, rows: vec![], row_count: Some(total as i64), message: None, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
+}
+
+/// Whether `sql` reads (and so has rows to stream).
+pub(crate) fn reads(sql: &str) -> bool {
+    is_read_query(sql)
 }
 
 /// Run a read query and return the first result set's rows (helper for introspection).
@@ -764,9 +982,18 @@ fn sql_literal(v: &Value) -> String {
         Value::Null => "NULL".to_string(),
         Value::Bool(b) => if *b { "1".to_string() } else { "0".to_string() },
         Value::Number(n) => n.to_string(),
-        Value::String(s) => format!("'{}'", esc_literal(s)),
-        other => format!("'{}'", esc_literal(&other.to_string())),
+        Value::String(s) => str_literal(s),
+        other => str_literal(&other.to_string()),
     }
+}
+
+/// A T-SQL string. Non-ASCII text is written N'...': a plain literal is
+/// converted to the database's code page first, so an edit to Chinese or
+/// Cyrillic text was stored as question marks. ASCII stays plain, which keeps
+/// a lookup on a varchar key from converting the whole index to nvarchar.
+fn str_literal(s: &str) -> String {
+    let n = if s.is_ascii() { "" } else { "N" };
+    format!("{n}'{}'", esc_literal(s))
 }
 
 fn pk_where(pk: &HashMap<String, Value>) -> String {
@@ -844,21 +1071,103 @@ pub async fn delete_table_rows(
 }
 
 #[cfg(test)]
+mod literal_tests {
+    use serde_json::json;
+    #[test]
+    fn unicode_strings_get_the_n_prefix() {
+        assert_eq!(super::sql_literal(&json!("東京")), "N'東京'");
+        assert_eq!(super::sql_literal(&json!("O'Neil")), "'O''Neil'");
+        assert_eq!(super::sql_literal(&json!(7)), "7");
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::db::connection::open_mssql;
 
     fn test_config() -> MssqlConfig {
-        MssqlConfig {
+        // STROKE_TEST_MSSQL=host:port:user:password, as tx.rs reads it.
+        let spec = std::env::var("STROKE_TEST_MSSQL").ok();
+        let parts: Vec<&str> = spec.as_deref().map(|s| s.splitn(4, ':').collect()).unwrap_or_default();
+        let get = |i: usize, d: &str| parts.get(i).map(|s| s.to_string()).unwrap_or_else(|| d.to_string());
+        MssqlConfig { ssh: None, via: None,
             name: "test".into(),
-            host: "127.0.0.1".into(),
-            port: 1433,
+            host: get(0, "127.0.0.1"),
+            port: get(1, "1433").parse().unwrap_or(1433),
             database: "master".into(),
-            user: "sa".into(),
-            password: "Strong!Passw0rd".into(),
+            user: get(2, "sa"),
+            password: get(3, "Strong!Passw0rd"),
             encrypt: false,
             trust_cert: true,
         }
+    }
+
+    #[test]
+    fn legacy_datetime_rounds_to_the_millisecond() {
+        let d = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap().and_hms_nano_opt(3, 4, 5, 996_666_666).unwrap();
+        assert_eq!(datetime_text(d, true), "2026-01-02 03:04:05.997");
+        assert_eq!(datetime_text(d, false), "2026-01-02 03:04:05.996666666");
+        let edge = chrono::NaiveDate::from_ymd_opt(2026, 1, 2).unwrap().and_hms_nano_opt(23, 59, 59, 999_700_000).unwrap();
+        assert_eq!(datetime_text(edge, true), "2026-01-03 00:00:00.000");
+    }
+
+    // Requires a live SQL Server (STROKE_TEST_MSSQL); run with --ignored.
+    #[tokio::test]
+    #[ignore]
+    async fn cell_values_live() {
+        let h = open_mssql(&test_config()).await.expect("connect");
+        let r = execute_sql(
+            &h,
+            "SELECT CAST(12.50 AS decimal(10,2)) AS d, CAST(7 AS decimal(5,0)) AS d0, \
+             CAST('6F9619FF-8B86-D011-B42D-00C04FC964FF' AS uniqueidentifier) AS g, \
+             CAST('2026-01-02 03:04:05 +05:45' AS datetimeoffset(0)) AS o, \
+             CAST('2026-01-02 03:04:05.997' AS datetime) AS dt, CAST(NULL AS decimal(5,2)) AS n",
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            r.rows[0],
+            vec![
+                Value::from("12.50"),
+                Value::from("7"),
+                Value::from("6F9619FF-8B86-D011-B42D-00C04FC964FF"),
+                Value::from("2026-01-02 03:04:05 +05:45"),
+                Value::from("2026-01-02 03:04:05.997"),
+                Value::Null,
+            ]
+        );
+    }
+
+    #[test]
+    fn result_types_use_sql_server_names() {
+        use tiberius::ColumnType as T;
+        assert_eq!(type_name(T::Int4), "int");
+        assert_eq!(type_name(T::Intn), "int");
+        assert_eq!(type_name(T::Bitn), "bit");
+        assert_eq!(type_name(T::NVarchar), "nvarchar");
+        assert_eq!(type_name(T::Guid), "uniqueidentifier");
+        assert_eq!(type_name(T::Datetimen), "datetime");
+    }
+
+    // Requires a live SQL Server (STROKE_TEST_MSSQL); run with --ignored.
+    #[tokio::test]
+    #[ignore]
+    async fn result_types_live() {
+        let h = open_mssql(&test_config()).await.expect("connect");
+        let r = execute_sql(
+            &h,
+            "SELECT CAST(1 AS int) AS a, CAST(NULL AS int) AS b, CAST(1 AS bit) AS c, CAST(1 AS bigint) AS d, \
+             N'x' AS e, NEWID() AS f, SYSDATETIME() AS g, CAST(1.5 AS decimal(5,2)) AS h",
+        )
+        .await
+        .unwrap();
+        let types: Vec<&str> = r.columns.iter().map(|c| c.data_type.as_str()).collect();
+        assert!(types.iter().all(|t| !t.ends_with('n') || *t == "nvarchar"), "{types:?}");
+        assert_eq!(types[0], "int");
+        assert_eq!(types[2], "bit");
+        assert_eq!(types[4], "nvarchar");
+        assert_eq!(types[5], "uniqueidentifier");
     }
 
     #[test]
@@ -915,9 +1224,49 @@ mod tests {
         let _ddl = get_ddl(&h, "dbo", "t_users").await.unwrap();
 
         update_table_cell(&h, "dbo", "t_users", std::collections::HashMap::from([("id".into(), Value::from(1))]), "name", &Value::from("ada2")).await.unwrap();
+        // Non-ASCII text survives an edit: a plain '...' literal was converted
+        // to the code page and stored question marks.
+        update_table_cell(&h, "dbo", "t_users", std::collections::HashMap::from([("id".into(), Value::from(1))]), "name", &Value::from("東京 Zoë")).await.unwrap();
+        let back = execute_sql(&h, "SELECT name FROM dbo.t_users WHERE id = 1").await.unwrap();
+        assert_eq!(back.rows[0][0], Value::from("東京 Zoë"));
         let deleted = delete_table_rows(&h, "dbo", "t_users", vec![std::collections::HashMap::from([("id".into(), Value::from(2))])]).await.unwrap();
         assert_eq!(deleted, 1);
 
         execute_sql(&h, "DROP TABLE dbo.t_users").await.unwrap();
+
+        // New table's SQL Server starter (sql-complete-data.js), filled in, runs.
+        execute_sql(&h, "IF OBJECT_ID('dbo.t_starter','U') IS NOT NULL DROP TABLE dbo.t_starter").await.unwrap();
+        execute_sql(&h, "CREATE TABLE t_starter (\n  id bigint IDENTITY(1,1) PRIMARY KEY,\n  label nvarchar(255) NOT NULL,\n  created_at datetime2 NOT NULL DEFAULT sysutcdatetime()\n)").await.unwrap();
+        execute_sql(&h, "DROP TABLE dbo.t_starter").await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod via_tests {
+    // The socket goes to `via` while the config keeps the server's name. With
+    // a name that does not resolve and something listening at `via` that is
+    // not SQL Server, the connect must get as far as the handshake: failing on
+    // a lookup or "Can't reach" would mean the name was dialed.
+    //   STROKE_TEST_FAKE_RESP=127.0.0.1:16390 cargo test --lib mssql::via_tests
+    #[tokio::test]
+    async fn dials_the_tunnel_and_keeps_the_name() {
+        let Ok(addr) = std::env::var("STROKE_TEST_FAKE_RESP") else { return };
+        let cfg = super::MssqlConfig {
+            name: "t".into(),
+            host: "mssql.stroke.test".into(),
+            port: 1433,
+            database: "master".into(),
+            user: "sa".into(),
+            password: "x".into(),
+            encrypt: false,
+            trust_cert: false,
+            ssh: None,
+            via: Some(addr.parse().unwrap()),
+        };
+        let err = tokio::time::timeout(std::time::Duration::from_secs(5), super::connect(&cfg))
+            .await
+            .map(|r| r.err().unwrap_or_default())
+            .unwrap_or_else(|_| "handshake stalled (reached the listener)".into());
+        assert!(!err.contains("Can't reach") && !err.to_lowercase().contains("lookup"), "{err}");
     }
 }

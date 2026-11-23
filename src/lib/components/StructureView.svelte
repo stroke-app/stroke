@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import FieldSelect from './FieldSelect.svelte';
   import { tick } from 'svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
@@ -36,7 +37,7 @@
     indexes = [],
     /** @type {{ name: string, tableName: string, timing: string, events: string, functionName: string, enabled: boolean }[]} */
     triggers = [],
-    tables = /** @type {{ name: string }[]} */ ([]),
+    tables = /** @type {{ name: string, kind?: string }[]} */ ([]),
     enums = /** @type {{ name: string }[]} */ ([]),
     columnSearch = '',
     loading = false,
@@ -169,7 +170,7 @@
     }
     if (canEdit) return true
     toast.error('Structure editing not available here', {
-      description: `Editing columns on ${engineLabel(connectionType)} isn't supported yet, use the SQL console to alter this table.`,
+      description: `Editing columns on ${engineLabel(connectionType)} isn't supported yet, use the SQL editor to alter this table.`,
     })
     return false
   }
@@ -245,7 +246,7 @@
       ? `COMMENT ON COLUMN ${tbl()}."${col}" IS NULL`
       : `COMMENT ON COLUMN ${tbl()}."${col}" IS '${esc}'`
     executeSql(sql).then(() => { toast.success('Comment updated'); onrefresh() })
-      .catch(e => toast.error('Could not update comment', { description: String(e) }))
+      .catch(e => toast.error('Could not update comment', { description: errorText(e) }))
   }
 
   // ── Apply / Reset ─────────────────────────────────────────────────────────
@@ -404,7 +405,7 @@
     if (!guardEdit()) return
     const sql = c.trim() === '' ? `COMMENT ON INDEX "${name}" IS NULL` : `COMMENT ON INDEX "${name}" IS '${c.replace(/'/g, "''")}'`
     executeSql(sql).then(() => { toast.success('Comment updated'); onrefresh() })
-      .catch(e => toast.error('Could not update comment', { description: String(e) }))
+      .catch(e => toast.error('Could not update comment', { description: errorText(e) }))
   }
 
   // ── Filtered data ─────────────────────────────────────────────────────────
@@ -543,7 +544,7 @@
   {#if !canEdit}
     <div class="flex shrink-0 items-center gap-2 border-b border-border/30 bg-muted/15 px-4 py-1.5 font-mono text-ui-2xs text-muted-foreground">
       <Lock class="size-3 shrink-0 text-muted-foreground" />
-      <span>Read-only structure on {engineLabel(connectionType)}, alter this table from the SQL console.</span>
+      <span>Read-only structure on {engineLabel(connectionType)}, alter this table from the SQL editor.</span>
     </div>
   {/if}
 
@@ -910,7 +911,7 @@
         </colgroup>
         <thead>
           <tr>
-            {#each ['index_name','algorithm','is_unique','column_name','condition','comment',''] as h}
+            {#each ['Index','Method','Unique','Columns','Condition','Comment',''] as h}
               <th class={TH}>{h}</th>
             {/each}
           </tr>
@@ -1134,7 +1135,7 @@
         </colgroup>
         <thead>
           <tr>
-            {#each ['trigger_name','timing','events','function','status',''] as h}
+            {#each ['Trigger','Timing','Events','Function','Status',''] as h}
               <th class="{TH} last:border-r-0">{h}</th>
             {/each}
           </tr>

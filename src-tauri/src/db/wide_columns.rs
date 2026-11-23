@@ -85,7 +85,21 @@ const TOAST_SAMPLE_FLOOR: i64 = 1024 * 1024;
 /// so it is worth about 260ms a page on the table it was measured against, and
 /// it is what makes the page size bounded rather than hopeful. Below the floor
 /// no amount of compression can reach the cap, so those rows skip it.
-const TEXT_CHECK_FLOOR: usize = 4 * 1024;
+const TEXT_CHECK_FLOOR: usize = 1024;
+
+/// Text size past which a wide column's value ships as a preview in a page.
+///
+/// The grid draws about forty characters of a cell, yet everything under the
+/// 256KB cap used to ship whole: a 50-row page of a resume table moved 823KB
+/// of one jsonb column (1.1MB in all), and over a slower link a few of those
+/// in flight left the grid on skeletons. Past 8KB the value arrives as its
+/// size and its first `PREVIEW_CHARS`; that page is 50KB of the column (341KB
+/// in all), and the value loads when the cell is opened or edited.
+const GRID_INLINE_BYTES: usize = 8 * 1024;
+
+/// How much of a previewed value ships: enough for the grid, a tooltip and
+/// the first lines of the JSON view.
+const PREVIEW_CHARS: usize = 512;
 
 #[derive(Clone, Debug)]
 pub struct WideColumn {
@@ -399,12 +413,14 @@ pub fn projection(all_columns: &[String], wide: &[WideColumn]) -> Option<String>
                     "CASE WHEN pg_column_size({quoted}) > {cap} \
                      THEN jsonb_build_object('__strokeOversize', true, 'dataType', '{col_type}', \
                      'bytes', pg_column_size({quoted})) \
-                     WHEN pg_column_size({quoted}) > {floor} AND length({quoted}::text) > {cap} \
+                     WHEN pg_column_size({quoted}) > {floor} AND octet_length({quoted}::text) > {inline} \
                      THEN jsonb_build_object('__strokeOversize', true, 'dataType', '{col_type}', \
-                     'bytes', octet_length({quoted}::text)) \
+                     'bytes', octet_length({quoted}::text), 'preview', left({quoted}::text, {preview})) \
                      ELSE jsonb_build_object('__strokeInline', to_jsonb({quoted})) END AS {quoted}",
                     cap = CELL_VALUE_CAP,
                     floor = TEXT_CHECK_FLOOR,
+                    inline = GRID_INLINE_BYTES,
+                    preview = PREVIEW_CHARS,
                 )
             } else {
                 quoted
@@ -468,8 +484,13 @@ mod tests {
         assert!(sql.starts_with("\"id\", CASE WHEN pg_column_size(\"resume\")"));
         assert!(sql.contains("'__strokeOversize', true"));
         assert!(sql.contains("'dataType', 'jsonb'"));
-        // No preview: building one would detoast every over-cap value on the page.
-        assert!(!sql.contains("left("));
+        // No preview past the cap: building one would detoast every over-cap
+        // value on the page. Under it the value is read for its length anyway,
+        // so that branch carries the first 512 characters.
+        let (over_cap, under_cap) = sql.split_once("WHEN pg_column_size(\"resume\") > 1024").expect("two branches");
+        assert!(!over_cap.contains("left("));
+        assert!(under_cap.contains("'preview', left(\"resume\"::text, 512)"));
+        assert!(under_cap.contains("octet_length(\"resume\"::text) > 8192"));
         // The compressed size is the cheap gate; the text length is the honest one.
         assert!(sql.contains("length(\"resume\"::text) >"));
         assert!(sql.contains("AS \"resume\""));

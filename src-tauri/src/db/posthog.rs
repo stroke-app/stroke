@@ -28,7 +28,7 @@ const SCHEMA_TTL: Duration = Duration::from_secs(300);
 fn client() -> &'static reqwest::Client {
     static C: OnceLock<reqwest::Client> = OnceLock::new();
     C.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::Database)
             .user_agent("stroke/1.0")
             .pool_idle_timeout(Duration::from_secs(20))
             .connect_timeout(Duration::from_secs(10))
@@ -41,6 +41,51 @@ fn client() -> &'static reqwest::Client {
 
 /// POST one query object to the project's query endpoint.
 async fn post_query(config: &PosthogConfig, query: Value) -> Result<Value, String> {
+    post_query_as(config, query, None).await
+}
+
+/// `query`, stoppable on PostHog's side: the request carries a
+/// client_query_id, and Stop asks PostHog to cancel that query (DELETE on the
+/// query endpoint) instead of leaving it running against the 3-at-once limit.
+pub async fn query_cancellable(config: &PosthogConfig, sql: &str, stop: &super::stop::Stop) -> Result<SqlResult, String> {
+    let trimmed = sql.trim().trim_end_matches(';');
+    if !is_read_query(trimmed) {
+        return Err("PostHog is read-only here: HogQL runs SELECT (and WITH) queries.".into());
+    }
+    static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let id = format!(
+        "stroke-{:x}-{:x}-{:x}",
+        std::process::id(),
+        std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+        SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    let t0 = Instant::now();
+    // Boxed, so `drop(run)` below really ends the future and lets go of
+    // what it holds (a connection, a stream); a stack pin outlived it.
+    let mut run = Box::pin(post_query_as(config, json!({ "kind": "HogQLQuery", "query": trimmed }), Some(&id)));
+    tokio::select! {
+        r = &mut run => Ok(to_sql_result(&r?, sql, t0.elapsed().as_millis() as u64)),
+        _ = stop.wait() => {
+            drop(run);
+            let _ = tokio::time::timeout(Duration::from_secs(10), cancel_query(config, &id)).await;
+            Err(super::query::QUERY_CANCELLED.into())
+        }
+    }
+}
+
+/// DELETE /api/projects/{id}/query/{client_query_id}/: PostHog kills it in ClickHouse.
+pub async fn cancel_query(config: &PosthogConfig, client_query_id: &str) -> Result<(), String> {
+    let url = format!(
+        "{}/api/projects/{}/query/{}/",
+        config.base_url(),
+        urlencoding::encode(config.project_id.trim()),
+        urlencoding::encode(client_query_id)
+    );
+    let resp = client().delete(&url).bearer_auth(config.api_key.trim()).send().await.map_err(|e| format!("PostHog request failed: {e}"))?;
+    if resp.status().is_success() { Ok(()) } else { Err(format!("PostHog could not cancel the query (HTTP {})", resp.status().as_u16())) }
+}
+
+async fn post_query_as(config: &PosthogConfig, query: Value, client_query_id: Option<&str>) -> Result<Value, String> {
     let url = format!(
         "{}/api/projects/{}/query/",
         config.base_url(),
@@ -49,7 +94,10 @@ async fn post_query(config: &PosthogConfig, query: Value) -> Result<Value, Strin
     let resp = client()
         .post(&url)
         .bearer_auth(config.api_key.trim())
-        .json(&json!({ "query": query, "name": "stroke" }))
+        .json(&match client_query_id {
+            Some(id) => json!({ "query": query, "name": "stroke", "client_query_id": id }),
+            None => json!({ "query": query, "name": "stroke" }),
+        })
         .send()
         .await
         .map_err(|e| format!("PostHog request failed: {e}"))?;
@@ -391,6 +439,42 @@ pub async fn get_ddl(config: &PosthogConfig, table: &str) -> Result<String, Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Stop sends DELETE for the query's client_query_id. A fake PostHog
+    /// holds the query open and records what came next.
+    #[tokio::test]
+    async fn stop_cancels_the_query_on_posthog() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = l.local_addr().unwrap().port();
+        let (seen_tx, mut seen_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            loop {
+                let (mut s, _) = l.accept().await.unwrap();
+                let mut buf = vec![0u8; 16384];
+                let n = s.read(&mut buf).await.unwrap();
+                let req = String::from_utf8_lossy(&buf[..n]).to_string();
+                let _ = seen_tx.send(req.clone());
+                if req.starts_with("DELETE") {
+                    s.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n").await.unwrap();
+                } else {
+                    held.push(s); // never answered: a long query
+                }
+            }
+        });
+        let cfg = PosthogConfig { name: "t".into(), host: format!("http://127.0.0.1:{port}"), project_id: "7".into(), api_key: "k".into() };
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        let stop = crate::db::stop::Stop::from_rx(rx);
+        tokio::spawn(async move { tokio::time::sleep(Duration::from_millis(300)).await; let _ = tx.send(()); });
+        let e = query_cancellable(&cfg, "SELECT count() FROM events", &stop).await.unwrap_err();
+        assert_eq!(e, crate::db::query::QUERY_CANCELLED);
+        let post = seen_rx.recv().await.unwrap();
+        assert!(post.starts_with("POST /api/projects/7/query/"), "{post}");
+        let id = post.split("\"client_query_id\":\"").nth(1).and_then(|r| r.split('"').next()).expect("client_query_id sent").to_string();
+        let del = seen_rx.recv().await.unwrap();
+        assert!(del.starts_with(&format!("DELETE /api/projects/7/query/{id}/")), "{del}");
+    }
 
     #[test]
     fn hogql_response_maps_columns_types_and_rows() {

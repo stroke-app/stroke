@@ -4,7 +4,10 @@ import {
   parseChangelog,
   parseReleases,
   releasesBetween,
+  mergeReleases,
   splitInlineCode,
+  splitInlineMarks,
+  splitEntry,
 } from './changelog.js'
 
 const CHANGELOG = `# Changelog
@@ -112,6 +115,40 @@ describe('releasesBetween', () => {
   })
 })
 
+describe('releasesBetween with merge', () => {
+  it('keeps one block per version while the range fits the limit', () => {
+    const { releases, versions } = releasesBetween(CHANGELOG, '2.2.4', '2.3.0', 8, { merge: true })
+    expect(releases.map((r) => r.version)).toEqual(['2.3.0', '2.2.5'])
+    expect(versions).toBe(2)
+  })
+
+  it('merges a range longer than the limit into one release, nothing left out', () => {
+    const { releases, omitted, versions } = releasesBetween(CHANGELOG, '2.0.0', '2.3.0', 2, { merge: true })
+    expect(omitted).toBe(0)
+    expect(versions).toBe(4)
+    expect(releases).toHaveLength(1)
+    expect(releases[0].version).toBe('2.3.0')
+    expect(releases[0].sections.map((s) => [s.title, s.type, s.items])).toEqual([
+      ['Sidebar', 'feature', ['Objects tab', 'Sort tables by creation time']],
+      ['fix', 'fix', ['`Esc` ends an AI reply', 'Shortcuts fire once', 'Older fix']],
+      ['change', 'change', ['Faster startup']],
+    ])
+  })
+})
+
+describe('mergeReleases', () => {
+  it('puts a kind\'s own items before its sub-sections', () => {
+    const merged = mergeReleases([
+      { version: '3.1.0', date: '', sections: [{ title: 'Performance', group: 'Changes', type: 'change', items: ['Fast'] }] },
+      { version: '3.0.1', date: '', sections: [{ title: 'Changes', group: 'Changes', type: 'change', items: ['Plain'] }] },
+    ])
+    expect(merged.sections.map((s) => [s.title, s.items])).toEqual([
+      ['change', ['Plain']],
+      ['Performance', ['Fast']],
+    ])
+  })
+})
+
 describe('splitInlineCode', () => {
   it('marks backtick spans as code', () => {
     expect(splitInlineCode('Press `Esc` to stop')).toEqual([
@@ -123,5 +160,33 @@ describe('splitInlineCode', () => {
 
   it('leaves an unclosed backtick alone', () => {
     expect(splitInlineCode('a ` b')).toEqual([{ text: 'a ` b', code: false }])
+  })
+})
+
+describe('splitInlineMarks', () => {
+  it('splits a bold title, code and plain text', () => {
+    expect(splitInlineMarks('**Notebook** - inside `\'{{name}}\'` now')).toEqual([
+      { text: 'Notebook', code: false, bold: true },
+      { text: ' - inside ', code: false, bold: false },
+      { text: "'{{name}}'", code: true, bold: false },
+      { text: ' now', code: false, bold: false },
+    ])
+  })
+  it('leaves an unclosed ** and ** inside code alone', () => {
+    expect(splitInlineMarks('a ** b')).toEqual([{ text: 'a ** b', code: false, bold: false }])
+    expect(splitInlineMarks('`**x**`')).toEqual([{ text: '**x**', code: true, bold: false }])
+  })
+})
+
+describe('splitEntry', () => {
+  it('reads a bold title', () => {
+    expect(splitEntry('**Redis sidebar** - Says "1 client".')).toEqual({ title: 'Redis sidebar', body: 'Says "1 client".' })
+  })
+  it('reads a plain title, as the update feed sends it', () => {
+    expect(splitEntry('Redis sidebar - Says "1 client".')).toEqual({ title: 'Redis sidebar', body: 'Says "1 client".' })
+  })
+  it('leaves a sentence with a dash in it whole', () => {
+    expect(splitEntry('Fixed the grid. It no longer jumps - at all.')).toEqual({ title: '', body: 'Fixed the grid. It no longer jumps - at all.' })
+    expect(splitEntry('Materialized views in the sidebar (#363)')).toEqual({ title: '', body: 'Materialized views in the sidebar (#363)' })
   })
 })

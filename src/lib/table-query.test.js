@@ -234,12 +234,20 @@ describe('buildSelectSql, engine differences for substring search', () => {
   it('mariadb behaves like mysql', () => {
     expect(sqlFor(mk({ column: 'age', op: 'eq', value: '5' }), 'mariadb')).toContain('`age` = \'5\'')
   })
-  it('sqlite double-quotes and does NOT cast (currently emits ILIKE, display-only)', () => {
-    // NOTE: buildSelectSql is an editable starting point, not executed SQL. SQLite
-    // has no native ILIKE; if that ever becomes an issue this assertion flags it.
+  it('sqlite double-quotes, does not cast, and uses LIKE (it has no ILIKE)', () => {
     expect(sqlFor(mk({ column: 'age', op: 'contains', value: '5' }), 'sqlite'))
-      .toContain(`"age" ILIKE '%5%'`)
+      .toContain(`"age" LIKE '%5%'`)
     expect(sqlFor(mk({ column: 'age', op: 'eq', value: '5' }), 'sqlite')).toContain(`"age" = '5'`)
+  })
+
+  it("writes each engine's own search, literal and row limit", () => {
+    const f = mk({ column: 'age', op: 'contains', value: "o'k" })
+    expect(sqlFor(f, 'mssql')).toBe(`SELECT TOP 100 * FROM [t] WHERE CAST([age] AS NVARCHAR(MAX)) LIKE '%o''k%';`)
+    expect(sqlFor(f, 'oracle')).toBe(`SELECT * FROM "t" WHERE TO_CHAR("age") LIKE '%o''k%' FETCH FIRST 100 ROWS ONLY;`)
+    expect(sqlFor(f, 'bigquery')).toBe("SELECT * FROM `t` WHERE CAST(`age` AS STRING) LIKE '%o\\'k%' LIMIT 100;")
+    expect(sqlFor(f, 'clickhouse')).toContain(`toString("age") LIKE`)
+    expect(sqlFor(f, 'duckdb')).toContain(`CAST("age" AS VARCHAR) ILIKE`)
+    expect(sqlFor(f, 'cockroachdb')).toContain(`"age"::text ILIKE`)
   })
 })
 
@@ -345,5 +353,24 @@ describe('pageWithInsertedRow', () => {
 
   it('grows a page that is not full yet', () => {
     expect(pageWithInsertedRow(page, [4], 50, 50)).toEqual([[4], [1], [2], [3]])
+  })
+})
+
+describe('buildSelectSql backslashes', () => {
+  it('doubles them for MySQL equals, and twice over in a LIKE', () => {
+    const eq = buildSelectSql({ schema: 'shop', table: 't', engine: 'mysql', filters: [{ id: 'a', column: 'p', op: 'eq', value: 'C:\\new' }] })
+    expect(eq).toContain("`p` = 'C:\\\\new'")
+    const like = buildSelectSql({ schema: 'shop', table: 't', engine: 'mysql', filters: [{ id: 'a', column: 'p', op: 'contains', value: 'C:\\new' }] })
+    expect(like).toContain("LIKE '%C:\\\\\\\\new%'")
+    const pg = buildSelectSql({ schema: 'public', table: 't', engine: 'postgres', filters: [{ id: 'a', column: 'p', op: 'eq', value: 'C:\\new' }] })
+    expect(pg).toContain(`"p" = 'C:\\new'`)
+  })
+})
+
+describe('buildSelectSql on SQL Server', () => {
+  it('writes non-ASCII filter text as N strings', () => {
+    const sql = buildSelectSql({ schema: 'dbo', table: 't', engine: 'mssql', filters: [{ id: 'a', column: 'city', op: 'eq', value: 'Kraków' }] })
+    expect(sql).toContain("= N'Kraków'")
+    expect(buildSelectSql({ schema: 'dbo', table: 't', engine: 'mssql', filters: [{ id: 'a', column: 'city', op: 'eq', value: 'Oslo' }] })).toContain("= 'Oslo'")
   })
 })

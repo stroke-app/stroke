@@ -10,7 +10,7 @@
   import { Button } from '$lib/components/ui/button/index.js'
   import SegmentedControl from './SegmentedControl.svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import FolderOpen from '@lucide/svelte/icons/folder-open'
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
@@ -20,7 +20,6 @@
   import GitMerge from '@lucide/svelte/icons/git-merge'
   import TriangleAlert from '@lucide/svelte/icons/triangle-alert'
   import Search from '@lucide/svelte/icons/search'
-  import { Input } from '$lib/components/ui/input/index.js'
 
   let {
     /** @type {{ id: string, name?: string } | null} */
@@ -136,7 +135,7 @@
       await loadProject()
       if (project && project.tool !== tool) setTool(project.tool)
     } catch (e) {
-      toast.error('Could not open the folder', { description: String(e) })
+      toast.error('Could not open the folder', { description: errorText(e) })
     }
   }
 
@@ -367,7 +366,7 @@
         <div class="flex flex-wrap items-center gap-2">
           <div class="relative min-w-48 flex-1">
             <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-            <Input bind:value={query} placeholder="Find a migration" class="h-8 ps-8" aria-label="Find a migration" />
+            <input bind:value={query} placeholder="Find a migration" class="search-box no-field-frame h-8 w-full ps-8 pe-2.5 text-ui-xs" aria-label="Find a migration" />
           </div>
           {#if known}
             <SegmentedControl options={FILTERS} value={filter} ariaLabel="Show" class={FILTERS.length > 3 ? 'w-[26rem] max-w-full' : 'w-80 max-w-full'} onchange={(v) => { filter = v; open = null }} />

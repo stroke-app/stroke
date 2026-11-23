@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import { tick, untrack, onDestroy } from "svelte";
   import Icon from "./Icon.svelte";
   import CloudflareLogin from "./CloudflareLogin.svelte";
@@ -36,8 +37,22 @@
     connectElastic,
     testCassandra,
     connectCassandra,
+    testNeo4j,
+    connectNeo4j,
+    testInflux,
+    connectInflux,
     testFirestore,
     connectFirestore,
+    testSpanner,
+    connectSpanner,
+    testBigquery,
+    connectBigquery,
+    testSnowflake,
+    connectSnowflake,
+    testOdbc,
+    connectOdbc,
+    odbcDrivers,
+    odbcDataSources,
     testMongo,
     connectMongo,
     dynamoProfiles,
@@ -56,6 +71,7 @@
     setLastConnectionId,
     findDuplicateConnection,
     engineFamily,
+    withSecrets,
   } from "$lib/stores/connections.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import SearchableMenu from "./SearchableMenu.svelte";
@@ -83,9 +99,12 @@
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import { parseConnectionUri, detectConnectionUri, connectionUrl } from "$lib/connection-uri.js";
   import { PROVIDERS, providerBuildConnection, providerWarm, providerToSaved, AUTH_FAILURE } from "$lib/providers.js";
-  import { providerOf, engineLabel } from "$lib/connection-provider.js";
+  import { appBoringConnectionBar } from "$lib/stores/settings.js";
+  import { providerOf, engineLabel, engineId } from "$lib/connection-provider.js";
   import ConfirmDialog from "./ConfirmDialog.svelte";
   import { engineTint } from "$lib/engine-tint.js";
+  import { Textarea } from "$lib/components/ui/textarea/index.js";
+  import { ODBC_PRESETS, GENERIC_ODBC, odbcPreset, presetOfDriverId, pickDriver, presetConnectionString } from "$lib/odbc-presets.js";
   // macOS: the dialog takes the whole window like the app's own layout - the
   // rail runs to the top with the traffic lights inside its title row.
   const isMacChrome = typeof document !== "undefined" && document.documentElement.dataset.os === "macos";
@@ -98,6 +117,8 @@
      * once consumed so the next plain open starts on the picker again.
      */
     initialEngine = $bindable(""),
+    /** A saved connection to open straight into its form (sidebar Edit…). */
+    initialEditId = $bindable(""),
     /**
      * A connection string handed over from outside (a stroke:// link or the
      * command line): read as if pasted, so the form opens filled in. Nothing
@@ -138,6 +159,8 @@
           label: "CockroachDB",
           desc: "Distributed Postgres-compatible SQL",
         },
+        { id: "yugabytedb", label: "YugabyteDB", desc: "Distributed PostgreSQL (YSQL)", beta: true },
+        { id: "alloydb", label: "AlloyDB", desc: "Google Cloud's PostgreSQL-compatible database, or AlloyDB Omni", beta: true },
         { id: "mssql", label: "SQL Server", desc: "Microsoft SQL Server" },
         { id: "oracle", label: "Oracle", desc: "Oracle Database (uses Oracle Instant Client)" },
       ],
@@ -182,6 +205,16 @@
       label: "Cloud",
       drivers: [
         { id: "d1", label: "Cloudflare D1", desc: "Edge SQLite via REST API" },
+        { id: "spanner", label: "Spanner", desc: "Google Cloud Spanner, GoogleSQL or PostgreSQL", beta: true },
+        { id: "bigquery", label: "BigQuery", desc: "Google Cloud data warehouse", beta: true },
+        { id: "snowflake", label: "Snowflake", desc: "Snowflake data cloud, key pair or access token", beta: true },
+      ],
+    },
+    {
+      label: "Through ODBC",
+      drivers: [
+        { id: "odbc", label: "ODBC", desc: GENERIC_ODBC.desc, beta: true },
+        ...ODBC_PRESETS.map((p) => ({ id: `odbc-${p.id}`, label: p.label, desc: p.desc, beta: true })),
       ],
     },
     {
@@ -194,8 +227,11 @@
         { id: "couchdb", label: "CouchDB", desc: "JSON documents over HTTP, Mango queries" },
         { id: "elasticsearch", label: "Elasticsearch", desc: "Search and analytics, also Elastic Cloud" },
         { id: "opensearch", label: "OpenSearch", desc: "Search and analytics, also Amazon OpenSearch Service" },
-        { id: "cassandra", label: "Cassandra", desc: "Wide-column store, also ScyllaDB (CQL)" },
+        { id: "cassandra", label: "Cassandra", desc: "Wide-column store (CQL)" },
+        { id: "scylladb", label: "ScyllaDB", desc: "Cassandra-compatible wide-column store (CQL)" },
         { id: "firestore", label: "Firestore", desc: "Google Cloud document database" },
+        { id: "neo4j", label: "Neo4j", desc: "Graph database, also Aura (over HTTP)", beta: true },
+        { id: "influxdb", label: "InfluxDB", desc: "Time series, 1.x, 2.x and 3.x (read-only)", beta: true },
       ],
     },
     {
@@ -268,6 +304,8 @@
     "mysql",
     "mariadb",
     "cockroachdb",
+    "yugabytedb",
+    "alloydb",
     "mssql",
     "oracle",
     "clickhouse",
@@ -286,14 +324,22 @@
     "upstash",
     "posthog",
     "d1",
+    "spanner",
+    "bigquery",
+    "snowflake",
+    "odbc",
+    ...ODBC_PRESETS.map((p) => `odbc-${p.id}`),
     "redis",
     "valkey",
     "dynamodb",
     "mongodb",
     "couchdb",
+    "neo4j",
+    "influxdb",
     "elasticsearch",
     "opensearch",
     "cassandra",
+    "scylladb",
     "firestore",
   ];
   const driverItems = DRIVER_ORDER.map((id) =>
@@ -337,6 +383,50 @@
   });
   /** What Enter in the filter acts on - same target the eye is already on. */
   const firstSavedMatch = $derived(savedMatches[0] ?? null);
+
+  // Labs, "Boring connection bar": one folder per database kind. Folders keep
+  // the kinds in order of their most recent use; a filter opens every folder
+  // that has a match. Which folders are closed is remembered per app.
+  const FOLDERS_KEY = "stroke:conn-folders-closed";
+  let closedFolders = $state(
+    /** @type {Set<string>} */ ((() => { try { return new Set(JSON.parse(localStorage.getItem(FOLDERS_KEY) ?? "[]")); } catch { return new Set(); } })()),
+  );
+  /** @param {string} kind */
+  function toggleFolder(kind) {
+    const next = new Set(closedFolders);
+    if (next.has(kind)) next.delete(kind);
+    else next.add(kind);
+    closedFolders = next;
+    try { localStorage.setItem(FOLDERS_KEY, JSON.stringify([...next])); } catch { /* only the preference is lost */ }
+  }
+  /** @param {any} conn */
+  const kindOf = (conn) =>
+    engineLabel(conn.filePath === ":memory:" && (conn.type === "sqlite" || conn.type === "duckdb") ? `${conn.type}-memory` : engineId(conn));
+  /**
+   * The rail's rows: connections, with a folder header before each kind when
+   * grouping is on.
+   * @type {Array<{ key: string, header: true, kind: string, mark: string, count: number, open: boolean } | { key: string, header: false, conn: any }>}
+   */
+  const railItems = $derived.by(() => {
+    if (!$appBoringConnectionBar) return savedMatches.map((conn) => ({ key: conn.id, header: /** @type {false} */ (false), conn }));
+    /** @type {Map<string, any[]>} */
+    const byKind = new Map();
+    for (const c of savedMatches) {
+      const k = kindOf(c);
+      if (!byKind.has(k)) byKind.set(k, []);
+      byKind.get(k)?.push(c);
+    }
+    /** @type {any[]} */
+    const out = [];
+    for (const [kind, conns] of byKind) {
+      const open = !!savedQuery.trim() || !closedFolders.has(kind);
+      const first = conns[0];
+      const mark = first.filePath === ":memory:" && (first.type === "sqlite" || first.type === "duckdb") ? `${first.type}-memory` : engineId(first);
+      out.push({ key: `folder:${kind}`, header: true, kind, mark, count: conns.length, open });
+      if (open) for (const conn of conns) out.push({ key: conn.id, header: false, conn });
+    }
+    return out;
+  });
 
   /**
    * The rail is one tab stop, not one per row: Tab from the filter lands on the
@@ -397,6 +487,8 @@
   let dbType = $state("postgres");
   // Valkey shares the Redis form and backend.
   const isRedisForm = $derived(dbType === "redis" || dbType === "valkey");
+  /** Cassandra and ScyllaDB share one form and one engine (CQL). */
+  const isCqlForm = $derived(dbType === "cassandra" || dbType === "scylladb");
   // Top-level entry mode: connect manually vs sign in with a hosting provider.
   let entryMode = $state(/** @type {'manual'|'provider'} */ ("manual"));
   // Advanced (SSL / SSH / read-only) disclosure - collapsed by default.
@@ -420,6 +512,25 @@
    */
   let sslMode = $state("require");
   let sslCaPath = $state("");
+  /**
+   * The rest of a Postgres URL's query (`application_name=...&options=...`),
+   * passed through as written. A pasted URL used to lose everything but host,
+   * login, database and TLS - Neon's `options=endpoint%3D...` included.
+   */
+  let pgParams = $state("");
+  // A file path filled in for you (pasted, browsed, a saved connection) shows
+  // its end, the file's name, not "/home/me/projects/..." with the name cut
+  // off. While you edit the field it is yours to scroll.
+  $effect(() => {
+    void filePath;
+    void tick().then(() => {
+      for (const id of ["cn-path", "cn-duck-path"]) {
+        const el = /** @type {HTMLInputElement | null} */ (document.getElementById(id));
+        if (el && el !== document.activeElement) el.scrollLeft = el.scrollWidth;
+      }
+    });
+  });
+  const pgWire = $derived(dbType === "postgres" || dbType === "cockroachdb" || dbType === "yugabytedb" || dbType === "alloydb");
   let secure = $state(false);
   let encrypt = $state(false);
   let trustCert = $state(true);
@@ -433,6 +544,11 @@
   // custom endpoint (DynamoDB Local) are optional.
   // CouchDB: the server URL; user and password reuse the shared fields.
   let couchUrl = $state("http://localhost:5984");
+  // InfluxDB: the major version picks the fields and the query language.
+  // Address and bucket/database use the shared URL and database fields.
+  let ifxVersion = $state(/** @type {'1'|'2'|'3'} */ ("2"));
+  let ifxOrg = $state("");
+  let ifxToken = $state("");
   // Elasticsearch / OpenSearch: the server URL (shared with CouchDB's field),
   // a login or an API key, and whether to accept a self-signed certificate.
   let esAuth = $state(/** @type {'basic' | 'apikey'} */ ("basic"));
@@ -455,6 +571,87 @@
   let fsAuth = $state(/** @type {'serviceAccount'|'gcloud'|'emulator'} */ ("serviceAccount"));
   let fsKeyFile = $state("");
   let fsEmulator = $state("localhost:8080");
+  // Spanner: the Google project, key file and sign-in above, plus the
+  // instance and database it lives in.
+  let spInstance = $state("");
+  let spDatabase = $state("");
+  let spEmulator = $state("localhost:9020");
+  // BigQuery: the project above, plus the dataset bare table names mean and
+  // where jobs run (both optional).
+  let bqDataset = $state("");
+  let bqLocation = $state("");
+  let bqEmulator = $state("localhost:9050");
+  // Snowflake: the account, how to sign in, and where queries run. User,
+  // database and the access token use the form's shared fields.
+  let sfAccount = $state("");
+  let sfAuth = $state(/** @type {'keypair'|'token'} */ ("keypair"));
+  let sfKeyFile = $state("");
+  let sfWarehouse = $state("");
+  let sfSchema = $state("");
+  let sfRole = $state("");
+  async function pickSnowflakeKey() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ title: "Select the private key", filters: [{ name: "Private key", extensions: ["p8", "pem", "key"] }] });
+      if (typeof path === "string" && path) sfKeyFile = path;
+    } catch {
+      /* browser/non-Tauri env - the field is still typeable */
+    }
+  }
+  // ODBC: a preset's fields, a data source name, or a whole connection string.
+  // Host, port, database, user and password are the form's shared fields;
+  // anything else a preset asks for lives in `odbcFields`.
+  const isOdbcForm = $derived(dbType === "odbc" || dbType.startsWith("odbc-"));
+  const odbcCur = $derived(odbcPreset(presetOfDriverId(dbType)));
+  let odbcMode = $state(/** @type {'fields'|'dsn'|'string'} */ ("fields"));
+  let odbcDriver = $state("");
+  let odbcFields = $state(/** @type {Record<string, string>} */ ({}));
+  let odbcDsn = $state("");
+  let odbcString = $state("");
+  let odbcInstalled = $state(/** @type {string[]} */ ([]));
+  let odbcDsns = $state(/** @type {{ name: string, driver: string }[]} */ ([]));
+  /** What the driver called the database on the last Test. */
+  let odbcServer = $state("");
+  let odbcListed = false;
+  /** The drivers and data sources, read again each time a preset is picked,
+   *  so one installed with the form open shows up. */
+  function loadOdbcLists() {
+    odbcListed = true;
+    odbcDrivers().then((d) => (odbcInstalled = d.map((x) => x.name))).catch(() => {});
+    odbcDataSources().then((d) => (odbcDsns = d)).catch(() => {});
+  }
+  $effect(() => {
+    if (isOdbcForm && !odbcListed) loadOdbcLists();
+  });
+  // A preset takes the matching installed driver once the list is in.
+  $effect(() => {
+    if (!odbcCur || odbcDriver) return;
+    const hit = pickDriver(odbcCur, odbcInstalled);
+    if (hit) odbcDriver = hit;
+  });
+  const odbcDriverInstalled = $derived(odbcInstalled.includes(odbcDriver.trim()));
+  const odbcPreview = $derived(
+    odbcCur
+      ? presetConnectionString(odbcCur, odbcDriver.trim(), { host, port, database, user, ...odbcFields })
+      : "",
+  );
+  async function openLink(/** @type {string} */ url) {
+    try {
+      const { openUrl } = await import("@tauri-apps/plugin-opener");
+      await openUrl(url);
+    } catch {
+      window.open(url, "_blank", "noopener");
+    }
+  }
+  async function pickOdbcFile(/** @type {string} */ key) {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({ title: "Select a file" });
+      if (typeof path === "string" && path) odbcFields[key] = path;
+    } catch {
+      /* browser/non-Tauri env - the field is still typeable */
+    }
+  }
   // Oracle: a service name (in the shared `database` field), a SID, or a whole
   // connect string; and where Instant Client lives when the app can't find it.
   /** Copy URL just copied: the button says so for a moment. */
@@ -529,6 +726,22 @@
   let sshAuth = $state("key");
   /** `ServerAliveInterval`, seconds. Blank or 0 disables the keepalive. */
   let sshKeepalive = $state("30");
+  /**
+   * What the tunnel goes through. All three forward a local port to the
+   * database (db/ssh_tunnel.rs); `sshHost` holds each one's end: the bastion,
+   * the Kubernetes resource, or the SSM target.
+   * @type {'ssh' | 'kubernetes' | 'ssm'}
+   */
+  let tunnelKind = $state("ssh");
+  let tunnelContext = $state("");
+  let tunnelNamespace = $state("");
+  let tunnelRegion = $state("");
+  let tunnelProfile = $state("");
+  const TUNNEL_KINDS = [
+    { value: "ssh", label: "SSH", desc: "Through a bastion, with your system ssh" },
+    { value: "kubernetes", label: "Kubernetes", desc: "kubectl port-forward to a service or pod" },
+    { value: "ssm", label: "AWS SSM", desc: "Session Manager port forwarding, no open port" },
+  ];
 
   /**
    * TLS verification levels, in the order they harden.
@@ -644,6 +857,30 @@
   /** The front page's paste bar. */
   let quickUri = $state("");
   let quickHint = $state("");
+  /**
+   * An http(s) address that names no engine by host or default port (a
+   * Docker-mapped 19200, a proxy): Elasticsearch, OpenSearch, CouchDB,
+   * ClickHouse and libSQL all speak HTTP, so the bar asks which instead of
+   * saying it isn't a connection string. Holds the address until picked.
+   */
+  let httpAmbiguous = $state("");
+  const HTTP_ENGINES = /** @type {const} */ ([
+    { id: "elasticsearch", uriType: "couchdb" },
+    { id: "opensearch", uriType: "couchdb" },
+    { id: "couchdb", uriType: "couchdb" },
+    { id: "clickhouse", uriType: "clickhouse" },
+    { id: "libsql", uriType: "libsql" },
+  ]);
+  /** @param {{ id: string, uriType: string }} e */
+  function useHttpAs(e) {
+    const raw = httpAmbiguous;
+    httpAmbiguous = "";
+    quickHint = "";
+    pickEngine(e.id);
+    if (!applyConnectionUriFrom(raw, /** @type {any} */ (e.uriType))) quickHint = "Could not read that string.";
+    quickUri = "";
+    clipboardDismissed = raw;
+  }
   /** @type {HTMLInputElement | null} */
   let quickUriEl = $state(null);
 
@@ -751,6 +988,12 @@
     quickHint = "";
     if (!raw) return;
     const hit = detectConnectionUri(raw);
+    httpAmbiguous = "";
+    if (!hit && /^https?:\/\/[^\s]+$/i.test(raw)) {
+      httpAmbiguous = raw;
+      quickHint = "Several databases use an http address. Which one is this?";
+      return;
+    }
     if (!hit) {
       quickHint = "That does not look like a connection string. Paste a URL (postgres://, mysql://, sqlserver://, oracle://, mongodb://, redis://, libsql://, …), a .env line, host=… dbname=…, or a path to a .db file.";
       return;
@@ -869,6 +1112,8 @@
         // "serverless" finds what the label alone does not.
         keywords: [d.label, cat.label, d.desc, d.id],
         group: cat.label,
+        desc: d.desc,
+        beta: !!d.beta,
         disabled: DISABLED_TABS.has(d.id),
       })),
     ),
@@ -885,7 +1130,7 @@
    * path per form and one on the front page, rather than four.
    */
   const URI_TOGGLE_ENGINES = [
-    "postgres", "cockroachdb", "mysql", "mariadb", "clickhouse", "mssql",
+    "postgres", "cockroachdb", "yugabytedb", "alloydb", "mysql", "mariadb", "clickhouse", "mssql",
     // Every dialect that has a URL form, not just the SQL ones: a Redis or
     // Turso string is the same paste, and refusing it here sent people to fill
     // four fields by hand from a string they already had.
@@ -910,7 +1155,14 @@
   });
 
   function sshPayload() {
-    if (!sshEnabled || !sshHost.trim() || !sshUsername.trim()) return undefined;
+    if (!sshEnabled || !sshHost.trim()) return undefined;
+    if (tunnelKind === "kubernetes") {
+      return { kind: "kubernetes", host: sshHost.trim(), context: tunnelContext.trim(), namespace: tunnelNamespace.trim() };
+    }
+    if (tunnelKind === "ssm") {
+      return { kind: "ssm", host: sshHost.trim(), region: tunnelRegion.trim(), profile: tunnelProfile.trim() };
+    }
+    if (!sshUsername.trim()) return undefined;
     return {
       host: sshHost.trim(),
       port: Number(sshPort) || 22,
@@ -980,9 +1232,10 @@
         ...sslPayload("mysql"),
         ...(ssh && { ssh }),
       };
-    if (dbType === "cockroachdb")
+    // PostgreSQL wire engines with a name of their own.
+    if (dbType === "cockroachdb" || dbType === "yugabytedb" || dbType === "alloydb")
       return {
-        type: "cockroachdb",
+        type: dbType,
         name: nm,
         host,
         port,
@@ -991,6 +1244,7 @@
         password,
         ssl,
         ...sslPayload("postgres"),
+        ...(pgParams.trim() && { params: pgParams.trim() }),
         ...(ssh && { ssh }),
       };
     if (dbType === "clickhouse")
@@ -1003,6 +1257,7 @@
         user,
         password,
         secure,
+        ...(ssh && { ssh }),
       };
     if (dbType === "duckdb" || dbType === "duckdb-memory")
       return {
@@ -1021,6 +1276,7 @@
         password,
         encrypt,
         trustCert,
+        ...(ssh && { ssh }),
       };
     if (dbType === "oracle")
       return {
@@ -1034,9 +1290,10 @@
         user,
         password,
         clientLibDir: oraClientDir.trim(),
+        ...(ssh && { ssh }),
       };
     if (dbType === "mongodb")
-      return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim() };
+      return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim(), ...(ssh && { ssh }) };
     if (dbType === "firestore")
       return {
         type: "firestore",
@@ -1047,10 +1304,85 @@
         ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
         ...(fsAuth === "emulator" && { emulatorHost: fsEmulator.trim() }),
       };
-    if (dbType === "cassandra")
-      return { type: "cassandra", name: nm, hosts: cqlHosts.trim(), user: user.trim(), password, keyspace: cqlKeyspace.trim() };
+    if (dbType === "spanner")
+      return {
+        type: "spanner",
+        name: nm,
+        projectId: fsProject.trim(),
+        instanceId: spInstance.trim(),
+        databaseId: spDatabase.trim(),
+        auth: fsAuth,
+        ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
+        ...(fsAuth === "emulator" && { emulatorHost: spEmulator.trim() }),
+      };
+    if (isOdbcForm)
+      return {
+        type: "odbc",
+        name: nm,
+        preset: odbcCur ? odbcCur.id : "generic",
+        odbcMode: !odbcCur && odbcMode === "fields" ? "dsn" : odbcMode,
+        odbcDriver: odbcDriver.trim(),
+        host: host.trim(),
+        port: port.trim(),
+        database: database.trim(),
+        odbcFields: { ...odbcFields },
+        dsn: odbcDsn.trim(),
+        connectionString: odbcString.trim(),
+        user: user.trim(),
+        password,
+        // A tunnel needs the host and port, which only the Fields tab knows.
+        ...(ssh && odbcMode === "fields" && { ssh }),
+      };
+    if (dbType === "snowflake")
+      return {
+        type: "snowflake",
+        name: nm,
+        account: sfAccount.trim(),
+        user: user.trim(),
+        auth: sfAuth,
+        ...(sfAuth === "keypair" ? { privateKeyFile: sfKeyFile.trim() } : { password }),
+        warehouse: sfWarehouse.trim(),
+        database: database.trim(),
+        schema: sfSchema.trim(),
+        role: sfRole.trim(),
+      };
+    if (dbType === "bigquery")
+      return {
+        type: "bigquery",
+        name: nm,
+        projectId: fsProject.trim(),
+        dataset: bqDataset.trim(),
+        location: bqLocation.trim(),
+        auth: fsAuth,
+        ...(fsAuth === "serviceAccount" && { keyFile: fsKeyFile.trim() }),
+        ...(fsAuth === "emulator" && { emulatorHost: bqEmulator.trim() }),
+      };
+    if (isCqlForm)
+      return {
+        type: "cassandra",
+        // ScyllaDB runs on the Cassandra engine; the flavor names it in lists.
+        ...(dbType === "scylladb" && { flavor: "scylladb" }),
+        name: nm,
+        hosts: cqlHosts.trim(),
+        user: user.trim(),
+        password,
+        keyspace: cqlKeyspace.trim(),
+        ...(ssh && { ssh }),
+      };
     if (dbType === "couchdb")
-      return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password };
+      return { type: "couchdb", name: nm, url: couchUrl.trim(), user: user.trim(), password, ...(ssh && { ssh }) };
+    if (dbType === "influxdb")
+      return {
+        type: "influxdb",
+        name: nm,
+        url: couchUrl.trim(),
+        version: ifxVersion,
+        database: database.trim(),
+        ...(ifxVersion === "2" && { org: ifxOrg.trim() }),
+        ...(ifxVersion === "1" ? { user: user.trim(), password } : { token: ifxToken }),
+      };
+    if (dbType === "neo4j")
+      return { type: "neo4j", name: nm, url: couchUrl.trim(), database: database.trim(), user: user.trim(), password };
     if (dbType === "elasticsearch" || dbType === "opensearch")
       return {
         type: dbType,
@@ -1058,6 +1390,7 @@
         url: couchUrl.trim(),
         ...(esAuth === "apikey" ? { apiKey: esApiKey.trim(), user: "", password: "" } : { user: user.trim(), password, apiKey: "" }),
         insecure: esInsecure,
+        ...(ssh && { ssh }),
       };
     if (dbType === "dynamodb")
       return {
@@ -1078,6 +1411,7 @@
         password,
         db: Number(database) || 0,
         tls: secure,
+        ...(ssh && { ssh }),
       };
     return {
       type: "postgres",
@@ -1089,6 +1423,7 @@
       password,
       ssl,
       ...sslPayload("postgres"),
+      ...(pgParams.trim() && { params: pgParams.trim() }),
       ...(ssh && { ssh }),
     };
   }
@@ -1106,9 +1441,22 @@
    */
   function failWith(msg) {
     error = msg;
+    // A network failure with no network is the network. "Nothing answered at
+    // that address" sent people to check a host that was fine.
+    if (typeof navigator !== "undefined" && navigator.onLine === false && /refused|timed out|timeout|unreachable|no route|reset|resolve|lookup|dns|network/i.test(msg)) {
+      toast.error("You're offline", {
+        key: "connect-failure",
+        description: "This computer has no network connection. Connect again when you're back online.",
+        duration: 9000,
+      });
+      return;
+    }
     // errorFix is derived from `error`, so it re-reads against the new message.
     const fix = errorFix;
     toast.error(fix ? fix.title : "Couldn't connect", {
+      // One at a time: a second failure replaces the first instead of stacking
+      // the same "Nothing answered" twice.
+      key: "connect-failure",
       description: fix ? fix.hint : msg,
       // Unrecognised failures show the driver's own words, so they get the
       // monospace treatment the toast already has for raw output.
@@ -1136,7 +1484,7 @@
         conn.filePath === ":memory:" &&
         (conn.type === "sqlite" || conn.type === "duckdb")
           ? `${conn.type}-memory`
-          : (conn.type ?? "postgres");
+          : engineId(conn) || "postgres";
       dbType = t;
       name = conn.name ?? "";
       host = conn.host ?? "127.0.0.1";
@@ -1165,6 +1513,28 @@
       fsAuth = conn.auth ?? "serviceAccount";
       fsKeyFile = conn.keyFile ?? "";
       fsEmulator = conn.emulatorHost ?? "localhost:8080";
+      spInstance = conn.instanceId ?? "";
+      spDatabase = conn.databaseId ?? "";
+      spEmulator = conn.emulatorHost ?? "localhost:9020";
+      bqDataset = conn.type === "bigquery" ? (conn.dataset ?? "") : "";
+      bqLocation = conn.location ?? "";
+      bqEmulator = conn.emulatorHost ?? "localhost:9050";
+      if (conn.type === "snowflake") {
+        sfAccount = conn.account ?? "";
+        sfAuth = conn.auth ?? "keypair";
+        sfKeyFile = conn.privateKeyFile ?? "";
+        sfWarehouse = conn.warehouse ?? "";
+        sfSchema = conn.schema ?? "";
+        sfRole = conn.role ?? "";
+      }
+      if (conn.type === "odbc") {
+        odbcMode = conn.odbcMode ?? (conn.preset && conn.preset !== "generic" ? "fields" : conn.dsn ? "dsn" : "string");
+        odbcDriver = conn.odbcDriver ?? "";
+        odbcFields = { ...(conn.odbcFields ?? {}) };
+        odbcDsn = conn.dsn ?? "";
+        odbcString = conn.connectionString ?? "";
+        odbcServer = "";
+      }
       cqlHosts = conn.hosts ?? "127.0.0.1:9042";
       cqlKeyspace = conn.keyspace ?? "";
       if (conn.type === "oracle") {
@@ -1179,7 +1549,12 @@
       couchUrl =
         conn.type === "couchdb" ? (conn.url ?? "http://localhost:5984")
         : conn.type === "elasticsearch" || conn.type === "opensearch" ? (conn.url ?? "http://localhost:9200")
+        : conn.type === "neo4j" ? (conn.url ?? "http://localhost:7474")
+        : conn.type === "influxdb" ? (conn.url ?? "http://localhost:8086")
         : "http://localhost:5984";
+      ifxVersion = conn.type === "influxdb" ? (conn.version ?? "2") : "2";
+      ifxOrg = conn.org ?? "";
+      ifxToken = conn.type === "influxdb" ? (conn.token ?? "") : "";
       esAuth = conn.apiKey ? "apikey" : "basic";
       esApiKey = conn.apiKey ?? "";
       esInsecure = !!conn.insecure;
@@ -1200,12 +1575,18 @@
       // A saved tunnel with no identity path was using the agent.
       sshAuth = s?.privateKeyPath ? "key" : "agent";
       sshKeepalive = String(s?.keepalive ?? 30);
+      tunnelKind = s?.kind === "kubernetes" || s?.kind === "ssm" ? s.kind : "ssh";
+      tunnelContext = s?.context ?? "";
+      tunnelNamespace = s?.namespace ?? "";
+      tunnelRegion = s?.region ?? "";
+      tunnelProfile = s?.profile ?? "";
       sslMode = /** @type {any} */ (
         conn.sslMode === "verify_ca" ? "verify-ca"
         : conn.sslMode === "verify_identity" ? "verify-full"
         : conn.sslMode || "require"
       );
       sslCaPath = conn.sslRootCert ?? "";
+      pgParams = conn.params ?? "";
       sslPanelOpen = !!conn.ssl;
       sshPanelOpen = !!s?.host;
       readOnly = conn.readOnly ?? false;
@@ -1229,6 +1610,9 @@
       libsqlUrl = "";
       libsqlToken = "";
       couchUrl = "http://localhost:5984";
+      ifxVersion = "2";
+      ifxOrg = "";
+      ifxToken = "";
       connColor = null;
       connWorkspace = getStore(activeWorkspaceId);
       cqlHosts = "127.0.0.1:9042";
@@ -1243,6 +1627,24 @@
       fsDatabase = "";
       fsAuth = "serviceAccount";
       fsKeyFile = "";
+      spInstance = "";
+      spDatabase = "";
+      spEmulator = "localhost:9020";
+      bqDataset = "";
+      bqLocation = "";
+      bqEmulator = "localhost:9050";
+      sfAccount = "";
+      sfAuth = "keypair";
+      sfKeyFile = "";
+      sfWarehouse = "";
+      sfSchema = "";
+      sfRole = "";
+      odbcMode = "fields";
+      odbcDriver = "";
+      odbcFields = {};
+      odbcDsn = "";
+      odbcString = "";
+      odbcServer = "";
       fsEmulator = "localhost:8080";
       awsAuth = "profile";
       awsProfile = awsProfileList.includes("default") ? "default" : (awsProfileList[0] ?? "");
@@ -1258,6 +1660,11 @@
       sshKeyPath = "";
       sshAuth = "key";
       sshKeepalive = "30";
+      tunnelKind = "ssh";
+      tunnelContext = "";
+      tunnelNamespace = "";
+      tunnelRegion = "";
+      tunnelProfile = "";
       sslMode = "require";
       sslCaPath = "";
       sslPanelOpen = false;
@@ -1373,10 +1780,18 @@
    * purpose: `undefined` is what clears the field.
    */
   const DEFAULT_PORTS = {
+    ...Object.fromEntries(
+      ODBC_PRESETS.flatMap((p) => {
+        const f = p.fields.find((x) => x.key === "port");
+        return f?.default ? [[`odbc-${p.id}`, Number(f.default)]] : [];
+      }),
+    ),
     postgres: 5432,
     mysql: 3306,
     mariadb: 3306,
     cockroachdb: 26257,
+    yugabytedb: 5433,
+    alloydb: 5432,
     clickhouse: 8123,
     mssql: 1433,
     oracle: 1521,
@@ -1399,6 +1814,8 @@
   const ENGINE_DEFAULTS = {
     postgres:    { database: "postgres", user: "postgres" },
     cockroachdb: { database: "defaultdb", user: "root" },
+    yugabytedb:  { database: "yugabyte", user: "yugabyte" },
+    alloydb:     { database: "postgres", user: "postgres" },
     mysql:       { database: "", user: "root" },
     mariadb:     { database: "", user: "root" },
     clickhouse:  { database: "default", user: "default" },
@@ -1408,10 +1825,20 @@
     valkey:      { database: "0", user: "" },
     dynamodb:    { database: "", user: "" },
     couchdb:     { database: "", user: "admin" },
+    neo4j:       { database: "neo4j", user: "neo4j" },
+    influxdb:    { database: "", user: "" },
     elasticsearch: { database: "", user: "elastic" },
     opensearch:  { database: "", user: "admin" },
     cassandra:   { database: "", user: "" },
+    scylladb:    { database: "", user: "" },
     firestore:   { database: "", user: "" },
+    spanner:     { database: "", user: "" },
+    bigquery:    { database: "", user: "" },
+    snowflake:   { database: "", user: "" },
+    odbc:        { database: "", user: "" },
+    ...Object.fromEntries(
+      ODBC_PRESETS.map((p) => [`odbc-${p.id}`, { database: p.fields.find((f) => f.key === "database")?.default ?? "", user: "" }]),
+    ),
     mongodb:     { database: "", user: "" },
   };
 
@@ -1437,9 +1864,22 @@
     if (id === "duckdb") filePath = "";
     // The HTTP engines share one URL field; move it to the new engine's port
     // while it still holds the previous one's local default.
-    const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200" });
+    const HTTP_DEFAULT = /** @type {Record<string, string>} */ ({ couchdb: "http://localhost:5984", elasticsearch: "http://localhost:9200", opensearch: "http://localhost:9200", neo4j: "http://localhost:7474", influxdb: "http://localhost:8086" });
     if (HTTP_DEFAULT[id] && (!couchUrl.trim() || Object.values(HTTP_DEFAULT).includes(couchUrl.trim()))) couchUrl = HTTP_DEFAULT[id];
     esServer = "";
+    if (id === "odbc" || id.startsWith("odbc-")) {
+      // A new preset: its driver, its own extra fields, and its default mode.
+      const preset = odbcPreset(presetOfDriverId(id));
+      odbcDriver = preset ? pickDriver(preset, odbcInstalled) : "";
+      odbcFields = Object.fromEntries(
+        (preset?.fields ?? [])
+          .filter((f) => !["host", "port", "database"].includes(f.key))
+          .map((f) => [f.key, f.default ?? ""]),
+      );
+      odbcMode = preset ? "fields" : odbcDsns.length ? "dsn" : "string";
+      odbcServer = "";
+      loadOdbcLists();
+    }
     error = "";
     testOk = false;
     connectionUri = "";
@@ -1467,6 +1907,7 @@
     if (t === "redis" || t === "valkey") return "redis";
     if (t === "libsql") return "libsql";
     if (t === "couchdb" || t === "elasticsearch" || t === "opensearch") return "couchdb";
+    if (t === "cassandra" || t === "scylladb") return "cassandra";
     return "postgres";
   }
 
@@ -1574,6 +2015,14 @@
       } else {
         ssl = parsed.ssl;
         changed.push("ssl");
+        // The verification level and CA too, not just "TLS on": verify-full
+        // pasted in came back as plain require.
+        if ("sslMode" in parsed && parsed.sslMode) sslMode = /** @type {any} */ (parsed.sslMode);
+        if ("sslRootCert" in parsed && parsed.sslRootCert) sslCaPath = parsed.sslRootCert;
+        if ("params" in parsed) {
+          pgParams = parsed.params ?? "";
+          if (pgParams) changed.push("pgParams");
+        }
       }
       flashFields(changed);
       uriHint = "Fields updated from URI";
@@ -1598,9 +2047,28 @@
       );
     if (dbType === "libsql")
       return (
-        libsqlUrl.replace(/^\w+:\/\//, "").split(".")[0] || activeDriver.label
+        // A Turso host's first label is the database (mydb-org.turso.io); an
+        // IP or localhost keeps its port, or every local server was "127".
+        ((h) => (/^(\d+\.){3}\d+(:\d+)?$|^localhost(:\d+)?$|^\[/.test(h) ? h : h.split(".")[0]))(
+          libsqlUrl.replace(/^\w+:\/\//, "").split(/[/?]/)[0],
+        ) || activeDriver.label
       );
     if (dbType === "d1") return "Cloudflare D1";
+    // Google's engines have no host field: name them after the database.
+    if (dbType === "spanner") return spDatabase.trim() || fsProject.trim() || "Spanner";
+    if (dbType === "bigquery") return [fsProject.trim(), bqDataset.trim()].filter(Boolean).join(".") || "BigQuery";
+    if (dbType === "snowflake") return database.trim() ? `${database.trim()} · Snowflake` : "Snowflake";
+    if (isOdbcForm) {
+      if (odbcMode === "dsn" && odbcDsn.trim()) return odbcDsn.trim();
+      const where = host.trim() || database.trim();
+      return where && odbcMode === "fields" ? `${activeDriver.label} · ${where}` : activeDriver.label;
+    }
+    if (dbType === "firestore") return fsProject.trim() || "Firestore";
+    if (dbType === "influxdb") return database.trim() ? `${database.trim()} · InfluxDB` : "InfluxDB";
+    if (dbType === "neo4j") {
+      const at = couchUrl.trim().replace(/^\w+:\/\//, "").split(/[/:]/)[0];
+      return at ? `Neo4j@${at}` : "Neo4j";
+    }
     // DynamoDB has no host field of its own: the form's leftover 127.0.0.1
     // named an AWS connection after localhost. Name it after where it goes.
     if (dbType === "dynamodb") {
@@ -1608,6 +2076,12 @@
       if (ep) return `DynamoDB@${ep.replace(/^\w+:\/\//, "")}`;
       const where = awsRegion.trim() || (awsAuth === "profile" ? (awsProfile.trim() || "default") : "AWS");
       return `DynamoDB · ${where}`;
+    }
+    // Redis's "database" is a number: the name was "0@127.0.0.1". The engine
+    // names it, and a logical database other than 0 is kept as /n.
+    if (dbType === "redis" || dbType === "valkey") {
+      const n = database.trim();
+      return host.trim() ? `${activeDriver.label}@${host.trim()}${n && n !== "0" ? `/${n}` : ""}` : activeDriver.label;
     }
     if (host.trim())
       return `${database.trim() || activeDriver.label}@${host.trim()}`;
@@ -1619,6 +2093,8 @@
     mysql: "mysql://user:pass@host:3306/db",
     mariadb: "mysql://user:pass@host:3306/db",
     cockroachdb: "postgresql://user:pass@host:26257/defaultdb",
+    yugabytedb: "postgresql://yugabyte@host:5433/yugabyte",
+    alloydb: "postgresql://postgres:pass@10.0.0.5:5432/postgres",
     clickhouse: "clickhouse://user:pass@host:8123/db",
     mssql: "sqlserver://user:pass@host:1433;database=db",
     oracle: "oracle://user:pass@host:1521/FREEPDB1",
@@ -1795,8 +2271,13 @@
     if (conn.type === "posthog") return conn.projectId ? `project ${conn.projectId}` : "—";
     // Redis has no database name worth showing; where it lives is the useful bit.
     if (engineFamily(conn.type) === "redis") return conn.host ? `${conn.host}${conn.port ? `:${conn.port}` : ""}` : "—";
-    if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch") return conn.url || "—";
+    if (conn.type === "couchdb" || conn.type === "elasticsearch" || conn.type === "opensearch" || conn.type === "neo4j") return conn.url || "—";
+    if (conn.type === "influxdb") return [conn.url, conn.database].filter(Boolean).join(" · ") || "—";
     if (conn.type === "mongodb") return conn.uri ? uriHost(conn.uri) : "—";
+    if (conn.type === "odbc") return conn.odbcMode === "dsn" || (!conn.odbcMode && conn.dsn) ? `DSN ${conn.dsn}` : [conn.host, conn.database].filter(Boolean).join(" · ") || "ODBC";
+    if (conn.type === "snowflake") return [conn.account, conn.database].filter(Boolean).join(" · ") || "—";
+    if (conn.type === "bigquery") return [[conn.projectId, conn.dataset].filter(Boolean).join("."), conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
+    if (conn.type === "spanner") return [conn.instanceId && conn.databaseId ? `${conn.instanceId}/${conn.databaseId}` : conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "firestore") return [conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "cassandra") return [conn.hosts, conn.keyspace].filter(Boolean).join(" · ") || "—";
     if (conn.type === "dynamodb") return conn.endpoint || [conn.profile, conn.region].filter(Boolean).join(" · ") || "AWS";
@@ -1827,6 +2308,11 @@
       clipboardDismissed = "";
       // Arriving from an engine chip skips the picker - that choice is already made.
       if (initialEngine) { pickEngine(initialEngine); initialEngine = ""; }
+      if (initialEditId) {
+        const conn = saved.find((c) => c.id === initialEditId);
+        initialEditId = "";
+        if (conn) resetForm(conn);
+      }
       engineQuery = "";
       quickUri = "";
       quickHint = "";
@@ -1881,6 +2367,8 @@
 
   /** Open `conn` with the driver its `type` calls for. */
   async function openConnection(conn) {
+    // Read from the list before the keychain answered, it has no password.
+    conn = await withSecrets(conn);
     // Every connect from this dialog is user-initiated, so it is exactly what
     // the "ask when connecting" PIN setting is about. A no-op when no PIN is set.
     if (!(await requireUnlock("Unlock to connect to a database"))) {
@@ -1899,9 +2387,15 @@
     if (engineFamily(conn.type) === "redis") return connectRedis(conn);
     if (conn.type === "dynamodb") return connectDynamo(conn);
     if (conn.type === "couchdb") return connectCouch(conn);
+    if (conn.type === "neo4j") return connectNeo4j(conn);
+    if (conn.type === "influxdb") return connectInflux(conn);
     if (conn.type === "elasticsearch" || conn.type === "opensearch") return connectElastic(conn);
     if (conn.type === "cassandra") return connectCassandra(conn);
     if (conn.type === "firestore") return connectFirestore(conn);
+    if (conn.type === "spanner") return connectSpanner(conn);
+    if (conn.type === "bigquery") return connectBigquery(conn);
+    if (conn.type === "snowflake") return connectSnowflake(conn);
+    if (conn.type === "odbc") return connectOdbc(conn);
     if (conn.type === "mongodb") return connectMongo(conn);
     return connectPostgres(conn);
   }
@@ -1915,9 +2409,10 @@
 
   /**
    * @param {any} conn
-   * @param {{ onAuthFailure?: () => Promise<void> }} [opts] run instead of the
-   *   error toast when the credentials are rejected (reused provider credentials
-   *   that were revoked: mint fresh ones and try once more).
+   * @param {{ onAuthFailure?: () => Promise<void>, retried?: boolean, via?: string }} [opts] onAuthFailure runs
+   *   instead of the error toast when the credentials are rejected (reused
+   *   provider credentials that were revoked: mint fresh ones and try once
+   *   more). `retried` marks that second try, so it never loops.
    */
   async function connectWith(conn, opts = {}) {
     lastAttempt = conn;
@@ -1931,23 +2426,83 @@
       await openConnection(conn);
       if (myOp !== opId) return; // cancelled by the user
       const updated = { ...conn, lastConnectedAt: Date.now() };
-      saved = upsertConnection(updated).sort(byLastConnected);
+      // Re-sorted by last use once the dialog is gone (see handOver): done now,
+      // the list reshuffled in the frames before it closed.
+      const nextSaved = upsertConnection(updated).sort(byLastConnected);
       setLastConnectionId(conn.id);
-      open = false;
-      await onconnected(updated, conn.id);
+      await handOver(updated, conn.id, () => (saved = nextSaved));
     } catch (e) {
       if (myOp !== opId) return;
       if (opts.onAuthFailure && AUTH_FAILURE.test(String(e))) {
         await opts.onAuthFailure();
         return;
       }
+      // A saved provider connection (opened from the rail) whose credentials
+      // were rotated or revoked since it was saved: mint fresh ones once, as
+      // the provider picker and the studio's auto-connect already do. Without
+      // this, a Prisma connection from a few days ago just failed.
+      if (!opts.retried && conn.provider && AUTH_FAILURE.test(String(e))) {
+        if (conn.providerRef) {
+          try {
+            const fresh = await providerBuildConnection(conn.provider, conn.providerRef);
+            if (myOp !== opId) return;
+            if (!fresh.needs_password) {
+              const next = {
+                ...providerToSaved({ ...fresh, providerRef: conn.providerRef }, { provider: conn.provider, saved: [conn], readOnly: conn.readOnly, newId: newConnectionId }),
+                id: conn.id,
+                name: conn.name,
+                color: conn.color,
+                workspaceId: conn.workspaceId,
+              };
+              await connectWith(next, { retried: true });
+              return;
+            }
+          } catch {
+            /* fall through to the error below */
+          }
+        }
+        failWith(`The saved credentials for ${conn.name ?? "this connection"} were rejected, and new ones could not be fetched. Open ${conn.provider} under New connection and pick the database again.`);
+        return;
+      }
       failWith(friendlyError(e));
     } finally {
-      if (myOp === opId) {
+      // A connect that worked keeps its "Connecting" panel up while the dialog
+      // fades out (see handOver); it is cleared when the dialog opens again.
+      if (myOp === opId && open) {
         connecting = null;
         dialing = null;
       }
     }
+  }
+
+  /** Two frames: the next one painted, and the one after that free. */
+  const afterPaint = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  /**
+   * Hand a working connection to the studio, then close. The studio's mount
+   * is one long synchronous render. Closing first ran the dialog's fade (and
+   * the "Connecting" panel's) on top of it: both froze half way, with the form
+   * showing through, and then jumped out. Now the studio mounts under the
+   * still-opaque panel, and the dialog closes once that render has painted,
+   * so its fade runs on a free main thread. The panel stays in the dialog
+   * until it is gone.
+   * @param {any} conn @param {string} id
+   */
+  async function handOver(conn, id, afterClose = () => {}) {
+    const landed = onconnected(conn, id);
+    await afterPaint();
+    open = false;
+    // Clear the panel once the dialog's 200ms fade is over, so a reopened
+    // dialog starts from the form; `afterClose` changes nothing on screen.
+    const op = opId;
+    setTimeout(() => {
+      afterClose();
+      if (!open && op === opId) {
+        connecting = null;
+        dialing = null;
+      }
+    }, 260);
+    await landed;
   }
 
   // ── Studios running on this machine ─────────────────────────────────────────
@@ -2114,7 +2669,7 @@
         : {});
       await refreshLocal();
     } catch (e) {
-      toast.error(`Couldn't ${action} ${name}`, { description: String(e).replace(/^Error:\s*/, "") });
+      toast.error(`Couldn't ${action} ${name}`, { description: errorText(e).replace(/^Error:\s*/, "") });
     } finally {
       dockerBusy = "";
     }
@@ -2220,7 +2775,7 @@
     return /** @type {LocalTarget} */ ({
       id: `docker:${d.name}`,
       container: d.name,
-      mark: d.engine,
+      mark: d.engine === "cassandra" && /scylla/i.test(d.image) ? "scylladb" : d.engine,
       trailingMark: null,
       title: d.name,
       badge: d.reason ? "" : `:${d.port}`,
@@ -2233,6 +2788,7 @@
         : {
             id: `docker:${d.name}`,
             type: d.engine,
+            ...(d.engine === "cassandra" && /scylla/i.test(d.image) && { flavor: "scylladb" }),
             name: d.name,
             origin: "docker",
             toolLabel: label,
@@ -2395,6 +2951,8 @@
       else if (engineFamily(p.type) === "redis") await testRedis(p);
       else if (p.type === "dynamodb") await testDynamo(p);
       else if (p.type === "couchdb") await testCouch(p);
+      else if (p.type === "neo4j") await testNeo4j(p);
+      else if (p.type === "influxdb") await testInflux(p);
       else if (p.type === "elasticsearch" || p.type === "opensearch") {
         const info = await testElastic(p);
         esServer = `${info.flavor === "opensearch" ? "OpenSearch" : "Elasticsearch"} ${info.version}`.trim();
@@ -2403,6 +2961,10 @@
       }
       else if (p.type === "cassandra") await testCassandra(p);
       else if (p.type === "firestore") await testFirestore(p);
+      else if (p.type === "spanner") await testSpanner(p);
+      else if (p.type === "bigquery") await testBigquery(p);
+      else if (p.type === "snowflake") await testSnowflake(p);
+      else if (p.type === "odbc") odbcServer = await testOdbc(p);
       else if (p.type === "mongodb") await testMongo(p);
       else await testPostgresConnection(p);
       if (myOp !== opId) return; // cancelled by the user
@@ -2507,7 +3069,7 @@
     // Only for a row that does not exist yet: connecting to a connection you
     // already have saved is not a filing decision, and being asked about it on
     // the way in is the wrong question at the wrong time.
-    if (save && !editingId && blockedAsDuplicate(payload, () => void handleConnect({ save }))) return;
+    if (save && !editingId && blockedAsDuplicate(payload, () => void handleConnect({ save }), true)) return;
     const myOp = ++opId;
     connecting = editingId ?? "__new__";
     dialing = { conn: { ...payload, name: payload.name || name || statusTarget }, via: "form" };
@@ -2522,18 +3084,20 @@
       await openConnection(payload);
       if (myOp !== opId) return; // cancelled by the user
       const saved_conn = buildSavedConn(payload, id, Date.now());
+      /** @type {any[] | null} */
+      let nextSaved = null;
       if (save) {
-        saved = upsertConnection(saved_conn).sort(byLastConnected);
+        // Re-sorted once the dialog is gone (see handOver).
+        nextSaved = upsertConnection(saved_conn).sort(byLastConnected);
         editingId = id;
         setLastConnectionId(id);
       }
-      open = false;
       // The id is what files this as the last connection - and the shell writes
       // the payload back under it, so an unsaved EDIT must not travel with one
       // or "connect without saving" would save. An untouched saved row has
       // nothing to leak, so it keeps its id and still resumes on next launch.
       const handoverId = save || (editingId && !isDirty) ? id : "";
-      await onconnected(saved_conn, handoverId);
+      await handOver(saved_conn, handoverId, () => { if (nextSaved) saved = nextSaved; });
     } catch (e) {
       if (myOp === opId) failWith(friendlyError(e));
     } finally {
@@ -2552,7 +3116,7 @@
    * scan - and the list is sorted by last use, so the copy hides the original.
    * It is not always a mistake though (a read-only twin, a different name for a
    * different project), so this asks rather than refuses.
-   * @type {{ existing: any, proceed: () => void } | null}
+   * @type {{ existing: any, proceed: () => void, connecting?: boolean } | null}
    */
   let duplicatePrompt = $state(null);
   /** Set by "Save anyway", so the retry of the same action goes straight through. */
@@ -2560,13 +3124,13 @@
 
   /**
    * Returns true when the action should stop and let the user answer first.
-   * @param {any} payload @param {() => void} proceed
+   * @param {any} payload @param {() => void} proceed @param {boolean} [connecting] the action was Connect
    */
-  function blockedAsDuplicate(payload, proceed) {
+  function blockedAsDuplicate(payload, proceed, connecting = false) {
     if (duplicateAck) return false;
     const existing = findDuplicateConnection(payload, saved, editingId);
     if (!existing) return false;
-    duplicatePrompt = { existing, proceed };
+    duplicatePrompt = { existing, proceed, connecting };
     return true;
   }
 
@@ -2608,6 +3172,11 @@
       sshKeyPath,
       sshAuth,
       sshKeepalive,
+      tunnelKind,
+      tunnelContext,
+      tunnelNamespace,
+      tunnelRegion,
+      tunnelProfile,
       sslMode,
       sslCaPath,
       oraMode,
@@ -2628,9 +3197,15 @@
       return filePath || ":memory:";
     if (dbType === "libsql") return uriHost(libsqlUrl.replace(/^libsql:/, "https:")) || libsqlUrl || "—";
     if (dbType === "d1") return databaseId ? `${databaseId.slice(0, 8)}…` : "—";
-    if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch") return couchUrl || "—";
-    if (dbType === "cassandra") return cqlHosts || "—";
+    if (dbType === "couchdb" || dbType === "elasticsearch" || dbType === "opensearch" || dbType === "neo4j") return couchUrl || "—";
+    if (dbType === "influxdb") return [couchUrl, database].filter(Boolean).join(" · ") || "—";
+    if (isCqlForm) return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
+    if (dbType === "spanner") return [fsProject, spInstance, spDatabase].filter(Boolean).join("/") || "—";
+    if (dbType === "bigquery") return [fsProject, bqDataset].filter(Boolean).join(".") || "—";
+    if (dbType === "snowflake") return [sfAccount, database].filter(Boolean).join(" · ") || "—";
+    if (isOdbcForm)
+      return odbcMode === "dsn" ? odbcDsn || "—" : odbcMode === "string" ? "connection string" : [host, database].filter(Boolean).join(" · ") || "—";
     if (dbType === "mongodb") return uriHost(mongoUri) || "—";
     if (dbType === "dynamodb") return awsEndpoint || awsRegion || (awsAuth === "profile" ? awsProfile || "default profile" : "AWS");
     if (dbType === "oracle" && oraMode === "connect") return oraConnect || "—";
@@ -2914,8 +3489,8 @@
         id="{id}-body"
         inert={!enabled || undefined}
         class={cn(
-          // ps-[42px] = header ps-3.5 + the 16px icon + gap-3: the title's edge.
-          "flex flex-col gap-3 pb-4 pt-0.5 ps-[42px] pe-3.5 transition-opacity duration-150 ease-out",
+          // ps-[2.625rem] = header ps-3.5 + the size-4 icon + gap-3: the title's edge, in rem so it holds when the app is zoomed.
+          "flex flex-col gap-3 pb-4 pt-0.5 ps-[2.625rem] pe-3.5 transition-opacity duration-150 ease-out",
           !enabled && "opacity-45",
         )}
       >
@@ -2975,9 +3550,12 @@
   {@const isPgMy =
     dbType === "postgres" ||
     dbType === "cockroachdb" ||
+    dbType === "yugabytedb" ||
+    dbType === "alloydb" ||
     dbType === "mysql" ||
     dbType === "mariadb"}
   {@const isMy = dbType === "mysql" || dbType === "mariadb"}
+  {@const canSsh = isPgMy || ["mssql", "oracle", "clickhouse", "mongodb", "couchdb", "elasticsearch", "opensearch"].includes(dbType) || isRedisForm || isCqlForm || (isOdbcForm && odbcMode === "fields" && !!odbcCur?.fields.some((f) => f.key === "port"))}
   <!-- 12px between two bordered cards, not 10: the fields inside one card sit
        14px apart, and a gap between cards tighter than the gap within one makes
        the pair read as a single block. -->
@@ -3050,11 +3628,125 @@
       )}
 
       <!-- ── SSH tunnel ──────────────────────────────────────────────────── -->
+    {:else if dbType === "clickhouse"}
+      <label class="flex cursor-pointer select-none items-center gap-2">
+        <Checkbox
+          id="cn-ch-secure"
+          checked={secure}
+          onCheckedChange={(v) => {
+            secure = v === true;
+            if (secure && port === "8123") port = "8443";
+            else if (!secure && port === "8443") port = "8123";
+          }}
+        />
+        <span class="text-ui-xs text-foreground/75">Use HTTPS (TLS)</span>
+      </label>
+    {/if}
+
+    <!-- SQL Server carries its own TLS pair rather than a `sslmode`. A row of
+         the options group like the panels around it (it was a card inside the
+         group), and first, as TLS is for Postgres: then the tunnel. -->
+    {#if dbType === "mssql"}
+      <div class="flex flex-col gap-3 ps-3.5 pe-3.5 py-3">
+        <label class="flex cursor-pointer select-none items-start gap-2">
+          <Checkbox
+            id="cn-mssql-encrypt"
+            checked={encrypt}
+            onCheckedChange={(v) => (encrypt = v === true)}
+            class="mt-px"
+          />
+          <span class="flex flex-col">
+            <span class="text-ui-xs text-foreground/75">Encrypt connection (TLS)</span>
+            <span class="text-ui-3xs leading-snug text-muted-foreground"
+              >Encrypts traffic between Stroke and the server.</span
+            >
+          </span>
+        </label>
+        <label
+          class={cn(
+            "flex select-none items-start gap-2",
+            encrypt ? "cursor-pointer" : "cursor-not-allowed opacity-45",
+          )}
+        >
+          <Checkbox
+            id="cn-mssql-trust"
+            checked={trustCert}
+            disabled={!encrypt}
+            onCheckedChange={(v) => (trustCert = v === true)}
+            class="mt-px"
+          />
+          <span class="flex flex-col">
+            <span class="text-ui-xs text-foreground/75">Trust server certificate</span>
+            <span class="text-ui-3xs leading-snug text-muted-foreground"
+              >Accept self-signed or otherwise untrusted certificates. Needed for many local
+              and dev servers.</span
+            >
+          </span>
+        </label>
+      </div>
+    {/if}
+
+    <!-- Every engine reached by host and port can go through a tunnel. -->
+    {#if canSsh}
       {#snippet sshBody()}
         <!-- One note for the panel, rather than a line of helper text under two
              of the six fields: those hints set the row's height, wrapped at the
              narrow columns they sat in, and left the grid looking like two rows
              that had nothing to do with each other. -->
+        <!-- What the tunnel goes through: SSH, kubectl or SSM. Segmented,
+             because there are three and each changes every field below. -->
+        <div class="flex gap-1 rounded-md bg-muted/40 p-0.5" role="radiogroup" aria-label="Tunnel through">
+          {#each TUNNEL_KINDS as k (k.value)}
+            <button
+              type="button"
+              role="radio"
+              aria-checked={tunnelKind === k.value}
+              title={k.desc}
+              class={cn(
+                "h-7 flex-1 rounded-md text-ui-xs font-medium transition-colors",
+                tunnelKind === k.value ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+              )}
+              onclick={() => (tunnelKind = /** @type {any} */ (k.value))}
+            >{k.label}</button>
+          {/each}
+        </div>
+        {#if tunnelKind === "kubernetes"}
+          {@render panelNote(
+            "Runs kubectl port-forward with your kubeconfig. The resource is what the database runs as: svc/postgres, pod/db-0 or deployment/api; the port above is its port.",
+          )}
+          <div class={cn(row6, "items-start gap-y-3")}>
+            <div class="col-span-6 min-w-0 sm:col-span-2">
+              <label for="cn-k8s-resource" class={lbl}>Resource</label>
+              <Input id="cn-k8s-resource" bind:value={sshHost} placeholder="svc/postgres" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+            <div class="col-span-3 min-w-0 sm:col-span-2">
+              <label for="cn-k8s-ns" class={lbl}>Namespace</label>
+              <Input id="cn-k8s-ns" bind:value={tunnelNamespace} placeholder="default" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+            <div class="col-span-3 min-w-0 sm:col-span-2">
+              <label for="cn-k8s-ctx" class={lbl}>Context</label>
+              <Input id="cn-k8s-ctx" bind:value={tunnelContext} placeholder="Current context" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+          </div>
+        {:else if tunnelKind === "ssm"}
+          {@render panelNote(
+            "Runs aws ssm start-session with the Session Manager plugin, forwarding through the target to the host above (an RDS endpoint, or localhost for a database on the target itself).",
+          )}
+          <div class={cn(row6, "items-start gap-y-3")}>
+            <div class="col-span-6 min-w-0 sm:col-span-2">
+              <label for="cn-ssm-target" class={lbl}>Target instance</label>
+              <Input id="cn-ssm-target" bind:value={sshHost} placeholder="i-0abc123def4567890" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+            <div class="col-span-3 min-w-0 sm:col-span-2">
+              <label for="cn-ssm-region" class={lbl}>Region</label>
+              <Input id="cn-ssm-region" bind:value={tunnelRegion} placeholder="CLI default" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+            <div class="col-span-3 min-w-0 sm:col-span-2">
+              <label for="cn-ssm-profile" class={lbl}>Profile</label>
+              <Input id="cn-ssm-profile" bind:value={tunnelProfile} placeholder="default" spellcheck="false" autocomplete="off" class={inp} />
+            </div>
+          </div>
+        {:else}
         {@render panelNote(
           "Uses your system ssh. The server needs AllowTcpForwarding; keepalive is in seconds (0 = off).",
         )}
@@ -3153,11 +3845,14 @@
             />
           </div>
         </div>
+        {/if}
       {/snippet}
       {@render transportPanel(
         "cn-ssh",
-        "SSH tunnel",
-        sshEnabled ? sshHost.trim() || "No host yet" : "Direct connection",
+        "Tunnel",
+        sshEnabled
+          ? `${tunnelKind === "kubernetes" ? "Kubernetes" : tunnelKind === "ssm" ? "AWS SSM" : "SSH"} · ${sshHost.trim() || "Not set yet"}`
+          : "Direct connection",
         "terminal",
         sshEnabled,
         (v) => {
@@ -3168,60 +3863,6 @@
         () => (sshPanelOpen = !sshPanelOpen),
         sshBody,
       )}
-    {:else if dbType === "clickhouse"}
-      <label class="flex cursor-pointer select-none items-center gap-2">
-        <Checkbox
-          id="cn-ch-secure"
-          checked={secure}
-          onCheckedChange={(v) => {
-            secure = v === true;
-            if (secure && port === "8123") port = "8443";
-            else if (!secure && port === "8443") port = "8123";
-          }}
-        />
-        <span class="text-ui-xs text-foreground/75">Use HTTPS (TLS)</span>
-      </label>
-    {/if}
-
-    <!-- SQL Server carries its own TLS pair rather than a `sslmode`. -->
-    {#if dbType === "mssql"}
-      <div class="flex flex-col gap-3 rounded-xl border border-border/50 bg-card/30 p-3">
-        <label class="flex cursor-pointer select-none items-start gap-2">
-          <Checkbox
-            id="cn-mssql-encrypt"
-            checked={encrypt}
-            onCheckedChange={(v) => (encrypt = v === true)}
-            class="mt-px"
-          />
-          <span class="flex flex-col">
-            <span class="text-ui-xs text-foreground/75">Encrypt connection (TLS)</span>
-            <span class="text-ui-3xs leading-snug text-muted-foreground"
-              >Encrypts traffic between Stroke and the server.</span
-            >
-          </span>
-        </label>
-        <label
-          class={cn(
-            "flex select-none items-start gap-2",
-            encrypt ? "cursor-pointer" : "cursor-not-allowed opacity-45",
-          )}
-        >
-          <Checkbox
-            id="cn-mssql-trust"
-            checked={trustCert}
-            disabled={!encrypt}
-            onCheckedChange={(v) => (trustCert = v === true)}
-            class="mt-px"
-          />
-          <span class="flex flex-col">
-            <span class="text-ui-xs text-foreground/75">Trust server certificate</span>
-            <span class="text-ui-3xs leading-snug text-muted-foreground"
-              >Accept self-signed or otherwise untrusted certificates. Needed for many local
-              and dev servers.</span
-            >
-          </span>
-        </label>
-      </div>
     {/if}
 
     <!-- Read-only is a property of the session, not of the transport, so it sits
@@ -3276,6 +3917,14 @@
       data-connection-modal
       style={modalInset}
       class="fixed inset-x-0 z-50 flex bg-background text-foreground outline-none data-open:animate-in data-closed:animate-out data-open:fade-in-0 data-closed:fade-out-0 data-open:zoom-in-[0.98] data-closed:zoom-out-[0.98] ease-out duration-200"
+      onOpenAutoFocus={(e) => {
+        // Start in the connection filter. Left to the dialog, focus went to
+        // its first button, the rail's Hide toggle, and opened from the
+        // keyboard it drew a focus box around that icon in the header.
+        if (!savedSearchEl) return;
+        e.preventDefault();
+        savedSearchEl.focus();
+      }}
       onEscapeKeydown={(e) => {
         if (isDirty && !isBusy) {
           e.preventDefault();
@@ -3337,7 +3986,7 @@
                  it jumped across and down on every collapse. -->
             <div
               class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1.5 ps-3 pe-2", isMacChrome && "ps-[92px]")}
-              data-tauri-drag-region
+              data-tauri-drag-region="deep"
             >
               <button
                 type="button"
@@ -3351,7 +4000,7 @@
               >
                 <Icon name="panel-left-close" class="size-4 shrink-0" />
               </button>
-              <h2 class="text-ui-sm font-medium text-foreground" data-tauri-drag-region>Connections</h2>
+              <h2 class="text-ui-sm font-medium leading-none text-foreground" data-tauri-drag-region>Connections</h2>
               <!-- The workspace row below already shows the count; here it only
                    appears while filtering, as matches. -->
               {#if savedQuery}
@@ -3399,7 +4048,7 @@
                     tabindex="-1"
                     autocomplete="off"
                     spellcheck="false"
-                    class="no-field-frame h-8 rounded-full border-transparent! bg-sidebar-accent/50! pl-8 pr-8 text-ui-xs shadow-none! focus-visible:bg-sidebar-accent!"
+                    class="search-box no-field-frame pl-8 pr-8 text-ui-xs shadow-none!"
                     oninput={() => (savedStagger = false)}
                     onkeydown={(e) => {
                       if (e.key === "Escape" && savedQuery) {
@@ -3475,14 +4124,28 @@
               {:else if saved.length > 0}
                 <ScrollArea type="auto" class="h-full scroll-smooth">
                   <div class="px-2 pb-2 flex flex-col gap-px">
-                    {#each savedMatches as conn, i (conn.id)}
+                    {#each railItems as item, i (item.key)}
+                      {#if item.header}
+                        <button
+                          type="button"
+                          class="mt-1.5 flex h-7 w-full items-center gap-2 rounded-md px-2 text-left text-ui-2xs font-medium text-muted-foreground transition-colors first:mt-0 hover:bg-sidebar-accent/60 hover:text-foreground"
+                          aria-expanded={item.open}
+                          onclick={() => toggleFolder(item.kind)}
+                        >
+                          <Icon name="chevron-right" class={cn("size-3.5 shrink-0 transition-transform duration-150", item.open && "rotate-90")} />
+                          <DbIcon id={item.mark} class={cn("size-3.5 shrink-0", engineTint(item.mark))} />
+                          <span class="min-w-0 flex-1 truncate">{item.kind}</span>
+                          <span class="shrink-0 tabular-nums">{item.count}</span>
+                        </button>
+                      {:else}
+                      {@const conn = item.conn}
                       {@const isSel = conn.id === editingId}
                       {@const busy2 = connecting === conn.id}
                       {@const cid =
                         conn.filePath === ":memory:" &&
                         (conn.type === "sqlite" || conn.type === "duckdb")
                           ? `${conn.type}-memory`
-                          : conn.type}
+                          : engineId(conn)}
                       {@const prov = providerOf(conn)}
                       <!-- The provider's mark when there is one (it says where
                            the database lives), else the engine's. The engine is
@@ -3612,6 +4275,7 @@
                           }}><Icon name="trash-2" class="size-3.5 shrink-0" /></button
                         >
                       </div>
+                      {/if}
                     {/each}
                   </div>
                 </ScrollArea>
@@ -3649,7 +4313,7 @@
                the window's drag area here. -->
           <div
             class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1 px-3", isMacChrome && !railOpen && "ps-[92px]")}
-            data-tauri-drag-region
+            data-tauri-drag-region="deep"
           >
             {#if !railOpen}
               <button
@@ -3687,7 +4351,7 @@
               out:fade={{ duration: 100 }}
             >
               <ConnectOverlay
-                icon={providerOf(dialing.conn) ?? dialing.conn.type ?? ""}
+                icon={providerOf(dialing.conn) ?? engineId(dialing.conn)}
                 name={dialing.conn.name ?? ""}
                 detail={dialTarget(dialing.conn)}
                 delay={150}
@@ -3705,14 +4369,16 @@
           <!-- The same top inset on both steps, so going from the list to the
                form doesn't nudge the page up (it was pt-4, then pt-2). -->
           <div
-            class="mx-auto w-full max-w-6xl shrink-0 px-10 pt-3"
+            class="mx-auto w-full max-w-6xl shrink-0 px-6 pt-3 md:px-10"
           >
             {#if step === "pick"}
               <!-- pe-6 keeps the rescan button clear of the dialog's own close
                  button, which floats at right-8 top-5 over this same corner. -->
-              <div class="flex items-center gap-3">
+              <!-- Wraps instead of squeezing: in a small window at a large zoom
+                   the title broke one word per line beside the controls. -->
+              <div class="flex flex-wrap items-center gap-x-3 gap-y-2">
                 <h2
-                  class="text-ui-xl font-semibold tracking-tight text-foreground"
+                  class="shrink-0 text-ui-xl font-semibold tracking-tight text-foreground"
                 >
                   Connect a database
                 </h2>
@@ -3754,7 +4420,7 @@
                     {#each NEW_CONN_STACK as id, i (id)}
                       <span
                         class={cn(
-                          "grid size-5.5 place-items-center rounded-md bg-card ring-1 ring-border/70 shadow-xs transition-[margin,transform] duration-200 ease-out motion-reduce:transition-none",
+                          "grid size-5.5 place-items-center rounded-md bg-card ring-1 ring-border/70 transition-[margin,transform] duration-200 ease-out motion-reduce:transition-none",
                           i > 0 && "-ms-2 group-hover/new:ms-0.5",
                         )}
                         style="z-index:{NEW_CONN_STACK.length - i}"
@@ -3811,6 +4477,9 @@
                       <span class="min-w-0 truncate text-ui-sm font-medium text-foreground">
                         {editingId ? name || activeDriver.label : activeDriver.label}
                       </span>
+                      {#if activeDriver.beta}
+                        <span class="shrink-0 rounded-sm bg-primary/10 px-1 text-ui-3xs font-medium text-primary">Beta</span>
+                      {/if}
                       <Icon name="chevron-down" class="size-3.5 shrink-0 text-muted-foreground" />
                     </button>
                   {/snippet}
@@ -3820,6 +4489,9 @@
                          rows in a row was noise beside names that already say what
                          they are. The category still matches in search (keywords). -->
                     <span class="min-w-0 shrink-0 truncate">{it.label}</span>
+                    {#if it.beta}
+                      <span class="shrink-0 rounded-sm bg-primary/10 px-1 text-ui-3xs font-medium text-primary">Beta</span>
+                    {/if}
                     <span class="min-w-0 flex-1 truncate text-ui-3xs text-muted-foreground">{it.desc}</span>
                     {#if it.value === dbType}
                       <Icon name="check" class="size-3.5 shrink-0 text-primary" />
@@ -3903,7 +4575,7 @@
                    on the right. -->
               <!-- Full width: the grids below are four columns, so a wide window
                    buys wider tiles and fewer truncated names, not empty margin. -->
-              <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-7 px-10 py-6">
+              <div class="@container mx-auto flex w-full max-w-6xl flex-col gap-7 px-6 py-6 md:px-10">
                   <!-- ── Paste a connection string ─────────────────────────
                        The fastest path there is, and the one a developer already
                        has in a clipboard from their provider dashboard or a
@@ -3937,6 +4609,7 @@
                           onclick={() => void prefillFromClipboard()}
                           oninput={(e) => {
                             quickHint = "";
+                            httpAmbiguous = "";
                             // Cleared on purpose: do not hand the same string
                             // back on the next window focus.
                             const v = /** @type {HTMLInputElement} */ (e.currentTarget).value;
@@ -3970,7 +4643,7 @@
                         onclick={useQuickUri}
                         class={cn(
                           "h-8 shrink-0 rounded-full px-3.5",
-                          !quickUri.trim() && "disabled:opacity-100 text-muted-foreground/60",
+                          !quickUri.trim() && "disabled:opacity-100 text-muted-foreground",
                         )}
 >
                         Continue
@@ -3979,6 +4652,16 @@
                     </div>
                     {#if quickHint}
                       <p class="px-0.5 text-ui-2xs text-muted-foreground">{quickHint}</p>
+                    {/if}
+                    {#if httpAmbiguous}
+                      <div class="flex flex-wrap gap-1.5 px-0.5" role="group" aria-label="Engine for this address">
+                        {#each HTTP_ENGINES.filter((e) => !DISABLED_TABS.has(e.id)) as e (e.id)}
+                          <Button variant="outline" size="sm" class="h-7 gap-1.5" onclick={() => useHttpAs(e)}>
+                            <DbIcon id={e.id} class="size-3.5 shrink-0" />
+                            {driverById(e.id).label}
+                          </Button>
+                        {/each}
+                      </div>
                     {/if}
                   </div>
 
@@ -4023,7 +4706,7 @@
                           />
                           <span class="min-w-0 flex-1 truncate text-ui-sm">{d.label}</span>
                           {#if off}
-                            <span class="shrink-0 text-ui-3xs text-muted-foreground/70">soon</span>
+                            <span class="shrink-0 text-ui-3xs text-muted-foreground">soon</span>
                           {/if}
                         </button>
                       {/each}
@@ -4198,7 +4881,7 @@
                    same layout roomier - and the panel already runs the header,
                    the footer and the URL bar edge to edge, so a capped form in
                    the middle of them was the odd one out. -->
-              <div class="mx-auto flex w-full max-w-6xl items-start gap-10 px-10 py-6">
+              <div class="mx-auto flex w-full max-w-6xl items-start gap-10 px-6 py-6 md:px-10">
                 <!-- Enter connects, from any field - filling a form and having to go
                  find the button is the one interaction nobody expects here. The
                  paste bar's own Enter handler runs first and marks the event
@@ -4234,7 +4917,7 @@
                       {#key dbType}
                         <div class="flex flex-col gap-3.5">
                           <!-- ── PostgreSQL / CockroachDB / MySQL / MariaDB ── -->
-                          {#if dbType === "postgres" || dbType === "cockroachdb" || dbType === "mysql" || dbType === "mariadb"}
+                          {#if dbType === "postgres" || dbType === "cockroachdb" || dbType === "yugabytedb" || dbType === "alloydb" || dbType === "mysql" || dbType === "mariadb"}
                             <!-- Host, port, database, user and password are one
               address, so they share one row where the panel is wide enough and
               break 3+2 where it is not. -->
@@ -4836,6 +5519,196 @@
                               >
                             </label>
 
+                            <!-- ── Snowflake ──────────────────────────────── -->
+                          {:else if dbType === "snowflake"}
+                            <div>
+                              <label for="cn-sf-account" class={lbl}>Account identifier</label>
+                              <Input id="cn-sf-account" bind:value={sfAccount} placeholder="myorg-myaccount" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">The part before <span class="font-mono">.snowflakecomputing.com</span> in your account URL.</p>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-sf-user" class={lbl}>User</label>
+                                <Input id="cn-sf-user" bind:value={user} autocomplete="username" spellcheck="false" class={inp} />
+                              </div>
+                              <div>
+                                <label for="cn-sf-role" class={lbl}>Role <span class="normal-case font-normal opacity-50">(optional)</span></label>
+                                <Input id="cn-sf-role" bind:value={sfRole} placeholder="the user's default" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                            </div>
+                            <div>
+                              <span class={lbl} id="cn-sf-auth-label">Sign in with</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-sf-auth-label">
+                                {#each [{ v: "keypair", l: "Key pair" }, { v: "token", l: "Access token" }] as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={sfAuth === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      sfAuth === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => (sfAuth = /** @type {'keypair'|'token'} */ (m.v))}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+                            {#if sfAuth === "keypair"}
+                              <div>
+                                <label for="cn-sf-key" class={lbl}>Private key</label>
+                                <div class="flex gap-2">
+                                  <Input id="cn-sf-key" bind:value={sfKeyFile} placeholder="/path/to/rsa_key.p8" spellcheck="false" autocomplete="off" class={cn(inp, "min-w-0 flex-1 font-mono")} />
+                                  <Button type="button" variant="outline" onclick={pickSnowflakeKey}>Browse…</Button>
+                                </div>
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                  An unencrypted PKCS#8 RSA key whose public half is set on the user (<span class="font-mono">ALTER USER … SET RSA_PUBLIC_KEY</span>). It stays on this machine.
+                                </p>
+                              </div>
+                            {:else}
+                              <div>
+                                <label for="cn-sf-token" class={lbl}>Programmatic access token</label>
+                                <PasswordInput id="cn-sf-token" bind:value={password} autocomplete="off" class={inp} />
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">Kept in your OS keychain. Snowflake's SQL API does not take passwords.</p>
+                              </div>
+                            {/if}
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-sf-wh" class={lbl}>Warehouse</label>
+                                <Input id="cn-sf-wh" bind:value={sfWarehouse} placeholder="COMPUTE_WH" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                              <div>
+                                <label for="cn-sf-db" class={lbl}>Database</label>
+                                <Input id="cn-sf-db" bind:value={database} placeholder="ANALYTICS" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                            </div>
+                            <div>
+                              <label for="cn-sf-schema" class={lbl}>Schema <span class="normal-case font-normal opacity-50">(optional)</span></label>
+                              <Input id="cn-sf-schema" bind:value={sfSchema} placeholder="PUBLIC" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                            </div>
+
+                            <!-- ── ODBC ───────────────────────────────────── -->
+                          {:else if isOdbcForm}
+                            {@const modes = (odbcCur ? [{ v: "fields", l: "Fields" }] : []).concat([{ v: "dsn", l: "Data source" }, { v: "string", l: "Connection string" }])}
+                            <div>
+                              <span class={lbl} id="cn-odbc-mode-label">Connect with</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-odbc-mode-label">
+                                {#each modes as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={odbcMode === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      odbcMode === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => (odbcMode = /** @type {'fields'|'dsn'|'string'} */ (m.v))}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+
+                            {#if odbcMode === "fields" && odbcCur}
+                              {@const hasHost = odbcCur.fields.some((f) => f.key === "host")}
+                              {@const hasPort = odbcCur.fields.some((f) => f.key === "port")}
+                              <div>
+                                <label for="cn-odbc-driver" class={lbl}>Driver</label>
+                                <Input id="cn-odbc-driver" bind:value={odbcDriver} placeholder={odbcCur.driverName} list="cn-odbc-drivers" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                <datalist id="cn-odbc-drivers">
+                                  {#each odbcInstalled as d (d)}<option value={d}></option>{/each}
+                                </datalist>
+                                {#if odbcDriverInstalled}
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">Installed on this machine.</p>
+                                {:else}
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                    {odbcInstalled.length ? `No ${odbcCur.label} driver is registered on this machine.` : "No ODBC drivers are registered on this machine."}
+                                    Install it, then open this form again.
+                                    <button type="button" class="font-medium text-primary hover:underline" onclick={() => openLink(odbcCur.install)}>Get the driver</button>
+                                  </p>
+                                {/if}
+                              </div>
+                              {#if hasHost}
+                                <div class={cn("grid gap-2", hasPort ? "grid-cols-[1fr_110px]" : "grid-cols-1")}>
+                                  <div>
+                                    <label for="cn-odbc-host" class={lbl}>Host</label>
+                                    <Input id="cn-odbc-host" bind:value={host} placeholder={odbcCur.fields.find((f) => f.key === "host")?.placeholder} spellcheck="false" autocomplete="off" class={inp} />
+                                  </div>
+                                  {#if hasPort}
+                                    <div>
+                                      <label for="cn-odbc-port" class={lbl}>Port</label>
+                                      <Input id="cn-odbc-port" bind:value={port} type="text" inputmode="numeric" class={inpNum} />
+                                    </div>
+                                  {/if}
+                                </div>
+                              {/if}
+                              {#each odbcCur.fields.filter((f) => f.key !== "host" && f.key !== "port") as f (f.key)}
+                                <div>
+                                  <label for={`cn-odbc-${f.key}`} class={lbl}>
+                                    {f.label}{#if f.optional}{" "}<span class="normal-case font-normal opacity-50">(optional)</span>{/if}
+                                  </label>
+                                  {#if f.key === "database"}
+                                    <Input id={`cn-odbc-${f.key}`} bind:value={database} placeholder={f.placeholder} spellcheck="false" autocomplete="off" class={cn(inp, f.mono && "font-mono")} />
+                                  {:else if f.file}
+                                    <div class="flex gap-2">
+                                      <Input id={`cn-odbc-${f.key}`} bind:value={odbcFields[f.key]} placeholder={f.placeholder} spellcheck="false" autocomplete="off" class={cn(inp, "min-w-0 flex-1 font-mono")} />
+                                      <Button type="button" variant="outline" onclick={() => pickOdbcFile(f.key)}>Browse…</Button>
+                                    </div>
+                                  {:else}
+                                    <Input id={`cn-odbc-${f.key}`} bind:value={odbcFields[f.key]} placeholder={f.placeholder} spellcheck="false" autocomplete="off" class={cn(inp, f.mono && "font-mono")} />
+                                  {/if}
+                                </div>
+                              {/each}
+                            {:else if odbcMode === "dsn"}
+                              <div>
+                                <label for="cn-odbc-dsn" class={lbl}>Data source</label>
+                                {#if odbcDsns.length}
+                                  <FieldSelect id="cn-odbc-dsn" bind:value={odbcDsn} options={odbcDsns.map((d) => ({ value: d.name, label: `${d.name} · ${d.driver}` }))} placeholder="Choose a data source" class="w-full" />
+                                {:else}
+                                  <Input id="cn-odbc-dsn" bind:value={odbcDsn} placeholder="SalesDW" spellcheck="false" autocomplete="off" class={inp} />
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                    No data sources are set up on this machine. Add one in odbc.ini or the ODBC Data Source Administrator, or use a connection string.
+                                  </p>
+                                {/if}
+                              </div>
+                            {:else}
+                              <div>
+                                <label for="cn-odbc-string" class={lbl}>Connection string</label>
+                                <Textarea id="cn-odbc-string" bind:value={odbcString} rows={3} spellcheck="false" autocomplete="off" placeholder={"Driver={...};Server=...;Database=...;"} class="font-mono" />
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">
+                                  Kept in the OS keychain, since it can hold a password. UID and PWD come from the fields below when the string has none.
+                                </p>
+                              </div>
+                            {/if}
+
+                            {#if odbcMode === "fields" && odbcCur?.auth === "token"}
+                              <div>
+                                <label for="cn-odbc-pass" class={lbl}>Access token</label>
+                                <PasswordInput id="cn-odbc-pass" bind:value={password} autocomplete="off" class={inp} />
+                              </div>
+                            {:else if !(odbcMode === "fields" && odbcCur?.auth === "none")}
+                              <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label for="cn-odbc-user" class={lbl}>Username{#if odbcMode !== "fields"}{" "}<span class="normal-case font-normal opacity-50">(optional)</span>{/if}</label>
+                                  <Input id="cn-odbc-user" bind:value={user} autocomplete="username" class={inp} />
+                                </div>
+                                <div>
+                                  <label for="cn-odbc-pass" class={lbl}>Password{#if odbcMode !== "fields"}{" "}<span class="normal-case font-normal opacity-50">(optional)</span>{/if}</label>
+                                  <PasswordInput id="cn-odbc-pass" bind:value={password} autocomplete="current-password" class={inp} />
+                                </div>
+                              </div>
+                            {/if}
+
+                            {#if odbcMode === "fields" && odbcCur}
+                              <div class="rounded-[var(--radius-field)] bg-muted/40 px-3 py-2">
+                                <div class="flex items-center justify-between gap-2">
+                                  <span class="text-ui-3xs font-medium text-muted-foreground">Connection string</span>
+                                  <button type="button" class="text-ui-3xs font-medium text-primary hover:underline" onclick={() => { odbcString = odbcPreview; odbcMode = "string"; }}>Edit as text</button>
+                                </div>
+                                <p class="mt-1 font-mono text-ui-3xs break-all text-foreground/80">{odbcPreview}</p>
+                              </div>
+                            {/if}
+                            <p class="text-ui-3xs text-muted-foreground">
+                              {#if odbcServer}The driver reports <span class="font-mono">{odbcServer}</span>.{" "}{/if}
+                              ODBC is in beta{#if odbcCur && odbcMode === "fields"}, and this preset follows {odbcCur.label}'s driver documentation without having been run against a {odbcCur.label} server yet{/if}.
+                            </p>
+
                             <!-- ── MongoDB ────────────────────────────────── -->
                           {:else if dbType === "mongodb"}
                             <div>
@@ -4851,7 +5724,39 @@
                             </div>
 
                             <!-- ── Firestore ──────────────────────────────── -->
-                          {:else if dbType === "firestore"}
+                          {:else if dbType === "firestore" || dbType === "spanner" || dbType === "bigquery"}
+                            {#if dbType === "bigquery"}
+                            <div>
+                              <label for="cn-fs-project" class={lbl}>Project ID</label>
+                              <Input id="cn-fs-project" bind:value={fsProject} placeholder="my-project" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">Queries run and are billed in this project. Its datasets are the schemas.</p>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-bq-dataset" class={lbl}>Default dataset <span class="normal-case font-normal opacity-50">(optional)</span></label>
+                                <Input id="cn-bq-dataset" bind:value={bqDataset} placeholder="analytics" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                              <div>
+                                <label for="cn-bq-location" class={lbl}>Location <span class="normal-case font-normal opacity-50">(optional)</span></label>
+                                <Input id="cn-bq-location" bind:value={bqLocation} placeholder="US, EU, europe-west2" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                            </div>
+                            {:else if dbType === "spanner"}
+                            <div>
+                              <label for="cn-fs-project" class={lbl}>Project ID</label>
+                              <Input id="cn-fs-project" bind:value={fsProject} placeholder="my-project" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-sp-instance" class={lbl}>Instance</label>
+                                <Input id="cn-sp-instance" bind:value={spInstance} placeholder="my-instance" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                              <div>
+                                <label for="cn-sp-db" class={lbl}>Database</label>
+                                <Input id="cn-sp-db" bind:value={spDatabase} placeholder="my-database" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              </div>
+                            </div>
+                            {:else}
                             <div class="grid grid-cols-2 gap-2">
                               <div>
                                 <label for="cn-fs-project" class={lbl}>Project ID</label>
@@ -4862,6 +5767,7 @@
                                 <Input id="cn-fs-db" bind:value={fsDatabase} placeholder="(default)" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
                               </div>
                             </div>
+                            {/if}
                             <div>
                               <span class={lbl} id="cn-fs-auth-label">Sign in with</span>
                               <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-fs-auth-label">
@@ -4886,7 +5792,7 @@
                                   <Button type="button" variant="outline" onclick={pickFirestoreKey}>Browse…</Button>
                                 </div>
                                 <p class="mt-1 text-ui-3xs text-muted-foreground">
-                                  A JSON key with Cloud Datastore access. It stays on this machine and is used to sign in to Google.
+                                  A JSON key with {dbType === "spanner" ? "Cloud Spanner" : dbType === "bigquery" ? "BigQuery" : "Cloud Datastore"} access. It stays on this machine and is used to sign in to Google.
                                 </p>
                               </div>
                             {:else if fsAuth === "gcloud"}
@@ -4896,12 +5802,20 @@
                             {:else}
                               <div>
                                 <label for="cn-fs-emu" class={lbl}>Emulator host</label>
-                                <Input id="cn-fs-emu" bind:value={fsEmulator} placeholder="localhost:8080" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                {#if dbType === "bigquery"}
+                                  <Input id="cn-fs-emu" bind:value={bqEmulator} placeholder="localhost:9050" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">The emulator's REST port, 9050 by default.</p>
+                                {:else if dbType === "spanner"}
+                                  <Input id="cn-fs-emu" bind:value={spEmulator} placeholder="localhost:9020" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                  <p class="mt-1 text-ui-3xs text-muted-foreground">The emulator's REST port, 9020 by default.</p>
+                                {:else}
+                                  <Input id="cn-fs-emu" bind:value={fsEmulator} placeholder="localhost:8080" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                                {/if}
                               </div>
                             {/if}
 
                             <!-- ── Cassandra ──────────────────────────────── -->
-                          {:else if dbType === "cassandra"}
+                          {:else if isCqlForm}
                             <div>
                               <label for="cn-cql-hosts" class={lbl}>Hosts</label>
                               <Input id="cn-cql-hosts" bind:value={cqlHosts} placeholder="10.0.0.1:9042, 10.0.0.2" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
@@ -4943,6 +5857,85 @@
                             <p class="-mt-1 text-ui-3xs text-muted-foreground">
                               Leave the user blank for a server without a login (admin party).
                             </p>
+
+                            <!-- ── InfluxDB ───────────────────────────────── -->
+                          {:else if dbType === "influxdb"}
+                            <div>
+                              <span class={lbl} id="cn-ifx-ver-label">Version</span>
+                              <div class="flex h-8 items-center gap-0.5 rounded-[var(--radius-field)] bg-muted/40 p-0.5" role="group" aria-labelledby="cn-ifx-ver-label">
+                                {#each [{ v: "3", l: "3.x (SQL)" }, { v: "2", l: "2.x (Flux)" }, { v: "1", l: "1.x (InfluxQL)" }] as m (m.v)}
+                                  <button
+                                    type="button"
+                                    aria-pressed={ifxVersion === m.v}
+                                    class={cn(
+                                      "inline-flex h-7 flex-1 items-center justify-center rounded-md text-ui-xs font-medium transition-colors",
+                                      ifxVersion === m.v ? "bg-background text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground",
+                                    )}
+                                    onclick={() => {
+                                      const was = ifxVersion === "3" ? "http://localhost:8181" : "http://localhost:8086";
+                                      ifxVersion = /** @type {'1'|'2'|'3'} */ (m.v);
+                                      if (!couchUrl.trim() || couchUrl.trim() === was) couchUrl = m.v === "3" ? "http://localhost:8181" : "http://localhost:8086";
+                                    }}
+                                  >{m.l}</button>
+                                {/each}
+                              </div>
+                            </div>
+                            <div>
+                              <label for="cn-ifx-url" class={lbl}>Server URL</label>
+                              <Input id="cn-ifx-url" bind:value={couchUrl} placeholder={ifxVersion === "3" ? "http://localhost:8181" : "http://localhost:8086"} spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                            </div>
+                            <div class={ifxVersion === "2" ? "grid grid-cols-2 gap-2" : ""}>
+                              {#if ifxVersion === "2"}
+                                <div>
+                                  <label for="cn-ifx-org" class={lbl}>Organization</label>
+                                  <Input id="cn-ifx-org" bind:value={ifxOrg} spellcheck="false" autocomplete="off" class={inp} />
+                                </div>
+                              {/if}
+                              <div>
+                                <label for="cn-ifx-db" class={lbl}>{ifxVersion === "2" ? "Bucket" : "Database"}</label>
+                                <Input id="cn-ifx-db" bind:value={database} spellcheck="false" autocomplete="off" class={inp} />
+                              </div>
+                            </div>
+                            {#if ifxVersion === "1"}
+                              <div class="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label for="cn-ifx-user" class={lbl}>User</label>
+                                  <Input id="cn-ifx-user" bind:value={user} autocomplete="username" spellcheck="false" class={inp} />
+                                </div>
+                                <div>
+                                  <label for="cn-ifx-pass" class={lbl}>Password</label>
+                                  <PasswordInput id="cn-ifx-pass" bind:value={password} autocomplete="current-password" class={inp} />
+                                </div>
+                              </div>
+                            {:else}
+                              <div>
+                                <label for="cn-ifx-token" class={lbl}>API token</label>
+                                <PasswordInput id="cn-ifx-token" bind:value={ifxToken} autocomplete="off" class={inp} />
+                                <p class="mt-1 text-ui-3xs text-muted-foreground">Kept in your OS keychain. A read token is enough: Stroke only reads InfluxDB for now.</p>
+                              </div>
+                            {/if}
+
+                            <!-- ── Neo4j ──────────────────────────────────── -->
+                          {:else if dbType === "neo4j"}
+                            <div>
+                              <label for="cn-neo-url" class={lbl}>HTTP address</label>
+                              <Input id="cn-neo-url" bind:value={couchUrl} placeholder="http://localhost:7474" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">The HTTP API port (7474), not Bolt (7687). Aura: <span class="font-mono">https://&lt;id&gt;.databases.neo4j.io</span>.</p>
+                            </div>
+                            <div>
+                              <label for="cn-neo-db" class={lbl}>Database</label>
+                              <Input id="cn-neo-db" bind:value={database} placeholder="neo4j" spellcheck="false" autocomplete="off" class={inp} />
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                              <div>
+                                <label for="cn-neo-user" class={lbl}>User</label>
+                                <Input id="cn-neo-user" bind:value={user} autocomplete="username" spellcheck="false" class={inp} />
+                              </div>
+                              <div>
+                                <label for="cn-neo-pass" class={lbl}>Password</label>
+                                <PasswordInput id="cn-neo-pass" bind:value={password} autocomplete="current-password" class={inp} />
+                              </div>
+                            </div>
 
                             <!-- ── Elasticsearch / OpenSearch ─────────────── -->
                           {:else if dbType === "elasticsearch" || dbType === "opensearch"}
@@ -5088,6 +6081,22 @@
                               <span class={lbl}>Options</span>
                               {@render advancedFields()}
                             </div>
+                            {#if pgWire}
+                              <div class="min-w-0">
+                                <label for="cn-params" class={lbl}>
+                                  Parameters
+                                  <span class="font-normal text-muted-foreground">· optional</span>
+                                </label>
+                                <Input
+                                  id="cn-params"
+                                  bind:value={pgParams}
+                                  class={cn(inp, "font-mono")}
+                                  placeholder="application_name=stroke&options=-c%20search_path%3Dapp"
+                                  spellcheck="false"
+                                  autocomplete="off"
+                                />
+                              </div>
+                            {/if}
                             <div class="flex min-w-0 items-start gap-4">
                             <div class="min-w-0 flex-1">
                               <label for="cn-name" class={lbl}>
@@ -5305,7 +6314,7 @@
                  px-10, padding inside the width): with the padding outside, the
                  bar ran 80px past the tiles, plain to see once the rail is
                  collapsed and the window is wide. -->
-            <div class="mx-auto flex min-h-8 w-full max-w-6xl flex-col justify-center px-10">
+            <div class="mx-auto flex min-h-8 w-full max-w-6xl flex-col justify-center px-6 md:px-10">
               <!-- The alert itself is a toast (see failWith). What stays here is the
                  one-line record of it, so the driver's own words are still
                  readable after the toast has gone - without a panel that shoves
@@ -5321,7 +6330,8 @@
                   aria-live="polite"
                 >
                   {#if step === "pick"}
-                    <span class="text-ui-2xs text-muted-foreground">
+                    <!-- One line: wrapped, it ran into the buttons beside it. -->
+                    <span class="min-w-0 truncate text-ui-2xs text-muted-foreground">
                       {saved.length === 0
                         ? "Everything stays on this machine"
                         : railOpen
@@ -5400,7 +6410,7 @@
                   {#if activeConnectionName}
                     <Button
                       variant="ghost"
-                      class="max-w-[220px] text-muted-foreground hover:text-destructive"
+                      class="max-w-[13.75rem] text-muted-foreground hover:text-destructive"
                       disabled={isBusy}
                       title="Disconnect {activeConnectionName}"
                       onclick={() => {
@@ -5415,7 +6425,7 @@
                     {@const lastConn = saved.find((c) => c.id === lastId)}
                     <Button
                       variant="ghost"
-                      class="max-w-[200px] text-muted-foreground"
+                      class="max-w-[12.5rem] text-muted-foreground"
                       disabled={isBusy}
                       title={`Resume ${lastConn.name} (${comboTitle('Mod+Shift+Enter')})`}
                       aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
@@ -5538,8 +6548,13 @@
                 data-autofocus
                 onclick={() => {
                   const existing = duplicatePrompt?.existing;
+                  const connecting = duplicatePrompt?.connecting;
                   duplicatePrompt = null;
-                  if (existing) resetForm(existing);
+                  if (!existing) return;
+                  // From Connect, "Open it" opens it: connect to the saved one.
+                  // From Save, it shows the saved one in the form.
+                  if (connecting) void connectWith(existing);
+                  else resetForm(existing);
                 }}
                 class="field-surface inline-flex h-8 shrink-0 items-center px-3 text-ui-xs text-muted-foreground transition-[color,background-color,border-color,transform] duration-150 ease-out hover:bg-muted/40 hover:text-foreground active:scale-[0.97]"
               >

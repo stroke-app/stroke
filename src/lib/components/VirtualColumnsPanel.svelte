@@ -135,7 +135,7 @@
       title={tableName}
       class="ml-auto min-w-0 truncate rounded bg-muted/60 px-1.5 py-0.5 font-mono text-ui-2xs text-muted-foreground"
     >{tableName}</span>
-    <button
+    <button aria-label="Close" title="Close"
       type="button"
       class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
       onclick={onclose}
@@ -191,7 +191,7 @@
         {#if columns.length > 0}
           <div class="border-b border-border/40 px-3 py-3">
             <p class="mb-2 text-ui-xs font-medium text-foreground/60">Columns</p>
-            <div class="mb-1.5 flex items-center gap-1.5 rounded border border-border/50 bg-muted/30 px-2 py-1">
+            <div class="search-shell mb-1.5 flex h-7 items-center gap-1.5 px-2">
               <Search class="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 type="text"
@@ -202,7 +202,7 @@
                 spellcheck="false"
               />
               {#if colSearch}
-                <button
+                <button aria-label="Clear search" title="Clear search"
                   type="button"
                   class="flex size-3.5 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
                   onclick={() => { colSearch = '' }}
@@ -352,12 +352,12 @@
                   <p class="truncate font-mono text-ui-2xs text-muted-foreground">{col.expression}</p>
                 </div>
                 <div class="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
-                  <button
+                  <button aria-label="Edit column" title="Edit column"
                     type="button"
                     class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
                     onclick={() => openEdit(col)}
                   ><Pencil class="size-3 shrink-0" /></button>
-                  <button
+                  <button aria-label="Delete column" title="Delete column"
                     type="button"
                     class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
                     onclick={() => virtualColumnsStore.remove(tableKey, col.id)}

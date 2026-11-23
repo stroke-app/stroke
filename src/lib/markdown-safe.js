@@ -69,3 +69,40 @@ export function renderSafeMarkdown(md) {
     return escapeHtml(String(md ?? ''))
   }
 }
+
+/**
+ * A fence opener whose info string is a sentence is a model talking about a
+ * code block, not starting one: "schema changes still go in a ```sql block for
+ * you to run" wrapped before the backticks, and the rest of the reply rendered
+ * as a code block captioned with that sentence. A real info string is a
+ * language and maybe an option or two. Such a line goes back to prose (the
+ * language as inline code) on the line it was split from. Lines inside a real
+ * fence are left alone.
+ * @param {string} md
+ */
+export function unfenceProse(md) {
+  const text = String(md ?? '')
+  if (!text.includes('```') && !text.includes('~~~')) return text
+  const lines = text.split('\n')
+  /** @type {string[]} */
+  const out = []
+  /** The open fence's marker (``` or ~~~, at its length), or '' outside one. */
+  let open = ''
+  for (const line of lines) {
+    const m = /^ {0,3}(`{3,}|~{3,})(.*)$/.exec(line)
+    if (open) {
+      // Closed by the same character, at least as long, with nothing after it.
+      if (m && m[1][0] === open[0] && m[1].length >= open.length && !m[2].trim()) open = ''
+      out.push(line)
+      continue
+    }
+    if (!m || (m[1][0] === '`' && m[2].includes('`'))) { out.push(line); continue }
+    const words = m[2].trim().split(/\s+/).filter(Boolean)
+    if (words.length < 4) { open = m[1]; out.push(line); continue }
+    const prose = `\`${words[0]}\` ${words.slice(1).join(' ')}`
+    const prev = out.length ? out[out.length - 1] : ''
+    if (prev.trim() && !/^\s*(#|[-*+]\s|\d+[.)]\s|>|\|)/.test(prev)) out[out.length - 1] = `${prev.trimEnd()} ${prose}`
+    else out.push(prose)
+  }
+  return out.join('\n')
+}

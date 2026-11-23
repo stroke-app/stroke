@@ -14,63 +14,37 @@
  */
 import { invoke } from '@tauri-apps/api/core'
 import { listSchemas, listTables, getTableColumnStructure, listIndexes, updateTableCell, insertTableRow, deleteTableRows } from '$lib/api.js'
+import { odbcFlat } from '$lib/sql-ident.js'
+import { studioEngine, studioQuote, studioPageSql } from '$lib/studio-sql.js'
+import { engineLabel } from '$lib/db-capabilities.js'
+import { joinPresence } from '$lib/share-presence.js'
+import { toB64u, fromB64u, rand, seal, unseal } from '$lib/relay-seal.js'
 
 export const STUDIO_ORIGIN = 'https://stroke.click'
 const VERSION = '0.2.0'
 const FEATURES = ['structure', 'where', 'edit', 'rowCounts']
 
-/** The engines the web studio speaks, by the app's connection types. */
-export function studioEngine(/** @type {string} */ type) {
-  const t = String(type || '').toLowerCase()
-  if (['postgres', 'postgresql', 'cockroach', 'cockroachdb', 'supabase', 'neon', 'timescale', 'yugabyte'].includes(t)) return 'postgres'
-  if (['mysql', 'mariadb', 'tidb', 'planetscale'].includes(t)) return 'mysql'
-  if (['sqlite'].includes(t)) return 'sqlite'
-  return null
-}
+export { studioEngine }
 
 const SYSTEM_SCHEMAS = new Set(['pg_catalog', 'information_schema', 'pg_toast', 'mysql', 'performance_schema', 'sys', 'crdb_internal', 'pg_extension'])
-
-// ── crypto ──────────────────────────────────────────────────────────────────
-
-/** @param {Uint8Array} bytes */
-function toB64u(bytes) {
-  let s = ''
-  for (const b of bytes) s += String.fromCharCode(b)
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-/** @param {string} text */
-function fromB64u(text) {
-  const b = atob(text.replace(/-/g, '+').replace(/_/g, '/'))
-  const out = new Uint8Array(b.length)
-  for (let i = 0; i < b.length; i++) out[i] = b.charCodeAt(i)
-  return out
-}
-const rand = (/** @type {number} */ n) => crypto.getRandomValues(new Uint8Array(n))
-/** @param {CryptoKey} key @param {unknown} value */
-async function seal(key, value) {
-  const iv = rand(12)
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, new TextEncoder().encode(JSON.stringify(value))))
-  return { iv: toB64u(iv), ct: toB64u(ct) }
-}
-/** @param {CryptoKey} key @param {{ iv: string, ct: string }} s */
-async function unseal(key, s) {
-  const pt = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: fromB64u(s.iv) }, key, fromB64u(s.ct))
-  return JSON.parse(new TextDecoder().decode(pt))
-}
 
 // ── the studio's routes, on the app's connection ────────────────────────────
 
 /**
  * @param {{
- *   engine: 'postgres' | 'mysql' | 'sqlite',
+ *   engine: string, label?: string,
  *   name: string, database: string, host: string,
  *   write: boolean,
  *   isLive: () => boolean,
  * }} o
  */
-function makeRoutes({ engine, name, database, host, write, isLive }) {
-  const q = (/** @type {string} */ id) => (engine === 'mysql' ? '`' + id.replace(/`/g, '``') + '`' : '"' + id.replace(/"/g, '""') + '"')
-  const from = (/** @type {string} */ schema, /** @type {string} */ table) => (engine === 'sqlite' ? q(table) : `${q(schema)}.${q(table)}`)
+function makeRoutes({ engine, label, name, database, host, write, isLive }) {
+  const q = (/** @type {string} */ id) => studioQuote(engine, id)
+  // Bare names where the engine has no schema to put in front: SQLite and its
+  // kin, GoogleSQL Spanner's unnamed schema, a flat ODBC database.
+  const bare = (/** @type {string} */ schema) =>
+    engine === 'sqlite' || (engine === 'spanner' && schema === 'default') || (engine === 'odbc' && odbcFlat())
+  const from = (/** @type {string} */ schema, /** @type {string} */ table) => (bare(schema) ? q(table) : `${q(schema)}.${q(table)}`)
   const str = (/** @type {unknown} */ v) => {
     if (typeof v !== 'string') throw new Error('Expected a string')
     return v
@@ -93,6 +67,8 @@ function makeRoutes({ engine, name, database, host, write, isLive }) {
       database,
       host,
       version: '',
+      label: label || engineLabel(engine),
+      quote: studioQuote(engine, 'x').slice(0, 1),
       name,
       bridge: VERSION,
       features: write ? FEATURES : [...FEATURES.filter((f) => f !== 'edit'), 'readonly'],
@@ -147,7 +123,11 @@ function makeRoutes({ engine, name, database, host, write, isLive }) {
       const offset = Math.max(Number(b.offset) || 0, 0)
       const where = typeof b.where === 'string' && b.where.trim() ? ` WHERE ${b.where}` : ''
       const order = b.sort && typeof b.sort.column === 'string' ? ` ORDER BY ${q(b.sort.column)} ${b.sort.dir === 'desc' ? 'DESC' : 'ASC'}` : ''
-      const page = await run(`SELECT * FROM ${from(schema, table)}${where}${order} LIMIT ${limit} OFFSET ${offset}`)
+      const base = `SELECT * FROM ${from(schema, table)}${where}`
+      // An ODBC database's paging isn't known here: LIMIT first, then OFFSET/FETCH.
+      const page = await run(studioPageSql(engine, base, order, limit, offset)).catch((e) =>
+        engine === 'odbc' ? run(studioPageSql(engine, base, order, limit, offset, true)) : Promise.reject(e),
+      )
       const count = await run(`SELECT COUNT(*) AS n FROM ${from(schema, table)}${where}`)
       return { columns: page.columns, rows: page.rows, rowCount: page.rows.length, total: Number(count.rows[0]?.[0] ?? 0), estimated: false }
     },
@@ -184,12 +164,13 @@ function makeRoutes({ engine, name, database, host, write, isLive }) {
  * Start sharing. Resolves once the link exists; `onStatus` reports the relay
  * connection as it comes and goes (sleep, Wi-Fi), and it reconnects by itself.
  * @param {{
- *   engine: 'postgres' | 'mysql' | 'sqlite',
+ *   engine: string, label?: string,
  *   name: string, database: string, host: string,
  *   write: boolean,
  *   isLive: () => boolean,
  *   onStatus?: (s: 'connecting' | 'online' | 'offline') => void,
  *   origin?: string,
+ *   me?: string,
  * }} o
  */
 export async function startShare(o) {
@@ -248,12 +229,22 @@ export async function startShare(o) {
     }
   }
   connect()
+  // Who else has the link open, and where: shown on this side's grid too.
+  const presence = joinPresence({ origin, room, key, name: o.me || 'Host', role: 'host' })
+  // The console everyone on the link can edit together, this side included.
+  // Yjs loads only once something is shared.
+  const { createSharedConsole } = await import('$lib/share-console.js')
+  const sharedConsole = createSharedConsole(presence, { name: o.me || 'Host', color: presence.color })
 
   return {
     link: `${origin}/studio#${new URLSearchParams({ relay: room, key: keyText })}`,
     write: o.write,
+    presence,
+    sharedConsole,
     stop() {
       closed = true
+      sharedConsole.stop()
+      presence.stop()
       clearInterval(ping)
       try { ws?.close(1000, 'Stopped sharing') } catch { /* closed */ }
       onStatus('offline')

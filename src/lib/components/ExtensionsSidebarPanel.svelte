@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   // Extensions sidebar panel - VSCode-style switchable panel listing the
   // built-in extensions with an inline Install / Installed toggle, plus whatever
   // has been installed from a folder. For a built-in there is no install step:
@@ -75,7 +76,7 @@
       const installed = await installExternalPlugin(picked);
       toast.success(`Installed ${installed.name}`, { description: "Turn it on to start using it." });
     } catch (e) {
-      toast.error("Could not install that folder", { description: String(e) });
+      toast.error("Could not install that folder", { description: errorText(e) });
     } finally {
       installing = false;
     }
@@ -94,7 +95,7 @@
       await uninstallExternalPlugin(p.id);
       toast.success(`Removed ${p.name}`);
     } catch (e) {
-      toast.error(`Could not remove ${p.name}`, { description: String(e) });
+      toast.error(`Could not remove ${p.name}`, { description: errorText(e) });
     }
   }
 
@@ -183,7 +184,7 @@
         bind:value={filter}
         placeholder="Search extensions"
         aria-label="Search extensions"
-        class= "field-surface h-7 w-full min-w-0 bg-background/40 pl-8 pr-2.5 text-ui-sm text-foreground shadow-none outline-none transition-colors hover:bg-background/55 focus-visible:border-ring/55 focus-visible:ring-1 focus-visible:ring-ring"
+        class="search-box no-field-frame w-full min-w-0 pl-8 pr-2.5 text-ui-sm"
       />
     </div>
   </div>

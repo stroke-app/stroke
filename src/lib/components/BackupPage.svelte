@@ -1,5 +1,5 @@
 <script>
-  import { onDestroy } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import FieldSelect from './FieldSelect.svelte'
   import ScheduledBackups from './ScheduledBackups.svelte'
   import LockKeyhole from '@lucide/svelte/icons/lock-keyhole'
@@ -82,7 +82,8 @@
   /** @type {'backup'|'restore'|'schedule'} */
   let activeTab = $state('backup')
 
-  const supportsSchemaFilter = $derived(dbType === 'postgres' || dbType === 'mysql')
+  // Engines whose dump covers one schema (or dataset) at a time.
+  const supportsSchemaFilter = $derived(['postgres', 'mysql', 'spanner', 'bigquery', 'snowflake', 'odbc'].includes(dbType ?? ''))
   const isPostgres = $derived(dbType === 'postgres')
   const isSqliteFamily = $derived(dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql')
   const dbLabel = $derived(
@@ -94,6 +95,10 @@
       libsql: 'libSQL / Turso',
       duckdb: 'DuckDB',
       mssql: 'SQL Server',
+      spanner: 'Spanner',
+      bigquery: 'BigQuery',
+      snowflake: 'Snowflake',
+      odbc: 'ODBC',
     })[dbType ?? ''] ?? 'Database',
   )
   const cliName = $derived(isPostgres ? 'psql' : dbType === 'mysql' ? 'mysql' : isSqliteFamily ? 'sqlite3' : '')
@@ -491,6 +496,7 @@
       dbType === 'postgres' ? e.includes('postgres')
       : dbType === 'mysql' ? e.includes('mysql') || e.includes('maria')
       : dbType === 'sqlite' || dbType === 'd1' || dbType === 'libsql' ? e.includes('sqlite') || e.includes('d1') || e.includes('libsql')
+      : dbType === 'spanner' || dbType === 'bigquery' || dbType === 'snowflake' || dbType === 'odbc' ? e.includes(dbType)
       : true
     return ok ? null : importInfo?.engine ?? null
   })
@@ -580,6 +586,22 @@
     importConfirmed = false
     importProgress = { bytesDone: 0, bytesTotal: 0, ok: 0, failed: 0 }
   }
+
+  // One page serves every connection. After switching, it showed the last
+  // database's "Export complete · products · 3 rows" over a database with no
+  // products table, and kept a dump file chosen for the other one. What has
+  // finished is put away; a run still going stays on screen.
+  // svelte-ignore state_referenced_locally
+  let shownFor = savedConnection?.id ?? ''
+  $effect(() => {
+    const id = savedConnection?.id ?? ''
+    if (id === shownFor) return
+    shownFor = id
+    untrack(() => {
+      if (exportPhase !== 'running') { exportPhase = 'idle'; exportResult = null; exportError = '' }
+      if (importPhase !== 'running') { resetImport(); importPath = ''; importInfo = null }
+    })
+  })
 </script>
 
 {#snippet logToggle()}
@@ -607,7 +629,7 @@
   >
     {#each logLines as line (line.id)}
       <div class="flex gap-3">
-        <span class="shrink-0 tabular-nums text-muted-foreground/70">{logTime(line.at)}</span>
+        <span class="shrink-0 tabular-nums text-muted-foreground">{logTime(line.at)}</span>
         <span
           class={cn(
             'min-w-0 break-words whitespace-pre-wrap',
@@ -647,7 +669,7 @@
   {:else if status === 'error'}
     <X class="size-3.5 shrink-0 text-destructive" aria-label="Failed" />
   {:else}
-    <Circle class="size-3.5 shrink-0 text-muted-foreground/60" aria-label="Waiting" />
+    <Circle class="size-3.5 shrink-0 text-muted-foreground" aria-label="Waiting" />
   {/if}
 {/snippet}
 
@@ -655,7 +677,7 @@
   <div class="flex flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
     <Icon class="size-5 shrink-0 text-muted-foreground" />
     <p class="text-ui-sm font-medium text-foreground">{title}</p>
-    <p class="max-w-sm text-ui-xs leading-relaxed text-muted-foreground">{body}</p>
+    <p class="max-w-sm text-pretty text-ui-xs leading-relaxed text-muted-foreground">{body}</p>
   </div>
 {/snippet}
 
@@ -685,7 +707,7 @@
     <div class="flex min-h-0 flex-1 overflow-hidden">
       <!-- Left: what to export -->
       <aside class="flex w-80 shrink-0 flex-col border-r border-border/60" aria-label="Backup options">
-        <div class="app-scroll flex min-h-0 flex-1 flex-col gap-6 overflow-y-auto p-4">
+        <div class="app-scroll flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-4">
           {#if supportsSchemaFilter && schemas.length > 0}
             <section class="flex flex-col gap-2">
               <label for="backup-schema" class={sectionLabel}>Schema</label>
@@ -714,8 +736,11 @@
             {/each}
           </section>
 
-          <section class="flex flex-col gap-2">
-            <div class="flex h-6 items-center gap-2">
+          <!-- The list takes the column's remaining height: capped at eight rows,
+               it scrolled in a small box above an empty column. min-h keeps a
+               usable list on a short window, where the column scrolls instead. -->
+          <section class="flex min-h-56 flex-1 flex-col gap-2">
+            <div class="flex h-6 shrink-0 items-center gap-2">
               <h2 class={sectionLabel}>Tables</h2>
               {#if tables.length > 0}
                 <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">
@@ -730,9 +755,9 @@
             {#if tables.length === 0}
               <p class="text-ui-xs text-muted-foreground">No tables in this {supportsSchemaFilter ? 'schema' : 'database'}.</p>
             {:else}
-              <div class="overflow-hidden rounded-lg border border-border/60">
+              <div class="flex min-h-0 flex-1 flex-col overflow-hidden rounded-lg border border-border/60">
                 {#if showTableSearch}
-                  <div class="relative border-b border-border/50">
+                  <div class="relative shrink-0 border-b border-border/50">
                     <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 shrink-0 -translate-y-1/2 text-muted-foreground" />
                     <input
                       bind:value={tableQuery}
@@ -745,8 +770,7 @@
                     />
                   </div>
                 {/if}
-                <!-- max-h-64 is exactly eight h-8 rows, so the list never ends on a half row. -->
-                <ul class="app-scroll max-h-64 overflow-y-auto" aria-label="Tables to export">
+                <ul class="app-scroll min-h-0 flex-1 overflow-y-auto" aria-label="Tables to export">
                   {#each visibleTables as t (t.name)}
                     {@const checked = selectedTables.has(t.name)}
                     <li>

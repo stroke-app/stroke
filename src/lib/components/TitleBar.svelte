@@ -17,7 +17,6 @@
   import { bindNativeMenu, syncNativeMenuState, watchFullscreen } from '$lib/native-menu.js'
 
   const isMac = typeof navigator !== 'undefined' && detectOs() === 'macos'
-  const mod = isMac ? '⌘' : 'Ctrl'
 
   // Window is frameless everywhere (see src-tauri/src/lib.rs), so this bar is
   // the drag region and double-click-to-maximize target.
@@ -26,19 +25,12 @@
     isTauri = typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window
   })
 
-  // Native title bars maximize on a background double-click. Our drag region
-  // only covers elements tagged `data-tauri-drag-region`; Tauri's own injected
-  // handler already maximizes when the click lands directly on one of those -
-  // this only picks up the rest (e.g. the flex spacer's non-tagged padding).
-  /** @param {MouseEvent} e */
-  function onDragRegionDblClick(e) {
-    // macOS tags the whole row `deep`, so Tauri's own handler already zooms on
-    // a double-click anywhere in it; running this as well would undo it.
-    if (!isTauri || isMac) return
-    if (e.target === e.currentTarget) return
-    if (/** @type {Element} */ (e.target).closest('button')) return
-    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().toggleMaximize())
-  }
+  // The whole bar is the drag region, tagged `deep`: a bare
+  // `data-tauri-drag-region` only drags when the click lands on that exact
+  // element, so every child without the tag (the room beside the traffic
+  // lights, the wrappers around the controls) was a dead spot. Buttons, tabs
+  // and menus still take their clicks: Tauri never drags from a clickable
+  // element. Double-click to maximize comes with it, from Tauri's handler.
 
   let {
     title = 'Stroke',
@@ -138,11 +130,10 @@
   style:--spacing="calc(4px * var(--app-scale, 1))"
   data-studio-region="titlebar"
   bind:clientWidth={barW}
-  data-tauri-drag-region
+  data-tauri-drag-region="deep"
   role="toolbar"
   aria-label="Window title bar"
   tabindex="-1"
-  ondblclick={onDragRegionDblClick}
 >
 
   {#if isMac}

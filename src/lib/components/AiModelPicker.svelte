@@ -26,7 +26,6 @@
   } from '$lib/stores/ai-settings.js'
   import { localAgents, refreshLocalAgents, profileAgent, agentPrefs, EFFORTS, AGENTS_WITH_EFFORT } from '$lib/local-agents.js'
   import { readOnlyMode } from '$lib/stores/read-only.js'
-  import { IS_MAC } from '$lib/shortcuts.js'
 
   let {
     /** @type {() => void} */
@@ -54,13 +53,10 @@
   let open = $state(false)
   let query = $state('')
   let favorites = $state(loadFavorites())
-  let railKey = $state('')
   let highlight = $state(0)
   let searchEl = $state(/** @type {HTMLInputElement | null} */ (null))
-  let copied = $state(false)
-  let showAll = $state(false)
-  /** Rows shown before "Show more". */
-  const LIST_CAP = 8
+  /** The agent whose setup command was just copied. */
+  let copied = $state('')
 
   /** @param {string} key */
   function toggleFavorite(key) {
@@ -83,26 +79,6 @@
     omniroute: Waypoints,
     custom: SlidersHorizontal,
   })
-
-  /** Show a provider's models. Hover does it too, but never over a search. @param {string} key */
-  function showGroup(key) {
-    if (query.trim() || railKey === key) return
-    railKey = key
-    highlight = 0
-  }
-
-  // Hovering a provider in the rail shows its models, no click needed. A short
-  // intent delay keeps a pointer sweeping across the rail on its way to the
-  // list from flicking through every provider it passes.
-  let hoverTimer = 0
-  /** @param {string} key */
-  function hoverGroup(key) {
-    clearTimeout(hoverTimer)
-    hoverTimer = window.setTimeout(() => showGroup(key), 70)
-  }
-  function leaveGroup() {
-    clearTimeout(hoverTimer)
-  }
 
   /** The brand mark for a provider; agents borrow their maker's. @param {string} provider */
   function brandOf(provider) {
@@ -176,18 +152,49 @@
     return out
   })
 
-  const matching = $derived.by(() => {
+  /** Per provider, rows shown before "Show N more". */
+  const GROUP_CAP = 6
+  /** Groups expanded past the cap. */
+  let expanded = $state(/** @type {Set<string>} */ (new Set()))
+
+  /**
+   * What the list shows: favourites first (when any), then one section per
+   * provider in the order they were added. A search flattens everything into
+   * one section of matches.
+   * @typedef {{ key: string, label: string, brand: string, agent?: import('$lib/api.js').AgentInfo, rows: Entry[], more: number }} Section
+   */
+  const sections = $derived.by(() => {
     const q = query.trim().toLowerCase()
-    if (q) return entries.filter((e) => `${e.label} ${e.provider} ${e.tag} ${e.note}`.toLowerCase().includes(q))
-    if (railKey === 'fav') return entries.filter((e) => favorites.has(e.key))
-    return entries.filter((e) => e.group === railKey)
+    if (q) {
+      const rows = entries.filter((e) => `${e.label} ${e.provider} ${e.tag} ${e.note}`.toLowerCase().includes(q))
+      return /** @type {Section[]} */ ([{ key: 'search', label: '', brand: '', rows, more: 0 }])
+    }
+    /** @type {Section[]} */
+    const out = []
+    const favs = entries.filter((e) => favorites.has(e.key))
+    if (favs.length) out.push({ key: 'fav', label: 'Favourites', brand: '', rows: favs, more: 0 })
+    for (const g of groups) {
+      const all = entries.filter((e) => e.group === g.key)
+      if (!all.length && !(g.agent && g.agent.status !== 'ready')) continue
+      // The active model always shows, even past the cap.
+      const open = expanded.has(g.key) || all.length <= GROUP_CAP + 1
+      let rows = open ? all : all.slice(0, GROUP_CAP)
+      const act = all.find((e) => e.active)
+      if (act && !rows.includes(act)) rows = [...rows, act]
+      out.push({ key: g.key, label: g.label, brand: g.brand, agent: g.agent, rows, more: all.length - rows.length })
+    }
+    // Agents that can't run yet go last: one line each, below what can be picked.
+    const ready = (/** @type {Section} */ x) => !x.agent || x.agent.status === 'ready'
+    return [...out.filter(ready), ...out.filter((x) => !ready(x))]
   })
-  const visible = $derived(showAll || query.trim() ? matching : matching.slice(0, LIST_CAP))
-  const hiddenCount = $derived(matching.length - visible.length)
+  /** Every row in order, for the keyboard. */
+  const flat = $derived(sections.flatMap((s) => s.rows))
 
   // Effort belongs to the model, so it is picked beside it (T3's Reasoning column).
   const hasEffort = $derived(!!activeAgent && AGENTS_WITH_EFFORT.has(activeAgent))
   const effortLabel = $derived(EFFORTS.find((e) => e.id === $agentPrefs.effort)?.label ?? 'Medium')
+  /** Short enough for one row of five. */
+  const EFFORT_SHORT = /** @type {Record<string, string>} */ ({ low: 'Low', medium: 'Med', high: 'High', xhigh: 'X-High', max: 'Max' })
   /** @param {string} id */
   function setEffort(id) {
     agentPrefs.update((p) => ({ ...p, effort: /** @type {any} */ (id) }))
@@ -197,23 +204,17 @@
     $readOnlyMode || !activeAgent ? ($readOnlyMode ? 'Read only' : '')
       : ({ read: 'Read only', write: 'Read & write', modify: 'Modify schema', dangerous: 'Full access' })[$agentPrefs.access] ?? 'Read only'
   )
-  const modKey = IS_MAC ? '⌘' : 'Ctrl+'
-
-  const railGroup = $derived(groups.find((g) => g.key === railKey))
-  // An agent that cannot run yet gets its setup step instead of an empty list.
-  const blockedAgent = $derived(
-    !query.trim() && railGroup?.agent && railGroup.agent.status !== 'ready' ? railGroup.agent : null
-  )
 
   function openPicker() {
     query = ''
-    copied = false
-    const current = entries.find((e) => e.active)
-    railKey = current && favorites.has(current.key) ? 'fav' : current?.group ?? groups[0]?.key ?? 'fav'
-    showAll = false
-    highlight = Math.max(0, visible.findIndex((e) => e.active))
+    copied = ''
+    expanded = new Set()
+    highlight = Math.max(0, flat.findIndex((e) => e.active))
     void refreshLocalAgents()
-    queueMicrotask(() => searchEl?.focus())
+    queueMicrotask(() => {
+      searchEl?.focus()
+      document.getElementById(`ai-model-opt-${highlight}`)?.scrollIntoView({ block: 'nearest' })
+    })
   }
 
   /** @param {Entry} e */
@@ -222,31 +223,31 @@
     open = false
   }
 
+  /** @param {number} i */
+  function moveTo(i) {
+    highlight = i
+    document.getElementById(`ai-model-opt-${i}`)?.scrollIntoView({ block: 'nearest' })
+  }
+
   /** @param {KeyboardEvent} e */
   function onSearchKey(e) {
-    // ⌘1-⌘4 pick the first four rows, as the chips beside them say.
-    if ((e.metaKey || e.ctrlKey) && /^[1-4]$/.test(e.key)) {
-      const hit = visible[Number(e.key) - 1]
-      if (hit) { e.preventDefault(); choose(hit) }
-      return
-    }
     if (e.key === 'ArrowDown') {
       e.preventDefault()
-      highlight = Math.min(visible.length - 1, highlight + 1)
+      moveTo(Math.min(flat.length - 1, highlight + 1))
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
-      highlight = Math.max(0, highlight - 1)
-    } else if (e.key === 'Enter' && visible[highlight]) {
+      moveTo(Math.max(0, highlight - 1))
+    } else if (e.key === 'Enter' && flat[highlight]) {
       e.preventDefault()
-      choose(visible[highlight])
+      choose(flat[highlight])
     }
   }
 
-  /** @param {string} command */
-  async function copyCommand(command) {
+  /** @param {string} id @param {string} command */
+  async function copyCommand(id, command) {
     try {
       await navigator.clipboard.writeText(command)
-      copied = true
+      copied = id
     } catch { /* ignore */ }
   }
 </script>
@@ -274,180 +275,136 @@
     {#if hasEffort}<span class="shrink-0">{effortLabel}</span>{/if}
   </Popover.PopoverTrigger>
 
-  <Popover.PopoverContent side="top" align="end" sideOffset={8} class={cn("flex h-96 flex-col overflow-hidden p-0", hasEffort ? "w-[32rem]" : "w-[24rem]")}>
-    <div class="flex min-h-0 flex-1">
-    <!-- Provider rail: favourites first, then every provider with a model. -->
-    <div class="flex w-11 shrink-0 flex-col items-center gap-1 border-r border-border/50 py-2">
-      <button
-        type="button"
-        class={cn(
-          "relative flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-          railKey === 'fav' && !query && "bg-accent text-foreground",
-        )}
-        title="Favourites"
-        aria-label="Favourites"
-        aria-pressed={railKey === 'fav' && !query}
-        onfocus={() => showGroup('fav')}
-        onpointerenter={() => hoverGroup('fav')}
-        onpointerleave={leaveGroup}
-        onclick={() => { railKey = 'fav'; query = ''; highlight = 0 }}
-      >
-        <Star class={cn("size-4 shrink-0", railKey === 'fav' && !query && "fill-current")} />
-      </button>
-      <span class="my-0.5 h-px w-6 bg-border/60" aria-hidden="true"></span>
-      {#each groups as g (g.key)}
-        <button
-          type="button"
-          class={cn(
-            "relative flex size-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground",
-            railKey === g.key && !query && "bg-accent text-foreground",
-            g.agent && g.agent.status !== 'ready' && "opacity-40",
-          )}
-          title={g.agent && g.agent.status !== 'ready' ? `${g.label} (${g.agent.status === 'missing' ? 'not installed' : 'sign in first'})` : g.label}
-          aria-label={g.label}
-          aria-pressed={railKey === g.key && !query}
-          onfocus={() => showGroup(g.key)}
-          onpointerenter={() => hoverGroup(g.key)}
-          onpointerleave={leaveGroup}
-          onclick={() => { railKey = g.key; query = ''; highlight = 0 }}
-        >
-          {@render mark(g.brand, 'size-4 shrink-0')}
-          {#if railKey === g.key && !query}
-            <span class="absolute -left-1.5 top-1.5 h-5 w-0.5 rounded-full bg-primary" aria-hidden="true"></span>
-          {/if}
-        </button>
+  <Popover.PopoverContent side="top" align="end" sideOffset={8} class="flex max-h-[min(30rem,70vh)] w-[22rem] flex-col overflow-hidden p-0">
+    <label data-slot="menu-search" class="search-shell m-1.5 flex h-8 shrink-0 items-center gap-2 px-2.5">
+      <Search class="size-3.5 shrink-0 text-muted-foreground" />
+      <input
+        bind:this={searchEl}
+        bind:value={query}
+        oninput={() => (highlight = 0)}
+        onkeydown={onSearchKey}
+        class="no-focus-ring min-w-0 flex-1 bg-transparent text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
+        placeholder="Search models"
+        aria-label="Search models"
+        role="combobox"
+        aria-expanded="true"
+        aria-controls="ai-model-list"
+        aria-autocomplete="list"
+        aria-activedescendant={flat.length ? `ai-model-opt-${highlight}` : undefined}
+      />
+    </label>
+
+    <div id="ai-model-list" class="min-h-0 flex-1 overflow-y-auto px-1.5 pb-1.5" role="listbox" aria-label="Models">
+      {#if flat.length === 0 && !sections.some((s) => s.agent && s.agent.status !== 'ready')}
+        <p class="px-2 py-6 text-center text-ui-2xs text-muted-foreground">
+          {query.trim() ? 'No model matches.' : 'No models yet. Add one in Manage models.'}
+        </p>
+      {/if}
+      {#each sections as sec (sec.key)}
+        {#if sec.label}
+          <div class="flex h-7 items-center gap-1.5 px-2 pt-1.5 text-ui-3xs font-medium text-muted-foreground">
+            {#if sec.key === 'fav'}
+              <Star class="size-3 shrink-0 fill-current" />
+            {:else}
+              {@render mark(sec.brand, 'size-3 shrink-0')}
+            {/if}
+            <span class="truncate">{sec.label}</span>
+            {#if sec.agent && sec.agent.status !== 'ready'}
+              {@const agent = sec.agent}
+              <span class="ml-auto shrink-0 font-normal">{agent.status === 'missing' ? 'Not installed' : 'Sign in first'}</span>
+              {#if agent.setup}
+                <button
+                  type="button"
+                  class="flex h-5 shrink-0 items-center gap-1 rounded px-1.5 font-normal text-foreground/90 hover:bg-accent"
+                  title={`${agent.setup.command}\nRun it in a terminal, then reopen this menu.`}
+                  onclick={() => agent.setup && copyCommand(agent.id, agent.setup.command)}
+                >
+                  {#if copied === agent.id}<Check class="size-3 shrink-0" />Copied{:else}<Copy class="size-3 shrink-0" />{agent.status === 'missing' ? 'Copy install' : 'Copy sign-in'}{/if}
+                </button>
+              {/if}
+            {/if}
+          </div>
+        {/if}
+        {#each sec.rows as e (sec.key + e.key)}
+          {@const i = flat.indexOf(e, sections.slice(0, sections.indexOf(sec)).reduce((n, x) => n + x.rows.length, 0))}
+          <div
+            id="ai-model-opt-{i}"
+            role="option"
+            tabindex="-1"
+            aria-selected={i === highlight}
+            aria-current={e.active ? 'true' : undefined}
+            title={[e.provider, e.note || e.tag].filter(Boolean).join(' · ')}
+            class={cn(
+              "group flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2",
+              i === highlight && "bg-accent",
+            )}
+            onmouseenter={() => (highlight = i)}
+            onclick={() => choose(e)}
+            onkeydown={(ev) => ev.key === 'Enter' && choose(e)}
+          >
+            {#if query.trim() || sec.key === 'fav'}
+              {@render mark(e.brand, 'size-3.5 shrink-0 text-muted-foreground')}
+            {/if}
+            <span class={cn("min-w-0 truncate text-ui-xs", e.active ? "font-medium text-foreground" : "text-foreground/90")}>{e.label}</span>
+            {#if (e.tag || e.note) && !e.label.toLowerCase().includes((e.tag || e.note).toLowerCase())}
+              <span class="min-w-0 shrink truncate text-ui-3xs text-muted-foreground">{e.tag || e.note}</span>
+            {/if}
+            <span class="flex-1"></span>
+            <button
+              type="button"
+              class={cn(
+                "flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground",
+                favorites.has(e.key) ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
+              )}
+              aria-label={favorites.has(e.key) ? `Unstar ${e.label}` : `Star ${e.label}`}
+              onclick={(ev) => { ev.stopPropagation(); toggleFavorite(e.key) }}
+            >
+              <Star class={cn("size-3 shrink-0", favorites.has(e.key) && "fill-current text-foreground")} />
+            </button>
+            <Check class={cn("size-3.5 shrink-0 text-primary", !e.active && "invisible")} aria-hidden="true" />
+          </div>
+        {/each}
+        {#if sec.more > 0}
+          <button
+            type="button"
+            class="flex h-7 w-full items-center gap-1.5 rounded-md px-2 text-left text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground"
+            onclick={() => (expanded = new Set([...expanded, sec.key]))}
+          >
+            <ChevronDown class="size-3.5 shrink-0" />
+            {sec.more} more
+          </button>
+        {/if}
       {/each}
     </div>
 
-    <div class="flex min-w-0 flex-1 flex-col">
-      <label data-slot="menu-search" class="flex h-10 shrink-0 items-center gap-2 px-3">
-        <Search class="size-3.5 shrink-0 text-muted-foreground" />
-        <input
-          bind:this={searchEl}
-          bind:value={query}
-          oninput={() => (highlight = 0)}
-          onkeydown={onSearchKey}
-          class="no-focus-ring min-w-0 flex-1 bg-transparent text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
-          placeholder="Search models…"
-          aria-label="Search models"
-          role="combobox"
-          aria-expanded="true"
-          aria-controls="ai-model-list"
-          aria-autocomplete="list"
-          aria-activedescendant={visible.length ? `ai-model-opt-${highlight}` : undefined}
-        />
-      </label>
-
-      <div id="ai-model-list" class="min-h-0 flex-1 overflow-y-auto p-1.5" role="listbox" aria-label="Models">
-        {#if blockedAgent}
-          <div class="flex flex-col gap-2 px-2 py-3">
-            <p class="text-ui-xs font-medium text-foreground">
-              {blockedAgent.name} {blockedAgent.status === 'missing' ? 'is not installed' : 'needs you to sign in'}
-            </p>
-            {#if blockedAgent.setup}
-              <button
-                type="button"
-                class="group flex items-center gap-2 rounded-md border border-border/60 bg-muted/30 px-2 py-1.5 text-left font-mono text-ui-3xs text-foreground hover:bg-muted/50"
-                onclick={() => blockedAgent?.setup && copyCommand(blockedAgent.setup.command)}
-                title="Copy"
-              >
-                <span class="min-w-0 flex-1 truncate">{blockedAgent.setup.command}</span>
-                <Copy class="size-3 shrink-0 text-muted-foreground" />
-              </button>
-              <p class="text-ui-3xs text-muted-foreground">{copied ? 'Copied. Run it in a terminal, then reopen this menu.' : 'Run this in a terminal, then reopen this menu.'}</p>
-            {:else if blockedAgent.hint}
-              <p class="text-ui-3xs text-muted-foreground">{blockedAgent.hint}</p>
-            {/if}
-          </div>
-        {:else if visible.length === 0}
-          <p class="px-2 py-6 text-center text-ui-2xs text-muted-foreground">
-            {query.trim() ? 'No model matches.' : railKey === 'fav' ? 'Star a model to keep it here.' : 'No models.'}
-          </p>
-        {:else}
-          {#each visible as e, i (e.key)}
-            <div
-              id="ai-model-opt-{i}"
-              role="option"
-              tabindex="-1"
-              aria-selected={i === highlight}
-              aria-current={e.active ? 'true' : undefined}
-              title={[e.provider, e.note || e.tag].filter(Boolean).join(' · ')}
-              class={cn(
-                "group flex min-h-7 w-full min-w-0 cursor-pointer items-center gap-2 rounded-sm px-2 py-1",
-                i === highlight && "bg-accent",
-              )}
-              onmouseenter={() => (highlight = i)}
-              onclick={() => choose(e)}
-              onkeydown={(ev) => ev.key === 'Enter' && choose(e)}
-            >
-              {@render mark(e.brand, 'size-3.5 shrink-0 text-muted-foreground')}
-              <span class={cn("min-w-0 truncate text-ui-xs", e.active ? "font-medium text-foreground" : "text-foreground/90")}>{e.label}</span>
-              {#if e.active}<Check class="size-3.5 shrink-0 text-foreground" />{/if}
-              <span class="flex-1"></span>
-              <button
-                type="button"
-                class={cn(
-                  "flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground hover:text-foreground",
-                  favorites.has(e.key) ? "opacity-100" : "opacity-0 group-hover:opacity-100 focus-visible:opacity-100",
-                )}
-                aria-label={favorites.has(e.key) ? `Unstar ${e.label}` : `Star ${e.label}`}
-                onclick={(ev) => { ev.stopPropagation(); toggleFavorite(e.key) }}
-              >
-                <Star class={cn("size-3.5 shrink-0", favorites.has(e.key) && "fill-current text-foreground")} />
-              </button>
-              {#if i < 4}
-                <span class="shrink-0 font-mono text-ui-3xs tracking-widest text-muted-foreground">{modKey}{i + 1}</span>
-              {/if}
-            </div>
-          {/each}
-          {#if hiddenCount > 0}
-            <button
-              type="button"
-              class="flex min-h-7 w-full items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-xs text-muted-foreground hover:bg-accent hover:text-foreground"
-              onclick={() => (showAll = true)}
-            >
-              <ChevronDown class="size-3.5 shrink-0" />
-              Show more
-              <span class="ml-auto font-mono text-ui-3xs tabular-nums">{hiddenCount}</span>
-            </button>
-          {/if}
-        {/if}
-      </div>
-    </div>
-
     {#if hasEffort}
-      <!-- Reasoning: the effort levels of the model above, picked beside it. -->
-      <div class="flex w-36 shrink-0 flex-col border-l border-border/50">
-        <div class="flex h-10 shrink-0 items-center px-3 text-ui-3xs font-medium text-muted-foreground">
-          <span class="truncate">Reasoning · {displayName}</span>
-        </div>
-        <div class="flex flex-col p-1.5" role="radiogroup" aria-label="Reasoning effort">
+      <!-- Reasoning belongs to the chosen model: one row under the list. -->
+      <div class="flex shrink-0 items-center gap-2 border-t border-border/50 px-2.5 py-1.5">
+        <span class="shrink-0 text-ui-2xs text-muted-foreground">Reasoning</span>
+        <div class="ml-auto flex items-center gap-0.5 rounded-md bg-muted/40 p-0.5" role="radiogroup" aria-label="Reasoning effort">
           {#each EFFORTS as ef (ef.id)}
             {@const on = $agentPrefs.effort === ef.id}
             <button
               type="button"
               role="radio"
               aria-checked={on}
-              class={cn("flex min-h-7 items-center gap-2 rounded-sm px-2 py-1 text-left text-ui-xs hover:bg-accent", on ? "font-medium text-foreground" : "text-foreground/90")}
+              title={ef.label}
+              class={cn("h-6 rounded px-1.5 text-ui-3xs transition-colors", on ? "bg-background font-medium text-foreground shadow-sm" : "text-muted-foreground hover:text-foreground")}
               onclick={() => setEffort(ef.id)}
-            >
-              <span class="min-w-0 flex-1 truncate">{ef.label}</span>
-              {#if on}<Check class="size-3.5 shrink-0" />{/if}
-            </button>
+            >{EFFORT_SHORT[ef.id] ?? ef.label}</button>
           {/each}
         </div>
       </div>
     {/if}
-    </div>
 
     <div class="flex h-8 shrink-0 items-center gap-2 border-t border-border/50 px-1.5">
       <button
         type="button"
-        class="flex h-6 items-center gap-1.5 rounded-sm px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        class="flex h-6 items-center gap-1.5 rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         onclick={() => { open = false; onopenSettings() }}
       >
         <Settings2 class="size-3.5 shrink-0" />
-        <span>Manage models…</span>
+        <span>Manage models</span>
       </button>
       {#if accessLabel}
         <!-- What the agent may run. Full access is the one that warrants colour. -->

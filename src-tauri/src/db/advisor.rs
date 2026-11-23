@@ -65,6 +65,18 @@ pub struct AdvisorReport {
 
 /// Schemas no advice applies to.
 const SYSTEM_SCHEMAS: &str = "'pg_catalog','information_schema','pg_toast'";
+/// Objects an extension created (PostGIS's spatial_ref_sys, postgis_topology's
+/// layer table): changing them is lost when the extension updates, so the
+/// design checks leave them out, as pg_dump does.
+const EXT_REL_C: &str = "NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dx WHERE dx.classid = 'pg_catalog.pg_class'::regclass AND dx.objid = c.oid AND dx.deptype = 'e')";
+const EXT_REL_T: &str = "NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dx WHERE dx.classid = 'pg_catalog.pg_class'::regclass AND dx.objid = t.oid AND dx.deptype = 'e')";
+const EXT_PROC_P: &str = "NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend dx WHERE dx.classid = 'pg_catalog.pg_proc'::regclass AND dx.objid = p.oid AND dx.deptype = 'e')";
+
+/// A planner row estimate as text. reltuples is -1 until the table is first
+/// vacuumed or analyzed, which read as "~-1 rows".
+fn approx_rows(n: i64) -> String {
+    if n < 0 { "not analyzed yet".into() } else { format!("~{n} rows") }
+}
 
 fn bytes_pretty(bytes: f64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
@@ -108,6 +120,7 @@ async fn check_rls_disabled(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String
             AND NOT c.relrowsecurity
             AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)
             AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND {EXT_REL_C}
             AND n.nspname NOT LIKE 'pg\\_temp%'
           ORDER BY 1, 2"
     );
@@ -154,6 +167,7 @@ async fn check_policies_ignored(pool: &PgPool) -> Result<Vec<AdvisorFinding>, St
            JOIN pg_policy p ON p.polrelid = c.oid
           WHERE c.relkind IN ('r','p') AND NOT c.relrowsecurity
             AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND {EXT_REL_C}
           GROUP BY 1, 2 ORDER BY 1, 2"
     );
     let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
@@ -185,6 +199,7 @@ async fn check_rls_no_policy(pool: &PgPool) -> Result<Vec<AdvisorFinding>, Strin
           WHERE c.relkind IN ('r','p') AND c.relrowsecurity
             AND NOT EXISTS (SELECT 1 FROM pg_policy p WHERE p.polrelid = c.oid)
             AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND {EXT_REL_C}
           ORDER BY 1, 2"
     );
     let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
@@ -215,6 +230,7 @@ async fn check_definer_search_path(pool: &PgPool) -> Result<Vec<AdvisorFinding>,
            JOIN pg_namespace n ON n.oid = p.pronamespace
           WHERE p.prosecdef
             AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND {EXT_PROC_P}
             AND NOT EXISTS (SELECT 1 FROM unnest(coalesce(p.proconfig, '{{}}'::text[])) c WHERE c LIKE 'search\\_path=%')
           ORDER BY 1, 2"
     );
@@ -253,6 +269,7 @@ async fn check_duplicate_index(pool: &PgPool) -> Result<Vec<AdvisorFinding>, Str
            JOIN pg_class t ON t.oid = x1.indrelid
            JOIN pg_namespace n ON n.oid = t.relnamespace
           WHERE n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND {EXT_REL_T}
           ORDER BY 5 DESC"
     );
     let rows = sqlx::query(&sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
@@ -358,6 +375,7 @@ async fn check_unindexed_fk(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String
            JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE con.contype = 'f'
             AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND {EXT_REL_C}
             AND NOT EXISTS (
                   SELECT 1 FROM pg_index i
                    WHERE i.indrelid = con.conrelid
@@ -385,7 +403,7 @@ async fn check_unindexed_fk(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String
                 entity: format!("{schema}.{table} ({name})"),
                 entity_kind: "constraint".into(),
                 description: "Postgres indexes the referenced side of a foreign key, never the referencing side. Joins across it, and the check behind every parent DELETE or UPDATE, scan this table end to end.".into(),
-                detail: Some(format!("{def} · ~{tuples} rows")),
+                detail: Some(format!("{def} · {}", approx_rows(tuples))),
                 remediation: Some(format!(
                     "CREATE INDEX CONCURRENTLY ON \"{schema}\".\"{table}\" ({cols});"
                 )),
@@ -465,6 +483,7 @@ async fn check_no_primary_key(pool: &PgPool) -> Result<Vec<AdvisorFinding>, Stri
            JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r'
             AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND {EXT_REL_C}
             AND n.nspname NOT LIKE 'pg\\_temp%'
             AND NOT EXISTS (SELECT 1 FROM pg_index i WHERE i.indrelid = c.oid AND i.indisprimary)
           ORDER BY c.reltuples DESC NULLS LAST"
@@ -484,7 +503,7 @@ async fn check_no_primary_key(pool: &PgPool) -> Result<Vec<AdvisorFinding>, Stri
                 entity: format!("{schema}.{table}"),
                 entity_kind: "table".into(),
                 description: "Nothing identifies a row here: duplicates can accumulate unnoticed, logical replication cannot carry updates, and tools that page by key - including this one - fall back to less stable ordering.".into(),
-                detail: Some(format!("~{tuples} rows")),
+                detail: Some(approx_rows(tuples)),
                 remediation: Some(format!(
                     "-- pick the column(s) that already identify a row:\nALTER TABLE \"{schema}\".\"{table}\" ADD PRIMARY KEY (id);\n-- or add a surrogate key:\n-- ALTER TABLE \"{schema}\".\"{table}\" ADD COLUMN id bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY;"
                 )),
@@ -555,6 +574,7 @@ async fn check_wide_rows(pool: &PgPool) -> Result<Vec<AdvisorFinding>, String> {
            JOIN pg_namespace n ON n.oid = c.relnamespace
           WHERE c.relkind = 'r'
             AND n.nspname NOT IN ({SYSTEM_SCHEMAS})
+            AND {EXT_REL_C}
             AND c.reltuples > 100
             AND (pg_table_size(c.oid) / GREATEST(c.reltuples, 1)) > 1024
           ORDER BY 5 DESC"
@@ -698,5 +718,39 @@ mod tests {
         assert_eq!(bytes_pretty(2048.0), "2.0 KB");
         assert_eq!(bytes_pretty(17_064.0), "16.7 KB");
         assert_eq!(bytes_pretty(203_603_968.0), "194.2 MB");
+    }
+
+    #[test]
+    fn an_unanalyzed_table_has_no_negative_estimate() {
+        assert_eq!(super::approx_rows(-1), "not analyzed yet");
+        assert_eq!(super::approx_rows(0), "~0 rows");
+        assert_eq!(super::approx_rows(42), "~42 rows");
+    }
+
+    /// Against PostGIS (STROKE_TEST_POSTGIS) with postgis_topology installed:
+    /// the extensions' own tables (spatial_ref_sys, topology.layer, ...) are
+    /// not the user's to fix, so no design finding names them.
+    #[tokio::test]
+    async fn live_skips_extension_objects() {
+        let Ok(url) = std::env::var("STROKE_TEST_POSTGIS") else { return };
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        let ext: Vec<String> = sqlx::query_scalar(
+            "SELECT n.nspname || '.' || c.relname FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+              JOIN pg_depend d ON d.classid = 'pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e'
+             WHERE c.relkind = 'r'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert!(!ext.is_empty(), "the test database needs an extension with tables");
+        let report = super::scan(&super::super::connection::ActiveConnection::Postgres(pool)).await.unwrap();
+        for f in &report.findings {
+            if matches!(f.check_id.as_str(), "stale_stats" | "dead_tuples" | "unused_index" | "sequence_exhaustion") {
+                continue;
+            }
+            let table = f.entity.split(" (").next().unwrap_or(&f.entity);
+            assert!(!ext.iter().any(|e| e == table), "{} names an extension table: {}", f.check_id, f.entity);
+            assert!(!f.detail.as_deref().unwrap_or("").contains("~-"), "{}: {:?}", f.check_id, f.detail);
+        }
     }
 }

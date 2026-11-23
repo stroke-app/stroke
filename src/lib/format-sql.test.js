@@ -115,3 +115,13 @@ describe('formatSql compact layout', () => {
     expect(formatSql('select * from t', { compactClauses: false })).toBe('SELECT\n  *\nFROM\n  t')
   })
 })
+
+describe('LIKE takes the keyword case', () => {
+  it('on MySQL and SQLite, outside strings and quoted names', async () => {
+    const { formatSql, recasePatternOps } = await import('./format-sql.js')
+    expect(formatSql(`select a from t where a like '%like%' and b not like "x"`, { keywordCase: 'upper' }, 'mysql')).toContain(`a LIKE '%like%'`)
+    expect(formatSql(`select a from t where b not like 'x'`, { keywordCase: 'upper' }, 'sqlite')).toContain('NOT LIKE')
+    expect(recasePatternOps("SELECT `like` FROM t -- like\nWHERE x like 'like'", 'upper')).toBe("SELECT `like` FROM t -- like\nWHERE x LIKE 'like'")
+    expect(recasePatternOps('where a like b', 'preserve')).toBe('where a like b')
+  })
+})

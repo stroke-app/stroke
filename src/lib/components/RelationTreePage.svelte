@@ -292,7 +292,7 @@
       <div class="studio-chrome flex h-10 shrink-0 items-center gap-2 border-b border-border/60 px-3" data-studio-chrome>
         <GitBranch class="size-3.5 shrink-0 text-muted-foreground" />
         <span class="font-mono text-ui-xs font-semibold text-foreground/70">Relation tree</span>
-        <button
+        <button aria-label="Reload" title="Reload"
           type="button"
           disabled={loading}
           class="ml-auto flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-40"
@@ -312,7 +312,7 @@
         bind:this={listSearchEl}
         bind:value={listSearch}
         placeholder="Filter tables…"
-        class= "field-surface h-7 w-full bg-background/60 pl-7 pr-2 font-mono text-ui-xs outline-none placeholder:text-muted-foreground"
+        class="search-box no-field-frame h-7 w-full pl-7 pr-2 font-mono text-ui-xs"
       />
     </div>
     {/if}

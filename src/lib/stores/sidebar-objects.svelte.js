@@ -1,3 +1,4 @@
+import { errorText } from '../utils.js'
 /**
  * State behind the sidebar's Objects tab: which tree nodes are open (per
  * connection, when the setting keeps it), a counter bumped whenever the
@@ -85,7 +86,7 @@ export async function openDefinition(schema, obj, open) {
     const text = await getObjectDefinition(schema, obj)
     open({ text, title: definitionTitle(obj) })
   } catch (e) {
-    toast.error(`Couldn't read ${obj.name}`, { description: String(e) })
+    toast.error(`Couldn't read ${obj.name}`, { description: errorText(e) })
   }
 }
 
@@ -99,7 +100,7 @@ export async function copyDefinition(schema, obj) {
     await navigator.clipboard.writeText(await getObjectDefinition(schema, obj))
     toast.success(`Copied the definition of ${obj.name}`)
   } catch (e) {
-    toast.error(`Couldn't copy ${obj.name}`, { description: String(e) })
+    toast.error(`Couldn't copy ${obj.name}`, { description: errorText(e) })
   }
 }
 

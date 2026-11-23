@@ -310,8 +310,9 @@ overrides — if a menu looks off, the primitive is wrong; fix it there.
 | Part | Recipe |
 |---|---|
 | Panel | `rounded-[10px] border border-border/60 bg-popover p-1 elevate-2-rim` |
-| Item | `gap-1.5 rounded-sm px-1.5 py-1 text-ui-2xs` (a 25px row) · focus/highlight `bg-accent text-foreground` · disabled `opacity-40` · icons `size-3.5 shrink-0` · **no `transition-colors`** — a colour fade on hover makes highlight tracking feel laggy in a long menu |
-| Checkbox/radio/select item | same, with `pl-1.5 pr-7` and the indicator at `right-1.5` |
+| Item (dropdown, select) | `min-h-7 gap-2 rounded-sm px-2 py-1 text-ui-xs`: the compact control height, so a menu row matches the button that opened it · focus/highlight `bg-accent text-foreground` · disabled `opacity-40` · icons `size-3.5 shrink-0` · **no `transition-colors`** (a colour fade on hover makes highlight tracking feel laggy in a long menu) |
+| Checkbox/radio item, submenu trigger | same, with `pl-2 pr-7` and the indicator at `right-1.5`: one menu often mixes all of them, so they must line up |
+| Context menu item | `gap-1.5 rounded-sm px-1.5 py-1 text-ui-2xs` (a 25px row) for the long, dense grid menus |
 | Group label | `px-1.5 py-1 text-ui-3xs font-medium text-muted-foreground` — **plain case**, never uppercase (uppercase micro-labels are for page/sidebar sections only, §10) |
 | Separator | `bg-border/60 -mx-1 my-1 h-px` |
 | Shortcut / trailing hint | `ml-auto shrink-0 pl-3 text-ui-3xs tracking-widest text-muted-foreground` |
@@ -347,12 +348,20 @@ secondary line, if any, is `text-ui-2xs text-muted-foreground` in plain words
 (`Postgres · annapurna`), never a boxed chip; trailing count/timestamp
 `font-mono text-ui-2xs tabular-nums text-muted-foreground`.
 
-**Sidebar search row** (top of a sidebar): frameless - no field border - with
-a `Search size-3.5` icon at `left-2`, placeholder "Search", `text-ui-sm`, a
-`bg-sidebar-accent/60` fill only while focused, and a `size-5` clear (×)
-button at the right while it has text. Quiet `size-7` icon actions sit on the
-same row or the row above. In code: `no-field-frame` on a bare input, or
-`border-transparent! bg-transparent!` on the `Input` wrapper.
+**Search fields** (sidebar, dialogs, pages, pickers): one component,
+`SearchField.svelte`. An outlined box: `h-8 rounded-lg`, a 1px
+`border-border/80` outline over a faint `bg-muted/30` fill, no shadow, a
+`Search size-3.5` icon at `left-2.5`, and the `/` keycap at the right that
+focuses it (a `size-5` clear (×) button replaces the keycap while it has text).
+Focus moves the outline to `border-ring/70`. Do not hand-roll a search input;
+pass `rank={null}` for a field `/` should not focus.
+Where a field keeps its own keyboard handling or toolbar cluster, put
+`search-box no-field-frame` on the input (icon positioned over it), or
+`search-shell` on a wrapper row that holds icon, input and buttons. Both draw
+the same outline. A filter row at the top of a menu or popover list
+(`data-slot="menu-search"`) is a `search-shell` inset with `m-1.5` (`h-8`),
+so it reads as the same field inside the menu. The command palette's title
+row is the one exception: the palette itself is the field.
 
 **Prominent pick lists** (provider DB lists, account lists):
 ```

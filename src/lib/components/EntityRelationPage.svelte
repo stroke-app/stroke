@@ -2,8 +2,10 @@
   import Share2 from '@lucide/svelte/icons/share-2'
   import { requestShare } from '$lib/share-flow.js'
   import { onDestroy, tick, untrack } from 'svelte'
+  import { get } from 'svelte/store'
+  import { objectsVersion } from '$lib/stores/sidebar-objects.svelte.js'
   import dagre from '@dagrejs/dagre'
-  import { getSchemaColumnStructure, listIndexes, getTableDdl, saveExportAs } from '$lib/api.js'
+  import { getSchemaColumnStructure, listIndexes, getTableDdl, saveExportAs, listTables } from '$lib/api.js'
   import ErdCanvas from './ErdCanvas.svelte'
   import Loader from '@lucide/svelte/icons/loader'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
@@ -55,10 +57,10 @@
   import { isCurrentThemeDark } from '$lib/stores/settings.js'
   import { loadErdSettings, saveErdSettings, SPACING_PRESETS, SCOPE_DEFAULTS, DEFAULT_ERD_SETTINGS } from '$lib/stores/erd-settings.js'
   import { routeEdges, routeToSvgPath, corridorPathOrtho, CLEAR, MAX_ROUTED_NODES } from '$lib/erd-routing.js'
-  import { separateCards, wrapTallRanks } from '$lib/erd-layout.js'
+  import { separateCards, wrapTallRanks, packOrphans } from '$lib/erd-layout.js'
   import { layoutWithElk } from '$lib/erd-elk.js'
   import { visibleTables, visibleRels, relatedTo, linkedTables, mergeParallelEdges, hubTables } from '$lib/erd-filter.js'
-  import { cn, plural } from '$lib/utils.js'
+  import { cn, plural, errorText } from '$lib/utils.js'
 
   let {
     schema = 'public',
@@ -77,6 +79,8 @@
     insideTableTab = false,
     /** Inside a table tab: back to the rows (the tab's own toolbar is hidden here). @type {(() => void) | null} */
     onback = null,
+    /** The connection drawn. The page is kept across connections. */
+    connectionId = '',
   } = $props()
 
   /**
@@ -84,7 +88,7 @@
    *   columnDefault: string|null, foreignKey: string|null,
    *   fkConstraintName: string|null, ordinalPosition: number, isPrimaryKey?: boolean }} Col
    * @typedef {{ name: string, columns: Col[], pkCols: Set<string>,
-   *   uniqueCols?: Set<string>, hiddenCount?: number }} TableMeta
+   *   uniqueCols?: Set<string>, hiddenCount?: number, view?: boolean, matView?: boolean }} TableMeta
    * @typedef {'self' | 'related' | 'all'} Scope
    */
 
@@ -181,6 +185,7 @@
   // node array is. Both writers below mutate and then replace the Map, which is
   // what makes reactivity fire either way.
   let tableMeta = $state.raw(new Map())
+  const viewCount = $derived([...tableMeta.values()].filter((t) => t.view).length)
 
   // Raw, not deep-reactive. These arrays are the canvas renderer's hot data: it
   // reads n.position, n.data.columns[i].name and friends for every card and every
@@ -884,16 +889,16 @@
       })
     }
 
-    // Orphans in a responsive grid below the connected graph
+    // Orphans below the connected graph, as masonry on a landscape page (see
+    // packOrphans): the old grid set every row to the tallest orphan's height.
     const orphanY = laidConn.length ? bottomY + gaps.rowGap * 2 : hubRow.length ? topY : 0
-    const maxH = orphans.reduce((m, n) => Math.max(m, hOf(n)), HDR_H)
-    const GCOLS = Math.max(3, Math.min(6, Math.ceil(Math.sqrt(orphans.length * 1.8))))
-    const laidOrphans = orphans.map((n, i) => ({
+    const orphanAt = packOrphans(
+      orphans.map((n) => ({ id: n.id, w: NODE_W, h: hOf(n) })),
+      { gapX: gaps.colGap, gapY: gaps.rowGap, y: orphanY },
+    )
+    const laidOrphans = orphans.map((n) => ({
       ...n,
-      position: {
-        x: (i % GCOLS) * (NODE_W + gaps.colGap),
-        y: orphanY + Math.floor(i / GCOLS) * (maxH + gaps.rowGap),
-      },
+      position: orphanAt.get(n.id) ?? { x: 0, y: orphanY },
     }))
 
     const combined = [...laidHubs, ...laidConn, ...laidOrphans]
@@ -1102,27 +1107,43 @@
   }
 
   // ── Load ──────────────────────────────────────────────────────────────────
-  async function load() {
-    loading = true
+  /**
+   * @param {{ keep?: boolean }} [opts] keep: a refresh of the same schema. The
+   *   cards stay up while it reads, the filter and the placed positions carry
+   *   over, and only tables new to the diagram get laid out.
+   */
+  async function load({ keep = false } = {}) {
     error = ''
-    tableMeta = new Map()
-    nodes = []
-    edges = []
-    // A filter belongs to the schema it was picked in.
-    picked = new Set()
-    pickQuery = ''
-    drawAll = false
-    gatedCount = 0
-    _posCache.clear()
     ddlCache = new Map()
+    if (!keep) {
+      loading = true
+      tableMeta = new Map()
+      nodes = []
+      edges = []
+      // A filter belongs to the schema it was picked in.
+      picked = new Set()
+      pickQuery = ''
+      drawAll = false
+      gatedCount = 0
+      _posCache.clear()
+    }
 
     try {
       // One call for the whole schema. This used to fan out one request per
       // table, which meant the diagram couldn't start drawing until N round
       // trips had completed - the dominant cost on any non-trivial schema.
-      const schemaCols = await getSchemaColumnStructure(activeSchema)
+      // The column catalog lists views beside tables; the table list says which
+      // is which, so a view is drawn and counted as one.
+      const [schemaCols, listed] = await Promise.all([
+        getSchemaColumnStructure(activeSchema),
+        listTables(activeSchema).catch(() => []),
+      ])
+      const views = new Set(/** @type {any[]} */ (listed ?? []).filter((t) => /view/i.test(t?.kind ?? '')).map((t) => t.name))
+      const matViews = new Set(/** @type {any[]} */ (listed ?? []).filter((t) => t?.kind === 'materialized_view').map((t) => t.name))
       autoConnected = schemaCols.length > WARN_MANY
 
+      /** @type {Map<string, TableMeta>} */
+      const meta = new Map()
       for (const { table, columns } of schemaCols) {
         const cols = /** @type {Col[]} */ (columns)
         // The catalog's own key flag where the engine gives one; the old
@@ -1137,11 +1158,12 @@
             ))
           ).map(c => c.name)
         )
-        tableMeta.set(table, /** @type {TableMeta} */ ({ name: table, columns: cols, pkCols }))
+        meta.set(table, /** @type {TableMeta} */ ({ name: table, columns: cols, pkCols, view: views.has(table), matView: matViews.has(table) }))
       }
-      tableMeta = new Map(tableMeta)
+      tableMeta = meta
+      if (keep && picked.size) picked = new Set([...picked].filter((n) => meta.has(n)))
       await tick()
-      await buildGraph(true)
+      await buildGraph(!keep)
       _shapeKey = shapeKey()
       void refineKeys()
     } catch (e) {
@@ -1176,6 +1198,46 @@
 
   // ── Reactivity ────────────────────────────────────────────────────────────
   $effect(() => { void activeSchema; void load() })
+
+  // A sidebar refresh, or a CREATE or DROP run in an editor, bumps the objects
+  // version. The diagram used to keep drawing the old schema until its own
+  // refresh button was pressed: a new materialized view never showed up.
+  let seenObjects = get(objectsVersion)
+  $effect(() => {
+    const v = $objectsVersion
+    if (v === seenObjects) return
+    seenObjects = v
+    untrack(() => { if (!loading) void load({ keep: true }) })
+  })
+
+  // The sidebar's schema moving (picked there, or the next database's default
+  // landing after a switch) moves the diagram too; its own picker still
+  // chooses in between. Mounted mid-switch, it drew "No tables found in public"
+  // on a database whose schema is shop.
+  // svelte-ignore state_referenced_locally
+  let shellSchema = schema
+  $effect(() => {
+    const s = schema
+    if (s === shellSchema) return
+    shellSchema = s
+    untrack(() => { if (activeSchema !== s) activeSchema = s })
+  })
+
+  // The page keeps its own schema (its picker), so after a connection switch it
+  // went on drawing the last database: PostGIS's tab showed MariaDB's "shop"
+  // and its products table. A new connection starts from the shell's schema.
+  // svelte-ignore state_referenced_locally
+  let drawnFor = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === drawnFor) return
+    drawnFor = id
+    untrack(() => {
+      selectedTable = null
+      if (activeSchema !== schema) activeSchema = schema
+      else void load()
+    })
+  })
 
 
   $effect(() => {
@@ -1223,7 +1285,7 @@
       if (_copiedTimer) clearTimeout(_copiedTimer)
       _copiedTimer = setTimeout(() => { copiedDdl = '' }, 1800)
     } catch (e) {
-      toast.error('Could not copy DDL', { description: String(e) })
+      toast.error('Could not copy DDL', { description: errorText(e) })
     }
   }
 
@@ -1632,7 +1694,7 @@
         { name: 'Markdown', extensions: ['md'] }, 'Mermaid markdown',
       )
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 
@@ -1645,7 +1707,7 @@
         { name: 'SVG image', extensions: ['svg'] }, 'diagram as SVG',
       )
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 
@@ -1688,7 +1750,7 @@
       await copyPngToClipboard(blob)
       toast.success('Diagram copied as PNG')
     } catch (e) {
-      toast.error(sink === 'clipboard' ? 'Copy failed' : 'Export failed', { description: String(e) })
+      toast.error(sink === 'clipboard' ? 'Copy failed' : 'Export failed', { description: errorText(e) })
     } finally {
       exporting = false
     }
@@ -1697,7 +1759,7 @@
 </script>
 
 <svelte:window onkeydown={(e) => {
-  if (e.key === 'Escape' && fullscreen) { fullscreen = false; return }
+  if (e.key === 'Escape' && fullscreen && !e.defaultPrevented) { fullscreen = false; return }
   const mod = (e.ctrlKey || e.metaKey) && !e.altKey
   // Only the page on screen answers: a hidden tab's page has no width.
   if (mod && e.shiftKey && e.key === 'Enter' && rootEl?.offsetWidth) {
@@ -1736,7 +1798,7 @@
       title="{o.label} ({keycaps('Mod+F').join(IS_MAC ? '' : '+')})"
       spellcheck="false"
       autocomplete="off"
-      class={cn('field-surface h-8 w-full min-w-0 pl-8 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground', value ? 'pr-7' : 'pr-2.5')}
+      class={cn('search-box no-field-frame h-8 w-full min-w-0 pl-8 text-ui-sm', value ? 'pr-7' : 'pr-2.5')}
     />
     {#if value}
       <button
@@ -1793,8 +1855,8 @@
     class="flex h-8 w-full items-center justify-between gap-3 rounded-sm px-2 text-left hover:bg-accent"
   >
     <span class="truncate text-ui-xs text-foreground">{label}</span>
-    <span class={cn('inline-flex h-4 w-7 shrink-0 items-center rounded-full px-0.5 transition-colors duration-150', checked ? 'bg-primary' : 'bg-input')}>
-      <span class={cn('block size-3 rounded-full transition-transform duration-150', checked ? 'translate-x-3 bg-background' : 'translate-x-0 bg-foreground/80')}></span>
+    <span class="app-switch" data-size="sm" data-state={checked ? 'checked' : 'unchecked'} aria-hidden="true">
+      <span class="app-switch-thumb"></span>
     </span>
   </button>
 {/snippet}
@@ -1907,7 +1969,7 @@
               onkeydown={(e) => {
                 if (e.key === 'Enter' && pickQuery.trim()) { showOnlyMatches(); e.preventDefault() }
               }}
-              class= "field-surface h-8 w-full bg-input/30 pl-8 pr-2 text-ui-sm outline-none placeholder:text-muted-foreground"
+              class="search-box no-field-frame h-8 w-full pl-8 pr-2 text-ui-sm"
             />
           </div>
           <div class="flex items-center gap-1">
@@ -2063,7 +2125,7 @@
       {#if tableMeta.size > 0 && !loading}
         {#if erdView === 'canvas'}
           <span class="whitespace-nowrap pr-1 text-ui-xs tabular-nums text-muted-foreground">
-            {#if nodes.length === tableMeta.size}{tableMeta.size} {plural(tableMeta.size, 'table')}{:else}{nodes.length} of {tableMeta.size} tables{/if} · {fkCount} {plural(fkCount, 'relation')}{layingOut ? ' · laying out…' : ''}
+            {#if nodes.length === tableMeta.size}{tableMeta.size - viewCount} {plural(tableMeta.size - viewCount, 'table')}{#if viewCount}{` · ${viewCount} ${plural(viewCount, 'view')}`}{/if}{:else}{nodes.length} of {tableMeta.size} {viewCount ? 'tables and views' : 'tables'}{/if} · {fkCount} {plural(fkCount, 'relation')}{layingOut ? ' · laying out…' : ''}
           </span>
         {:else if erdView === 'dictionary'}
           <span class="whitespace-nowrap pr-1 text-ui-xs tabular-nums text-muted-foreground">
@@ -2325,7 +2387,7 @@
               ><PanelLeftOpen class="size-3.5 shrink-0" /></button>
             </div>
           {:else}
-          <div class="flex w-[42%] min-w-[280px] shrink-0 flex-col border-r border-border/60 bg-panel" style={mermaidCodeW ? `width:${mermaidCodeW}px` : ''}>
+          <div class="flex w-[42%] min-w-[17.5rem] shrink-0 flex-col border-r border-border/60 bg-panel" style={mermaidCodeW ? `width:${mermaidCodeW}px` : ''}>
             <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 px-2.5">
               <button
                 type="button"
@@ -2616,7 +2678,7 @@
       <div class="app-scroll min-h-0 flex-1 overflow-y-auto pb-2">
         <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
           <h4 class="text-ui-xs text-muted-foreground">Columns</h4>
-          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{selMeta.columns.length}</span>
+          <span class="text-ui-xs tabular-nums text-muted-foreground">{selMeta.columns.length}</span>
           <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
         </div>
         {#each selMeta.columns as col (col.name)}
@@ -2627,14 +2689,14 @@
             {:else if isFk}<Link class="size-3.5 shrink-0" style="color:{ink.fk}" />
             {:else}<span class="size-1 shrink-0 translate-x-1.5 rounded-full bg-muted-foreground/40"></span><span class="w-1.5 shrink-0"></span>{/if}
             <span class="min-w-0 flex-1 truncate font-mono text-ui-xs {isPk ? 'font-medium text-foreground' : 'text-foreground/85'}">{col.name}</span>
-            <span class="shrink-0 truncate text-ui-2xs text-muted-foreground/80">{col.dataType}</span>
+            <span class="shrink-0 truncate text-ui-2xs text-muted-foreground">{col.dataType}</span>
           </div>
         {/each}
 
         {#if selFks.length > 0}
           <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
           <h4 class="text-ui-xs text-muted-foreground">References</h4>
-          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{selFks.length}</span>
+          <span class="text-ui-xs tabular-nums text-muted-foreground">{selFks.length}</span>
           <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
         </div>
           {#each selFks as fk (fk.name)}
@@ -2655,7 +2717,7 @@
         {#if refBy.length > 0}
           <div class="mx-1.5 mt-2 mb-0.5 flex items-center gap-2 px-1.5 py-1">
           <h4 class="text-ui-xs text-muted-foreground">Referenced by</h4>
-          <span class="text-ui-xs tabular-nums text-muted-foreground/70">{refBy.length}</span>
+          <span class="text-ui-xs tabular-nums text-muted-foreground">{refBy.length}</span>
           <span class="ml-1 h-px flex-1 bg-border/50" aria-hidden="true"></span>
         </div>
           {#each refBy as t (t.name)}

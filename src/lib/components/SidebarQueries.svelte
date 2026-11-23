@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   /**
    * The sidebar's Queries tab: the connection's saved queries as a tree, with
    * folders. The same store as Saved in the SQL console's results pane, so the
@@ -10,7 +11,7 @@
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { buildQueryTree, copyName, uniqueFolderName, planFolderDelete } from '$lib/query-folders.js'
   import { loadQueryFolders, saveQueryFolders } from '$lib/stores/query-folders.js'
   import {
@@ -36,8 +37,6 @@
     onrefresh = async () => {},
   } = $props()
 
-  const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/i.test(navigator.platform)
-  const modKey = isMac ? '⌘' : 'Ctrl'
 
   // ── Folders ───────────────────────────────────────────────────────────────
   /** @type {QueryFolder[]} */
@@ -91,6 +90,9 @@
     el?.select()
   }
 
+  /** Names shown while a rename is being saved. @type {Map<string, string>} */
+  let renamedTo = $state(new Map())
+
   async function commitRename() {
     const r = renaming
     if (!r) return
@@ -103,8 +105,18 @@
     }
     const current = queries.find((q) => q.id === r.id)
     if (!current || current.name === name) return
-    await updateSavedQuery(r.id, { name })
-    await onrefresh()
+    // Optimistic: the list shows the new name until the refreshed one arrives.
+    renamedTo = new Map(renamedTo).set(r.id, name)
+    try {
+      await updateSavedQuery(r.id, { name })
+      await onrefresh()
+    } catch (e) {
+      toast.error("Couldn't rename the query", { description: errorText(e) })
+    } finally {
+      const next = new Map(renamedTo)
+      next.delete(r.id)
+      renamedTo = next
+    }
   }
 
   /** @param {KeyboardEvent} e */
@@ -294,7 +306,7 @@
       oncontextmenu={() => (menu = { kind: 'query', query: q })}
     >
       <Icon name="file-code" class={cn('size-3.5 shrink-0', activeId === q.id ? 'text-primary' : 'text-muted-foreground')} />
-      <span class="min-w-0 flex-1 truncate text-ui-sm leading-4">{q.name}</span>
+      <span class="min-w-0 flex-1 truncate text-ui-sm leading-4">{renamedTo.get(q.id) ?? q.name}</span>
     </button>
   {/if}
 {/snippet}
@@ -310,7 +322,7 @@
         onkeydown={(e) => { if (e.key === 'Escape' && filter) { e.preventDefault(); e.stopPropagation(); filter = '' } }}
         placeholder="Filter queries…"
         aria-label="Filter saved queries"
-        class="field-surface h-7 w-full min-w-0 bg-background/40 pl-7 pr-2 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+        class="search-box no-field-frame w-full min-w-0 pl-7 pr-2 text-ui-sm"
       />
     </div>
     <button
@@ -335,7 +347,7 @@
     <div class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <Icon name="file-code" class="size-5 shrink-0 text-muted-foreground" />
       <p class="text-ui-sm text-foreground">No saved queries</p>
-      <p class="text-ui-xs text-muted-foreground">{modKey}S in a query editor saves its query here.</p>
+      <p class="text-ui-xs text-muted-foreground">{comboTitle('Mod+S')} in a query editor saves its query here.</p>
       <Button variant="outline" size="sm" class="mt-1" disabled={!connectionId} onclick={() => onnew(null)}>
         <Icon name="plus" class="size-3.5 shrink-0" />New query
       </Button>

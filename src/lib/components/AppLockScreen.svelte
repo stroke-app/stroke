@@ -65,7 +65,7 @@
     ondblclick={onDragRegionDblClick}
   >
     {#if isMac}
-      <div class="w-[92px] shrink-0"></div>
+      <div class="w-[5.75rem] shrink-0"></div>
     {/if}
     <Logo class="size-4 shrink-0" />
     <div class="min-w-0 flex-1" data-tauri-drag-region></div>
@@ -79,7 +79,7 @@
     ></div>
 
     <div class="relative flex w-full max-w-[20rem] flex-col items-center text-center">
-      <div class="grid size-11 place-items-center rounded-lg border border-border/50 bg-card/40 shadow-sm">
+      <div class="grid size-11 place-items-center rounded-lg border border-border/50 bg-card/40">
         <Icon name="lock" class="size-5 shrink-0 text-muted-foreground" />
       </div>
 

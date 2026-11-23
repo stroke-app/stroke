@@ -24,6 +24,7 @@ import ChevronLeft from '@lucide/svelte/icons/chevron-left'
 import Plus from '@lucide/svelte/icons/plus'
 import Minus from '@lucide/svelte/icons/minus'
 import Search from '@lucide/svelte/icons/search'
+import ScanSearch from '@lucide/svelte/icons/scan-search'
 import Trash2 from '@lucide/svelte/icons/trash-2'
 import LogOut from '@lucide/svelte/icons/log-out'
 import Table2 from '@lucide/svelte/icons/table-2'
@@ -43,12 +44,14 @@ import GitBranch from '@lucide/svelte/icons/git-branch'
 import Download from '@lucide/svelte/icons/download'
 import Play from '@lucide/svelte/icons/play'
 import Eye from '@lucide/svelte/icons/eye'
+import TableProperties from '@lucide/svelte/icons/table-properties'
 import EyeOff from '@lucide/svelte/icons/eye-off'
 import Bot from '@lucide/svelte/icons/bot'
 import AlertTriangle from '@lucide/svelte/icons/alert-triangle'
 import AlertCircle from '@lucide/svelte/icons/alert-circle'
 import ShieldCheck from '@lucide/svelte/icons/shield-check'
 import Globe from '@lucide/svelte/icons/globe'
+import Users from '@lucide/svelte/icons/users'
 import Pencil from '@lucide/svelte/icons/pencil'
 import Braces from '@lucide/svelte/icons/braces'
 import Lock from '@lucide/svelte/icons/lock'
@@ -152,7 +155,7 @@ import FileDiff from '@lucide/svelte/icons/file-diff'
 // ── Hugeicons data ───────────────────────────────────────────────────────────
 import {
   Cancel01Icon, Tick01Icon, CheckmarkCircle02Icon, ArrowDown01Icon, ArrowUp01Icon,
-  ArrowRight01Icon, ArrowLeft01Icon, Add01Icon, MinusSignIcon, Search01Icon,
+  ArrowRight01Icon, ArrowLeft01Icon, Add01Icon, MinusSignIcon, Search01Icon, ScanEyeIcon,
   Delete02Icon, Logout01Icon, Table01Icon, GridTableIcon, RefreshIcon, Copy01Icon, Loading03Icon, Key01Icon,
   LinkSquare01Icon, Database01Icon, SourceCodeIcon, TerminalIcon, ChartLineData02Icon,
   SparklesIcon, GitBranchIcon, Download04Icon, PlayIcon, ViewIcon, ViewOffSlashIcon,
@@ -164,7 +167,7 @@ import {
   HardDriveIcon, DashboardSquare02Icon, SquareUnlock01Icon, Moon02Icon, RadioIcon,
   ServerStack01Icon, Settings02Icon, Sun03Icon, ArrowTurnBackwardIcon, Unlink01Icon,
   WifiConnected01Icon, WifiDisconnected01Icon, TestTubeIcon, WorkflowSquare02Icon,
-  Share08Icon, GitCompareIcon, GitMergeIcon, PuzzleIcon, PlugSocketIcon, NoteEditIcon, ChartBarLineIcon, GlobalIcon,
+  Share08Icon, GitCompareIcon, GitMergeIcon, PuzzleIcon, PlugSocketIcon, NoteEditIcon, ChartBarLineIcon, GlobalIcon, UserMultipleIcon,
   InformationCircleIcon, ArrowUpDownIcon, ArrowLeftRightIcon, Bookmark01Icon, BugIcon,
   UnavailableIcon, Target01Icon, EraserIcon, FileDownloadIcon, FileUploadIcon, File01Icon, FunctionSquareIcon,
   HashIcon, InfinityIcon, KeyboardIcon, Layers01Icon, LeftToRightListBulletIcon, Link01Icon,
@@ -189,13 +192,16 @@ export const ICON_MAP = {
   'plus':           { lucide: Plus,          huge: Add01Icon },
   'minus':          { lucide: Minus,         huge: MinusSignIcon },
   'search':         { lucide: Search,        huge: Search01Icon },
+  'scan-search':    { lucide: ScanSearch,    huge: ScanEyeIcon },
   'trash-2':        { lucide: Trash2,        huge: Delete02Icon },
   'log-out':        { lucide: LogOut,        huge: Logout01Icon },
   'table-2':        { lucide: Table2,        huge: GridTableIcon },
   // A view is an eye everywhere in the app - TabBar picks 'eye' for view tabs,
   // so the sidebar has to agree. Plain table glyphs made views indistinguishable
   // from tables at size-3.
-  'table-view':     { lucide: Eye,           huge: ViewIcon },
+  // A database view: a grid with its query's lines, not an eye. Lucide in
+  // every icon set: Hugeicons' table glyphs are the furniture.
+  'table-view':     { lucide: TableProperties },
   'refresh-cw':     { lucide: RefreshCw,     huge: RefreshIcon },
   'copy':           { lucide: Copy,          huge: Copy01Icon },
   'copy-plus':      { lucide: CopyPlus,      huge: Copy01Icon },
@@ -266,6 +272,7 @@ export const ICON_MAP = {
   // Database objects (views, routines, types): not 'blocks', which is Extensions.
   'shapes':         { lucide: Shapes,        huge: Shapes01Icon },
   'globe':          { lucide: Globe,         huge: GlobalIcon },
+  'users':          { lucide: Users,         huge: UserMultipleIcon },
   'plug':           { lucide: Plug,          huge: PlugSocketIcon },
   'notebook-pen':   { lucide: NotebookPen,   huge: NoteEditIcon },
   'bar-chart-3':    { lucide: BarChart3,     huge: ChartBarLineIcon },

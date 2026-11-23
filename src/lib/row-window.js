@@ -121,7 +121,7 @@ export function windowKeepCount(rowsPerWindow) {
  *   sharing the anchor's value; a PK is also NOT NULL, which that predicate
  *   likewise can't order around.
  * - a cast the backend will accept. It rejects anything outside
- *   `[A-Za-z0-9_ ]` - notably the `varchar(...)` label a text key reports - and
+ *   `[A-Za-z0-9_ ]` (a length like `varchar(20)`) and
  *   answers with the offset page instead, so taking the seek path there would
  *   have read-ahead waiting on anchors that buy nothing.
  * - Postgres. Other engines ignore the cursor entirely.
@@ -184,4 +184,21 @@ export function stableWindowOrder(sort, more, primaryKey) {
   // `sorts` is always sent (even for one key) so the multi-key path builds the
   // full ORDER BY; `sortColumn` covers engines that only read the single key.
   return { sortColumn: keys[0].column, sortDirection: keys[0].direction, sorts: keys }
+}
+
+/** Bytes one background mirror page may carry: what a scroll waits behind. */
+export const MIRROR_PAGE_BYTES = 256_000
+/** Rows in a window at which its on-screen rows are worth asking for first. */
+export const SCREENFUL_FIRST_BYTES = 256_000
+
+/**
+ * Rows per mirror page for rows of this size. The copy shares the link with
+ * the grid: a page already in flight when you scroll is in the way of the
+ * rows you scrolled to. At 5,000 rows a page of HTML and JSON was ~4 MB, and
+ * two in flight held a scroll on a 5 Mbit link for over 10 s.
+ * @param {number} bytesPerRow
+ */
+export function pickMirrorPage(bytesPerRow) {
+  if (!bytesPerRow || bytesPerRow <= 0) return 2_000
+  return Math.max(200, Math.min(5_000, Math.round(MIRROR_PAGE_BYTES / bytesPerRow)))
 }

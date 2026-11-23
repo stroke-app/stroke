@@ -182,4 +182,4 @@ export function providerToSaved(conn, { provider, saved, readOnly, newId }) {
 
 /** A driver error that means "these credentials are no good", on any engine. */
 export const AUTH_FAILURE =
-  /password authentication failed|authentication failed|access denied|invalid password|28P01|\b1045\b|role ".*" does not exist|WRONGPASS|NOAUTH|unauthorized|\b401\b/i
+  /password authentication failed|authentication failed|access denied|invalid password|28P01|\b1045\b|role ".*" does not exist|WRONGPASS|NOAUTH|unauthorized|\b401\b|credentials are incorrect|failed to identify your database|check your username and password|invalid credentials/i

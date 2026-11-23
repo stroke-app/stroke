@@ -542,7 +542,7 @@ static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 pub(crate) fn http() -> &'static reqwest::Client {
     CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::App)
             .user_agent("stroke/1.0")
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .pool_max_idle_per_host(4)

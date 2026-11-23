@@ -285,6 +285,39 @@ pub async fn table_row_counts(
             }
             Ok(counts)
         }
+        ActiveConnection::Spanner(h) => {
+            let mut counts = Vec::with_capacity(tables.len());
+            for name in tables {
+                let row_count = super::spanner::count_rows(&h, &schema, &name).await.unwrap_or_else(|e| {
+                    eprintln!("[row count] {schema}.{name}: {e}");
+                    -1
+                });
+                counts.push(TableRowCount { name, row_count });
+            }
+            Ok(counts)
+        }
+        ActiveConnection::Bigquery(h) => {
+            let mut counts = Vec::with_capacity(tables.len());
+            for name in tables {
+                let row_count = super::bigquery::count_rows(&h, &schema, &name).await.unwrap_or_else(|e| {
+                    eprintln!("[row count] {schema}.{name}: {e}");
+                    -1
+                });
+                counts.push(TableRowCount { name, row_count });
+            }
+            Ok(counts)
+        }
+        // SHOW TABLES carries every table's row count: one call, no warehouse.
+        ActiveConnection::Snowflake(h) => {
+            let listed = super::snowflake::list_tables(&h, &schema).await.unwrap_or_default();
+            Ok(tables
+                .into_iter()
+                .map(|name| {
+                    let row_count = listed.iter().find(|t| t.name == name).map(|t| t.row_count).unwrap_or(-1);
+                    TableRowCount { name, row_count }
+                })
+                .collect())
+        }
         _ => Ok(Vec::new()),
     }
 }
@@ -373,11 +406,14 @@ async fn list_indexes_pg(pool: &PgPool, schema: &str) -> Result<Vec<IndexInfo>, 
 
 // ── SQLite / D1 ───────────────────────────────────────────────────────────────
 
+// SQLite reserves the sqlite_ prefix (CREATE TABLE sqlite_x is an error), so
+// sqlite_sequence and sqlite_stat1 are never the user's: they stay out of the
+// table lists, as libSQL's already did. Escaped: `_` alone matches any letter.
 async fn list_tables_sqlite(pool: &sqlx::SqlitePool) -> Result<Vec<TableInfo>, String> {
     // The catalog's rowid grows as objects are created, so it doubles as the
     // creation order SQLite otherwise does not keep.
     let rows = sqlx::query(
-        "SELECT name, type, rowid FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
+        "SELECT name, type, rowid FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
     )
     .fetch_all(pool)
     .await
@@ -522,7 +558,7 @@ async fn list_indexes_sqlite_master(pool: &sqlx::SqlitePool) -> Result<Vec<Index
 async fn list_tables_d1(cfg: &super::connection::D1Config) -> Result<Vec<TableInfo>, String> {
     let result = super::d1::query(
         cfg,
-        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') ORDER BY name",
+        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
         vec![],
     )
     .await?;
@@ -658,7 +694,7 @@ async fn list_indexes_d1_master(cfg: &super::connection::D1Config) -> Result<Vec
 async fn list_tables_libsql(cfg: &super::connection::LibSqlConfig) -> Result<Vec<TableInfo>, String> {
     let result = super::libsql::query(
         cfg,
-        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%' ORDER BY name",
+        "SELECT name, type, rowid AS seq FROM sqlite_master WHERE type IN ('table','view') AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\' ORDER BY name",
         vec![],
     ).await?;
     let name_idx = result.columns.iter().position(|c| c.name == "name").unwrap_or(0);
@@ -1139,11 +1175,20 @@ async fn list_sequences_pg(pool: &PgPool, schema: &str) -> Result<Vec<SequenceIn
 // ── Public dispatch ───────────────────────────────────────────────────────────
 
 pub async fn list_schemas(state: Db<'_>) -> Result<Vec<String>, String> {
-    match require_conn(&state)? {
+    schemas_of(&require_conn(&state)?).await
+}
+
+/// The schemas of a connection, its own first where the engine knows it.
+pub async fn schemas_of(conn: &ActiveConnection) -> Result<Vec<String>, String> {
+    match conn.clone() {
         ActiveConnection::Postgres(pool) => list_schemas_pg(&pool).await,
         ActiveConnection::Mysql(pool) => list_schemas_mysql(&pool).await,
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_schemas(&cfg).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_schemas(&cfg).await,
+        ActiveConnection::Spanner(h) => super::spanner::list_schemas(&h).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::list_schemas(&h).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::list_schemas(&h).await,
+        ActiveConnection::Odbc(h) => super::odbc::list_schemas(&h).await,
         ActiveConnection::Redis(_) => Ok(vec![]),
         ActiveConnection::Dynamodb(_) => Ok(vec![super::docdb::FLAT_SCHEMA.to_string()]),
         ActiveConnection::Doc(d) => super::docdb::list_schemas(&d).await,
@@ -1176,6 +1221,10 @@ pub async fn list_tables(state: Db<'_>, schema: String) -> Result<Vec<TableInfo>
         ActiveConnection::LibSql(cfg) => list_tables_libsql(&cfg).await,
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_tables(&cfg, &schema).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_tables(&cfg).await,
+        ActiveConnection::Spanner(h) => super::spanner::list_tables(&h, &schema).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::list_tables(&h, &schema).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::list_tables(&h, &schema).await,
+        ActiveConnection::Odbc(h) => super::odbc::list_tables(&h, &schema).await,
         ActiveConnection::Redis(cfg) => super::redis::list_tables(&cfg).await,
         ActiveConnection::Dynamodb(cfg) => super::dynamodb::list_tables(&cfg).await,
         ActiveConnection::Doc(d) => super::docdb::list_tables_in(&d, &schema).await,
@@ -1213,6 +1262,11 @@ pub async fn list_indexes_for(
         ActiveConnection::LibSql(cfg) => list_indexes_libsql(&cfg).await,
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::list_indexes(&cfg, &schema).await,
         ActiveConnection::Posthog(cfg) => super::posthog::list_indexes(&cfg).await,
+        ActiveConnection::Spanner(h) => super::spanner::list_indexes(&h, &schema).await,
+        // BigQuery has no indexes to browse (search indexes aside).
+        ActiveConnection::Bigquery(_) => Ok(vec![]),
+        ActiveConnection::Snowflake(_) => Ok(vec![]),
+        ActiveConnection::Odbc(_) => Ok(vec![]),
         ActiveConnection::Redis(cfg) => super::redis::list_indexes(&cfg).await,
         ActiveConnection::Dynamodb(cfg) => match table {
             Some(t) => Ok(super::dynamodb::describe_shape(&cfg, &t).await?.1),
@@ -1397,6 +1451,10 @@ pub async fn get_table_column_structure(
             super::clickhouse::get_column_structure(&cfg, &schema, &table).await
         }
         ActiveConnection::Posthog(cfg) => super::posthog::get_column_structure(&cfg, &table).await,
+        ActiveConnection::Spanner(h) => super::spanner::get_column_structure(&h, &schema, &table).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::get_column_structure(&h, &schema, &table).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::get_column_structure(&h, &schema, &table).await,
+        ActiveConnection::Odbc(h) => super::odbc::get_column_structure(&h, &schema, &table).await,
         ActiveConnection::Redis(cfg) => {
             super::redis::get_column_structure(&cfg, &table).await
         }
@@ -1727,6 +1785,11 @@ pub async fn get_schema_column_structure(
         ActiveConnection::Doc(d) => return super::docdb::schema_columns_in(&d, &schema).await,
         ActiveConnection::Dynamodb(_) | ActiveConnection::Redis(_) => return Ok(vec![]),
         ActiveConnection::Oracle(h) => return super::oracle::schema_column_structure(&h, &schema).await,
+        // Spanner's schemas are '' and 'default', which the identifier check refuses.
+        ActiveConnection::Spanner(h) => return super::spanner::schema_column_structure(&h, &schema).await,
+        ActiveConnection::Bigquery(h) => return super::bigquery::schema_column_structure(&h, &schema).await,
+        ActiveConnection::Snowflake(h) => return super::snowflake::schema_column_structure(&h, &schema).await,
+        ActiveConnection::Odbc(h) => return super::odbc::schema_column_structure(&h, &schema).await,
         _ => {}
     }
     validate_ident(&schema)?;
@@ -2219,7 +2282,7 @@ async fn get_incoming_fks_mysql(pool: &MySqlPool, schema: &str, table: &str) -> 
 
 async fn get_incoming_fks_sqlite(pool: &sqlx::SqlitePool, table: &str) -> Result<Vec<IncomingForeignKey>, String> {
     let tables: Vec<String> = sqlx::query(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'"
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'"
     ).fetch_all(pool).await.unwrap_or_default()
      .iter().filter_map(|r| r.try_get::<String, _>(0).ok()).collect();
 
@@ -2381,7 +2444,7 @@ async fn get_incoming_fks_d1(cfg: &super::connection::D1Config, table: &str) -> 
     }
     let tables: Vec<String> = super::d1::query(
         cfg,
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
         vec![],
     )
     .await
@@ -2415,7 +2478,7 @@ async fn get_incoming_fks_libsql(cfg: &super::connection::LibSqlConfig, table: &
     }
     let tables: Vec<String> = super::libsql::query(
         cfg,
-        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'",
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite\\_%' ESCAPE '\\'",
         vec![],
     )
     .await
@@ -2509,6 +2572,18 @@ pub async fn get_incoming_foreign_keys(
     if let ActiveConnection::Oracle(h) = require_conn(&state)? {
         return super::oracle::incoming_foreign_keys(&h, &schema, &table).await;
     }
+    if let ActiveConnection::Spanner(h) = require_conn(&state)? {
+        return super::spanner::incoming_foreign_keys(&h, &schema, &table).await;
+    }
+    if let ActiveConnection::Bigquery(h) = require_conn(&state)? {
+        return super::bigquery::incoming_foreign_keys(&h, &schema, &table).await;
+    }
+    if let ActiveConnection::Snowflake(h) = require_conn(&state)? {
+        return super::snowflake::incoming_foreign_keys(&h, &schema, &table).await;
+    }
+    if let ActiveConnection::Odbc(h) = require_conn(&state)? {
+        return super::odbc::incoming_foreign_keys(&h, &schema, &table).await;
+    }
     validate_ident(&schema)?;
     validate_ident(&table)?;
     match require_conn(&state)? {
@@ -2527,6 +2602,28 @@ pub async fn get_incoming_foreign_keys(
 // ── DDL reconstruction ────────────────────────────────────────────────────────
 
 async fn get_ddl_pg(pool: &PgPool, schema: &str, table: &str) -> Result<String, String> {
+    // A view came back as CREATE TABLE built from its columns, so the schema
+    // diagram's DDL script would have made tables where geography_columns and
+    // geometry_columns are views. Views and materialized views get their own
+    // definition.
+    let view = sqlx::query(
+        r#"SELECT c.relkind::text, pg_catalog.pg_get_viewdef(c.oid, true)
+           FROM pg_catalog.pg_class c
+           JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace
+           WHERE n.nspname = $1 AND c.relname = $2 AND c.relkind IN ('v', 'm')"#,
+    )
+    .bind(schema)
+    .bind(table)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| format!("DDL view query failed: {e}"))?;
+    if let Some(row) = view {
+        let kind: String = row.try_get(0).unwrap_or_default();
+        let def: String = row.try_get(1).unwrap_or_default();
+        let q = |s: &str| format!("\"{}\"", s.replace('"', "\"\""));
+        let keyword = if kind == "m" { "MATERIALIZED VIEW" } else { "VIEW" };
+        return Ok(format!("CREATE {keyword} {}.{} AS\n{};", q(schema), q(table), def.trim().trim_end_matches(';')));
+    }
     let col_rows = sqlx::query(
         r#"SELECT
             a.attname,
@@ -2626,8 +2723,10 @@ async fn get_ddl_mysql(pool: &MySqlPool, schema: &str, table: &str) -> Result<St
         schema.replace('`', ""),
         table.replace('`', "")
     );
+    // Backticks, so the DDL runs on a stock server too (see backtick_conn).
+    let mut conn = super::mysql::backtick_conn(pool).await?;
     let row = sqlx::query(&sql)
-        .fetch_one(pool)
+        .fetch_one(&mut conn)
         .await
         .map_err(|e| format!("SHOW CREATE TABLE failed: {e}"))?;
     // SHOW CREATE TABLE's second column is binary-flagged too, so this
@@ -2694,6 +2793,10 @@ pub async fn get_table_ddl(
         ActiveConnection::LibSql(cfg) => get_ddl_libsql(&cfg, &table).await,
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::get_ddl(&cfg, &schema, &table).await,
         ActiveConnection::Posthog(cfg) => super::posthog::get_ddl(&cfg, &table).await,
+        ActiveConnection::Spanner(h) => super::spanner::get_ddl(&h, &schema, &table).await,
+        ActiveConnection::Bigquery(h) => super::bigquery::get_ddl(&h, &schema, &table).await,
+        ActiveConnection::Snowflake(h) => super::snowflake::get_ddl(&h, &schema, &table).await,
+        ActiveConnection::Odbc(h) => super::odbc::get_ddl(&h, &schema, &table).await,
         ActiveConnection::Redis(cfg) => super::redis::get_ddl(&cfg, &table).await,
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Ok(String::new()),
         ActiveConnection::Duckdb(h) => super::duckdb::get_ddl(&h, &table).await,
@@ -2706,6 +2809,8 @@ pub async fn get_table_ddl(
 
 /// List schemas for an arbitrary saved connection without changing global state.
 pub async fn list_schemas_on_conn(config: AnyConnectionConfig) -> Result<Vec<String>, String> {
+    // Its own connection, through the saved connection's SSH tunnel if any.
+    let (config, _tunnel) = super::connection::tunnel_any(config).await?;
     use super::connection::{open_mysql, open_pg};
     match config {
         AnyConnectionConfig::Postgres(c) => {
@@ -2734,6 +2839,8 @@ pub async fn list_tables_on_conn(
     config: AnyConnectionConfig,
     schema: String,
 ) -> Result<Vec<String>, String> {
+    // Its own connection, through the saved connection's SSH tunnel if any.
+    let (config, _tunnel) = super::connection::tunnel_any(config).await?;
     use super::connection::{open_mysql, open_pg, open_sqlite};
     let to_names = |ts: Vec<TableInfo>| ts.into_iter().map(|t| t.name).collect::<Vec<_>>();
     match config {
@@ -2786,6 +2893,8 @@ pub async fn get_table_ddl_on_conn(
     schema: String,
     table: String,
 ) -> Result<String, String> {
+    // Its own connection, through the saved connection's SSH tunnel if any.
+    let (config, _tunnel) = super::connection::tunnel_any(config).await?;
     use super::connection::{open_mysql, open_pg, open_sqlite};
     if let AnyConnectionConfig::Oracle(c) = &config {
         let h = super::connection::open_oracle(c).await?;
@@ -2848,6 +2957,18 @@ mod create_order_tests {
         assert!(order("zeta") < order("alpha") && order("alpha") < order("mid"));
         assert_eq!(tables.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), ["alpha", "mid", "zeta"]);
         assert!(tables.iter().all(|t| t.created_at.is_none()));
+    }
+
+    /// sqlite_sequence is SQLite's, not the user's; a table merely starting with
+    /// "sqlite" is the user's.
+    #[tokio::test]
+    async fn sqlite_internal_tables_stay_out_of_the_list() {
+        let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+        for sql in ["CREATE TABLE books (id INTEGER PRIMARY KEY AUTOINCREMENT)", "INSERT INTO books DEFAULT VALUES", "CREATE TABLE sqlitex (id INTEGER)"] {
+            sqlx::query(sql).execute(&pool).await.unwrap();
+        }
+        let names: Vec<String> = super::list_tables_sqlite(&pool).await.unwrap().into_iter().map(|t| t.name).collect();
+        assert_eq!(names, ["books", "sqlitex"]);
     }
 }
 
@@ -3075,5 +3196,25 @@ mod sqlite_tree_catalog {
         assert_eq!(t[0].columns[1].fk_constraint_name.as_deref(), Some("t_p_fkey"));
         assert_eq!(t[0].columns[1].ordinal_position, 2);
         assert!(t[0].columns[0].is_primary_key && !t[0].columns[0].is_nullable);
+    }
+}
+
+#[cfg(test)]
+mod pg_view_ddl_tests {
+    /// Against Postgres (STROKE_TEST_POSTGIS): a view's DDL is its CREATE VIEW,
+    /// and running it recreates the view.
+    #[tokio::test]
+    async fn live_view_ddl_is_a_view() {
+        let Ok(url) = std::env::var("STROKE_TEST_POSTGIS") else { return };
+        let pool = sqlx::PgPool::connect(&url).await.unwrap();
+        sqlx::raw_sql("DROP VIEW IF EXISTS public.stroke_ddl_v; CREATE VIEW public.stroke_ddl_v AS SELECT 1 AS one, 'x'::text AS two")
+            .execute(&pool).await.unwrap();
+        let ddl = super::get_ddl_pg(&pool, "public", "stroke_ddl_v").await.unwrap();
+        assert!(ddl.starts_with("CREATE VIEW \"public\".\"stroke_ddl_v\" AS"), "{ddl}");
+        sqlx::raw_sql("DROP VIEW public.stroke_ddl_v").execute(&pool).await.unwrap();
+        sqlx::raw_sql(&ddl).execute(&pool).await.unwrap();
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM public.stroke_ddl_v").fetch_one(&pool).await.unwrap();
+        assert_eq!(n, 1);
+        sqlx::raw_sql("DROP VIEW public.stroke_ddl_v").execute(&pool).await.unwrap();
     }
 }

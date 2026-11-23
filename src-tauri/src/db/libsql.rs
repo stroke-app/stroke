@@ -9,7 +9,7 @@ static LIBSQL_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn client() -> &'static reqwest::Client {
     LIBSQL_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::Database)
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(std::time::Duration::from_secs(90))
@@ -21,14 +21,35 @@ fn client() -> &'static reqwest::Client {
     })
 }
 
-/// Normalise a user-supplied URL to an https:// base URL.
+/// Normalise a user-supplied URL to an http(s):// base URL.
 fn base_url(config: &LibSqlConfig) -> String {
-    let url = config.url.trim().trim_end_matches('/');
-    if url.starts_with("libsql://") {
-        format!("https://{}", &url["libsql://".len()..])
-    } else {
-        url.to_string()
+    libsql_http_url(config.url.trim().trim_end_matches('/'))
+}
+
+/// `libsql://` as HTTP: TLS, as Turso's own client reads it, except where
+/// there is none to speak. A local sqld (`turso dev`, a container) serves plain
+/// HTTP, and libSQL's clients spell that `?tls=0`; a loopback host means it
+/// too. Without this, a local libsql:// URL could not connect at all.
+pub(crate) fn libsql_http_url(url: &str) -> String {
+    let Some(rest) = url.strip_prefix("libsql://") else { return url.to_string() };
+    let (head, query) = rest.split_once('?').unwrap_or((rest, ""));
+    let mut tls = true;
+    let kept: Vec<&str> = query
+        .split('&')
+        .filter(|p| !p.is_empty())
+        .filter(|p| match *p {
+            "tls=0" | "tls=false" => { tls = false; false }
+            "tls=1" | "tls=true" => false,
+            _ => true,
+        })
+        .collect();
+    let host = head.split(['/', ':']).next().unwrap_or("");
+    let host = if head.starts_with('[') { head.split(']').next().unwrap_or("").trim_start_matches('[') } else { host };
+    if host == "localhost" || host == "::1" || host.starts_with("127.") {
+        tls = false;
     }
+    let q = if kept.is_empty() { String::new() } else { format!("?{}", kept.join("&")) };
+    format!("{}://{head}{q}", if tls { "https" } else { "http" })
 }
 
 // ── Wire format ────────────────────────────────────────────────────────────────
@@ -67,7 +88,6 @@ struct ExecResult {
 #[derive(Deserialize)]
 struct ColDef {
     name: String,
-    #[allow(dead_code)]
     decltype: Option<String>,
 }
 
@@ -201,8 +221,19 @@ async fn query_with(config: &LibSqlConfig, sql: &str, params: Vec<Value>, rollba
 
     let exec = exec_result.ok_or("No execute result in LibSQL response")?;
 
-    let columns: Vec<ColumnInfo> = exec.cols.iter()
-        .map(|c| ColumnInfo::new(c.name.clone(), "text"))
+    // The declared type the server reports (INTEGER, BOOLEAN, ...); every
+    // column read "text" before. An expression has none: the first value's
+    // storage class stands in, as SQLite's own typeof() would say.
+    let columns: Vec<ColumnInfo> = exec.cols.iter().enumerate()
+        .map(|(i, c)| {
+            let declared = c.decltype.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_lowercase);
+            let seen = || exec.rows.iter()
+                .filter_map(|r| r.get(i))
+                .map(|v| v.kind.as_str())
+                .find(|k| *k != "null")
+                .map(|k| if k == "float" { "real".to_string() } else { k.to_string() });
+            ColumnInfo::new(c.name.clone(), declared.or_else(seen).unwrap_or_else(|| "text".into()))
+        })
         .collect();
 
     let rows: Vec<Vec<Value>> = exec.rows.iter()
@@ -211,7 +242,22 @@ async fn query_with(config: &LibSqlConfig, sql: &str, params: Vec<Value>, rollba
 
     let affected = exec.affected_row_count;
     let row_count = Some(if affected > 0 { affected } else { rows.len() as i64 });
-    let message = if affected > 0 { Some(format!("{} row(s) affected", affected)) } else { None };
+    let message = if affected > 0 { Some(super::query::affected_message(sql, affected)) } else { None };
 
     Ok(SqlResult { columns, rows, row_count, message, query_ms: elapsed, sql: sql.to_string() })
+}
+
+
+#[cfg(test)]
+mod url_tests {
+    #[test]
+    fn local_libsql_urls_speak_plain_http() {
+        use super::libsql_http_url as u;
+        assert_eq!(u("libsql://mydb-org.turso.io"), "https://mydb-org.turso.io");
+        assert_eq!(u("libsql://127.0.0.1:18080"), "http://127.0.0.1:18080");
+        assert_eq!(u("libsql://localhost:8080"), "http://localhost:8080");
+        assert_eq!(u("libsql://[::1]:8080"), "http://[::1]:8080");
+        assert_eq!(u("libsql://db.lan:8080?tls=0"), "http://db.lan:8080");
+        assert_eq!(u("http://x:1"), "http://x:1");
+    }
 }

@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   // Redis keys as an editable table. One row per key (type, TTL, size, length,
   // value preview), loaded a page at a time with SCAN. Edits to values, TTLs
   // and names, new keys and deletes are staged and sent together in one
@@ -16,11 +17,12 @@
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { getAppScale } from '$lib/app-zoom.js'
-  import { cn, plural } from '$lib/utils.js'
+  import { cn, plural, errorText } from '$lib/utils.js'
   import { Checkbox } from '$lib/components/ui/checkbox/index.js'
   import {
     CREATABLE_TYPES, stage, unstage, stagedFor, toOps, createOps, ttlOps, toPattern,
     humanBytes, ttlLabel, commandLine,
+    withPendingCreates,
   } from '$lib/redis-staging.js'
   import { tick } from 'svelte'
   import Search from '@lucide/svelte/icons/search'
@@ -272,7 +274,8 @@
   let staged = $state.raw(/** @type {Staged[]} */ ([]))
   let applying = $state(false)
   let reviewOpen = $state(false)
-  let panelReload = $state(0)
+  /** @type {any} */
+  let valuePanel = $state(null)
 
   /** List-delete cleanups only matter while a tombstoned element is staged. */
   function dropOrphans(/** @type {Staged[]} */ list) {
@@ -316,6 +319,12 @@
       /** @type {Map<number, string>} */
       const errors = new Map()
       outcomes.forEach((o, i) => { if (!o.ok && !errors.has(owner[i])) errors.set(owner[i], o.error ?? 'failed') })
+      const okCount = sent.filter((s) => !errors.has(s.id) && !s.cell.startsWith('post:')).length
+      // The edits stay on screen (as "Applying…") until the stored values
+      // have been read back into the list and the open panel. Clearing them
+      // first showed the old value for the length of that read.
+      await refreshKeys(sent.filter((s) => !errors.has(s.id)))
+      await valuePanel?.reload?.()
       // Keep what failed staged (with its error); anything staged while the
       // apply was in flight stays too.
       const sentIds = new Set(sent.map((s) => s.id))
@@ -323,9 +332,6 @@
         ...sent.filter((s) => errors.has(s.id)).map((s) => ({ ...s, error: errors.get(s.id) })),
         ...staged.filter((s) => !sentIds.has(s.id)),
       ]
-      const okCount = sent.filter((s) => !errors.has(s.id) && !s.cell.startsWith('post:')).length
-      await refreshKeys(sent.filter((s) => !errors.has(s.id)))
-      panelReload++
       if (errors.size) {
         toast.error(`${errors.size} change${errors.size === 1 ? '' : 's'} failed`, {
           description: `${[...errors.values()][0]}${okCount ? ` · ${okCount} applied` : ''}`,
@@ -335,7 +341,7 @@
         reviewOpen = false
       }
     } catch (e) {
-      toast.error('Nothing was applied', { description: String(e).replace(/^Error:\s*/, '') })
+      toast.error('Nothing was applied', { description: errorText(e).replace(/^Error:\s*/, '') })
     } finally {
       applying = false
     }
@@ -404,7 +410,8 @@
     staged
       .filter((s) => s.cell === 'create' && s.create)
       .map((s) => /** @type {Row} */ ({
-        key: s.key, binary: false, type: s.create?.type ?? 'string', ttl_ms: -1, memory: null,
+        // The TTL it will get: the row said "no expiry" while a 1h one was staged.
+        key: s.key, binary: false, type: s.create?.type ?? 'string', ttl_ms: s.create?.ttlSeconds ? s.create.ttlSeconds * 1000 : -1, memory: null,
         length: null, preview: s.create?.preview ?? '', truncated: false, at: Date.now(), isNew: true,
       })),
   )
@@ -421,7 +428,7 @@
         return (typeof x === 'string' ? x.localeCompare(String(y), undefined, { numeric: true }) : Number(x) - Number(y)) * dir
       })
     }
-    return creates.length ? [...creates, ...list] : list
+    return withPendingCreates(list, creates)
   })
 
   // ── Selection ─────────────────────────────────────────────────────────────
@@ -552,7 +559,7 @@
     onstage({
       key, binary: false, cell: 'create', label: `create ${nk.type}`,
       ops: createOps(key, nk.type, { value: nk.value, field: nk.field, score: nk.score, ttl: ttl?.seconds ?? null }),
-      create: { type: nk.type, preview },
+      create: { type: nk.type, preview, ttlSeconds: ttl?.seconds ?? null },
     })
     creating = false
   }
@@ -675,7 +682,13 @@
     { col: 'length', label: 'Length', align: 'justify-end' },
   ]
   const GRID_COLS = 'grid-cols-[32px_minmax(200px,1.4fr)_84px_88px_76px_76px_minmax(240px,2fr)]'
-  const pendingTitle = $derived(readOnly ? READ_ONLY_HINT : 'Apply staged changes in one transaction (⌘S)')
+  // With a key open, its value is in the panel beside the list, in full. The
+  // Value column repeated it and pushed the list to 55rem, so beside the panel
+  // it scrolled sideways and cut Length off; it steps aside while one is open.
+  const GRID_COLS_PANEL = 'grid-cols-[32px_minmax(140px,1fr)_84px_88px_76px_76px]'
+  const panelOpen = $derived(!!selectedRow && !selectedRow.isNew)
+  const gridCols = $derived(panelOpen ? GRID_COLS_PANEL : GRID_COLS)
+  const pendingTitle = $derived(readOnly ? READ_ONLY_HINT : `Apply staged changes in one transaction (${comboTitle('Mod+S')})`)
   const loadedLabel = $derived(
     dbSize == null ? `${rows.length.toLocaleString()} ${plural(rows.length, "key")}`
     : filterInput.trim() || typeFilter ? `${rows.length.toLocaleString()} matching${done ? '' : '+'}`
@@ -724,7 +737,7 @@
         type="text"
         bind:value={filterInput}
         oninput={onFilterInput}
-        placeholder="Filter keys, e.g. user:* or session"
+        placeholder="Filter keys, e.g. user:*"
         aria-label="Filter keys"
         spellcheck="false"
         autocapitalize="off"
@@ -732,7 +745,7 @@
         onfocus={() => (searchFocused = true)}
         onblur={() => (searchFocused = false)}
         onkeydown={(e) => { if (e.key === 'Escape' && filterInput) { e.preventDefault(); e.stopPropagation(); filterInput = ''; onFilterInput() } }}
-        class="field-surface h-8 w-full min-w-0 pl-8 pr-7 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+        class="search-box no-field-frame h-8 w-full min-w-0 pl-8 pr-7 text-ui-sm"
       />
       {#if filterInput}
         <button type="button" class="hit-area absolute right-1.5 inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground transition-[background-color,color] duration-150 ease-out hover:bg-accent hover:text-foreground" aria-label="Clear filter" title="Clear filter (Esc)" onclick={() => { filterInput = ''; onFilterInput() }}>
@@ -771,7 +784,7 @@
     {/if}
     {#if pendingCount > 0}
       <Button variant="ghost" size="sm" onclick={() => (reviewOpen = !reviewOpen)} aria-expanded={reviewOpen}>
-        {pendingCount} pending{#if failed.length}<span class="text-destructive"> · {failed.length} failed</span>{/if}
+        {pendingCount} pending{#if failed.length}<span class="text-destructive">{' '}· {failed.length} failed</span>{/if}
       </Button>
       <Button variant="ghost" size="sm" onclick={discard} disabled={applying}>Discard</Button>
       <Button size="sm" onclick={() => void apply()} disabled={applying || readOnly} title={pendingTitle}>
@@ -783,7 +796,7 @@
     <Button variant="ghost" size="icon-sm" onclick={reload} title="Reload keys" aria-label="Reload keys">
       <RefreshCw class={cn(loading && 'animate-spin')} />
     </Button>
-    <Button variant="ghost" size="icon-sm" onclick={toggleTerminalDock} aria-pressed={$terminalDockOpen} title="redis-cli (⌘J)" aria-label="Toggle redis-cli" class={cn($terminalDockOpen && 'bg-accent text-foreground')}>
+    <Button variant="ghost" size="icon-sm" onclick={toggleTerminalDock} aria-pressed={$terminalDockOpen} title={`redis-cli (${comboTitle('Mod+J')})`} aria-label="Toggle redis-cli" class={cn($terminalDockOpen && 'bg-accent text-foreground')}>
       <TerminalIcon />
     </Button>
     <Button variant="outline" size="sm" onclick={openCreate} disabled={readOnly} title={readOnly ? READ_ONLY_HINT : 'New key'}>
@@ -826,9 +839,9 @@
         onscroll={onScroll}
         onkeydown={onGridKey}
       >
-        <div class="min-w-[880px]">
+        <div class={panelOpen ? 'min-w-[31rem]' : 'min-w-[55rem]'}>
           <!-- Header -->
-          <div bind:this={headerEl} role="row" class={cn('sticky top-0 z-20 grid h-7 items-center border-b border-border bg-panel text-ui-2xs font-medium text-muted-foreground', GRID_COLS)}>
+          <div bind:this={headerEl} role="row" class={cn('sticky top-0 z-20 grid h-7 items-center border-b border-border bg-panel text-ui-2xs font-medium text-muted-foreground', gridCols)}>
             <span class="flex justify-center" role="columnheader">
               <Checkbox checked={allChecked} onCheckedChange={toggleAll} aria-label="Select all loaded keys" />
             </span>
@@ -840,13 +853,13 @@
                 {/if}
               </button>
             {/each}
-            <span class="px-2" role="columnheader">Value</span>
+            {#if !panelOpen}<span class="px-2" role="columnheader">Value</span>{/if}
           </div>
 
           {#if creating}
             <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
             <form
-              class="sticky top-7 z-10 flex flex-wrap items-center gap-1.5 border-b border-border bg-panel px-3 py-2 shadow-sm"
+              class="sticky top-7 z-10 flex flex-wrap items-center gap-1.5 border-b border-border bg-panel px-3 py-2"
               onsubmit={(e) => { e.preventDefault(); stageCreate() }}
               onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); creating = false } }}
             >
@@ -858,7 +871,7 @@
                 <input bind:value={nk.score} placeholder="score" aria-label="Score" inputmode="decimal" autocomplete="off" class="field-surface shadow-none h-7 w-20 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
               {/if}
               <input bind:value={nk.value} placeholder={nk.type === 'string' || nk.type === 'hash' ? 'value' : 'first element'} aria-label="Value" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 min-w-40 flex-1 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
-              <input bind:value={nk.ttl} placeholder="TTL, e.g. 1h" aria-label="TTL" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 w-24 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
+              <input bind:value={nk.ttl} placeholder="TTL: 1h" title="Time to live: 30s, 10m, 1h, 2d. Empty keeps the key until deleted." aria-label="TTL" spellcheck="false" autocomplete="off" class="field-surface shadow-none h-7 w-24 min-w-0 px-2 font-mono text-ui-xs text-foreground placeholder:text-muted-foreground" />
               <Button type="submit" size="sm" disabled={!nk.key.trim()}>Stage</Button>
               <Button type="button" variant="ghost" size="sm" onclick={() => (creating = false)}>Cancel</Button>
               {#if nkError}<p class="w-full text-ui-2xs text-destructive">{nkError}</p>{/if}
@@ -885,7 +898,7 @@
                 aria-selected={selectedKey === r.key}
                 class={cn(
                   'absolute inset-x-0 grid items-center border-b border-border/40 font-mono text-ui-xs',
-                  GRID_COLS,
+                  gridCols,
                   del ? 'bg-destructive/5 text-destructive' : r.isNew ? 'bg-success/10' : selectedKey === r.key ? 'bg-accent' : 'hover:bg-accent/40',
                 )}
                 style:top="{(first + i) * rowH}px"
@@ -930,6 +943,7 @@
                 <span role="gridcell" class="px-2 text-right tabular-nums text-muted-foreground">{r.length?.toLocaleString() ?? ''}</span>
 
                 <!-- Value -->
+                {#if !panelOpen}
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <span role="gridcell" tabindex="-1" class={cn('flex h-full min-w-0 items-center px-2', (sVal || entryEdits) && 'bg-warning/10')} ondblclick={() => startEdit(r, 'value')}>
                   {#if editing?.key === r.key && editing.col === 'value'}
@@ -938,6 +952,7 @@
                     <span class={cn('truncate', del ? 'line-through' : 'text-foreground/80')} title={sVal?.display ?? r.preview}>{sVal?.display ?? r.preview}</span>
                   {/if}
                 </span>
+                {/if}
               </div>
             {/each}
           </div>
@@ -997,11 +1012,12 @@
       />
       <div class="shrink-0 border-l border-border/30" style:width="calc({panelWidth}px * var(--app-scale, 1))">
         <RedisValuePanel
+          bind:this={valuePanel}
+          {applying}
           row={selectedRow}
           meta={metaFor(selectedRow.type)}
           {staged}
           {now}
-          reloadToken={panelReload}
           {readOnly}
           {onstage}
           {onunstage}

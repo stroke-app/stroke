@@ -30,6 +30,22 @@ static POOL: std::sync::LazyLock<tokio::sync::Mutex<std::collections::HashMap<St
 /// command.
 const IDLE_CHECK: std::time::Duration = std::time::Duration::from_secs(30);
 
+/// Answers every lookup with the SSH tunnel's local end. The URL keeps the
+/// server's real name, so TLS checks the certificate against that name; only
+/// the TCP connection goes to the tunnel.
+struct ViaTunnel(std::net::SocketAddr);
+
+impl ::redis::io::AsyncDNSResolver for ViaTunnel {
+    fn resolve<'a, 'b: 'a>(
+        &'a self,
+        _host: &'b str,
+        _port: u16,
+    ) -> ::redis::RedisFuture<'a, Box<dyn Iterator<Item = std::net::SocketAddr> + Send + 'a>> {
+        let addr = self.0;
+        Box::pin(async move { Ok(Box::new(std::iter::once(addr)) as Box<dyn Iterator<Item = std::net::SocketAddr> + Send>) })
+    }
+}
+
 fn url_for(cfg: &RedisConfig) -> String {
     let scheme = if cfg.tls { "rediss" } else { "redis" };
     let auth = match cfg.password.as_deref().map(str::trim).filter(|p| !p.is_empty()) {
@@ -39,13 +55,21 @@ fn url_for(cfg: &RedisConfig) -> String {
     format!("{scheme}://{auth}{}:{}/{}", cfg.host, cfg.port, cfg.db)
 }
 
-async fn dial(url: &str) -> Result<::redis::aio::MultiplexedConnection, String> {
-    let client = ::redis::Client::open(url).map_err(|e| format!("Redis connection failed: {e}"))?;
+fn connection_config(via: Option<std::net::SocketAddr>) -> ::redis::AsyncConnectionConfig {
     // Bounded: with no timeout an unreachable host (or a TLS port spoken to in
     // plain TCP) left the connect awaiting until the OS gave up.
     let config = ::redis::AsyncConnectionConfig::new()
         .set_connection_timeout(Some(std::time::Duration::from_secs(10)))
         .set_response_timeout(Some(std::time::Duration::from_secs(30)));
+    match via {
+        Some(addr) => config.set_dns_resolver(ViaTunnel(addr)),
+        None => config,
+    }
+}
+
+async fn dial(url: &str, via: Option<std::net::SocketAddr>) -> Result<::redis::aio::MultiplexedConnection, String> {
+    let client = ::redis::Client::open(url).map_err(|e| format!("Redis connection failed: {e}"))?;
+    let config = connection_config(via);
     client
         .get_multiplexed_async_connection_with_config(&config)
         .await
@@ -55,7 +79,11 @@ async fn dial(url: &str) -> Result<::redis::aio::MultiplexedConnection, String> 
 /// A multiplexed connection for this config: the cached one when it is still
 /// alive, otherwise a new one (which then becomes the cached one).
 async fn open(cfg: &RedisConfig) -> Result<::redis::aio::MultiplexedConnection, String> {
-    let url = url_for(cfg);
+    // Keyed by the tunnel too: the same server reached two ways is two connections.
+    let url = match cfg.via {
+        Some(via) => format!("{}#via={via}", url_for(cfg)),
+        None => url_for(cfg),
+    };
     let mut pool = POOL.lock().await;
     if let Some(entry) = pool.get_mut(&url) {
         let fresh = entry.last_used.elapsed() < IDLE_CHECK;
@@ -73,7 +101,7 @@ async fn open(cfg: &RedisConfig) -> Result<::redis::aio::MultiplexedConnection, 
     // Dial without holding the lock for the whole handshake would let two
     // commands race to open two connections; holding it is the simpler bound,
     // and it only ever waits on the first connect for a given host.
-    let conn = dial(&url).await?;
+    let conn = dial(&url_for(cfg), cfg.via).await?;
     pool.insert(url, Cached { conn: conn.clone(), last_used: Instant::now() });
     Ok(conn)
 }
@@ -81,7 +109,11 @@ async fn open(cfg: &RedisConfig) -> Result<::redis::aio::MultiplexedConnection, 
 /// Drop the cached connection for a config (disconnect, or a failed PING in
 /// `ping`), so the next command dials fresh.
 pub async fn forget(cfg: &RedisConfig) {
-    POOL.lock().await.remove(&url_for(cfg));
+    let mut pool = POOL.lock().await;
+    pool.remove(&url_for(cfg));
+    if let Some(via) = cfg.via {
+        pool.remove(&format!("{}#via={via}", url_for(cfg)));
+    }
 }
 
 /// Connectivity/credential check - issues a `PING`.
@@ -784,6 +816,9 @@ where
     if channels.is_empty() && patterns.is_empty() {
         return Err("Name a channel or a pattern to subscribe to".into());
     }
+    if let Some(via) = cfg.via {
+        return subscribe_via(cfg, via, id, channels, patterns, emit).await;
+    }
     let client = ::redis::Client::open(url_for(cfg)).map_err(|e| format!("Redis connection failed: {e}"))?;
     let mut ps = client.get_async_pubsub().await.map_err(|e| format!("Could not open a pub/sub connection: {e}"))?;
     for c in &channels {
@@ -802,6 +837,55 @@ where
                 channel: msg.get_channel_name().to_string(),
                 pattern: msg.get_pattern::<String>().ok(),
                 payload: bytes_to_display(&payload),
+                at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+            });
+        }
+    });
+    SUBS.lock().map_err(|_| "Subscription registry poisoned")?.insert(id, task.abort_handle());
+    Ok(())
+}
+
+/// `subscribe` through an SSH tunnel. The dedicated pub/sub connection in
+/// redis-rs always uses the system resolver, so it would dial the server's
+/// name directly instead of the tunnel. A RESP3 connection takes the tunnel's
+/// resolver and delivers messages as push frames (Redis 6+).
+async fn subscribe_via<F>(cfg: &RedisConfig, via: std::net::SocketAddr, id: String, channels: Vec<String>, patterns: Vec<String>, emit: F) -> Result<(), String>
+where
+    F: Fn(PubSubMessage) + Send + 'static,
+{
+    let url = format!("{}?protocol=resp3", url_for(cfg));
+    let client = ::redis::Client::open(url).map_err(|e| format!("Redis connection failed: {e}"))?;
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel::<::redis::PushInfo>();
+    let config = connection_config(Some(via)).set_push_sender(tx);
+    let mut conn = client
+        .get_multiplexed_async_connection_with_config(&config)
+        .await
+        .map_err(|e| format!("Could not open a pub/sub connection: {e}"))?;
+    for c in &channels {
+        conn.subscribe(c).await.map_err(|e| format!("SUBSCRIBE {c} failed (subscriptions through an SSH tunnel need Redis 6 or later): {e}"))?;
+    }
+    for p in &patterns {
+        conn.psubscribe(p).await.map_err(|e| format!("PSUBSCRIBE {p} failed (subscriptions through an SSH tunnel need Redis 6 or later): {e}"))?;
+    }
+    unsubscribe(&id);
+    let task = tokio::spawn(async move {
+        // Held for the subscription's life: dropping it closes the connection.
+        let _conn = conn;
+        while let Some(push) = rx.recv().await {
+            let text = |v: Option<&::redis::Value>| v.map(value_to_string).unwrap_or_default();
+            let payload = |v: Option<&::redis::Value>| match v {
+                Some(::redis::Value::BulkString(b)) => bytes_to_display(b),
+                other => text(other),
+            };
+            let (channel, pattern, body) = match push.kind {
+                ::redis::PushKind::Message => (text(push.data.first()), None, payload(push.data.get(1))),
+                ::redis::PushKind::PMessage => (text(push.data.get(1)), Some(text(push.data.first())), payload(push.data.get(2))),
+                _ => continue,
+            };
+            emit(PubSubMessage {
+                channel,
+                pattern,
+                payload: body,
                 at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
             });
         }
@@ -951,7 +1035,7 @@ mod redis_live {
     use super::*;
 
     fn cfg() -> RedisConfig {
-        RedisConfig {
+        RedisConfig { ssh: None, via: None,
             name: "it".into(),
             host: "127.0.0.1".into(),
             port: std::env::var("STROKE_REDIS_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(6391),
@@ -1037,5 +1121,28 @@ mod redis_live {
         assert_eq!(seen.len(), 1200);
 
         apply(&c, vec![op(&["FLUSHDB"])]).await.unwrap();
+    }
+}
+
+#[cfg(test)]
+mod via_tests {
+    // Through a tunnel the URL keeps the server's real name (TLS checks it)
+    // and only the TCP connection goes to the tunnel. Proven with a name that
+    // does not resolve: any lookup of it would fail the connect.
+    //   STROKE_TEST_FAKE_RESP=127.0.0.1:16390 cargo test --lib redis::via_tests
+    #[tokio::test]
+    async fn dials_the_tunnel_and_keeps_the_name() {
+        let Ok(addr) = std::env::var("STROKE_TEST_FAKE_RESP") else { return };
+        let cfg = crate::db::connection::RedisConfig {
+            name: "t".into(),
+            host: "redis.stroke.test".into(),
+            port: 6379,
+            password: None,
+            db: 0,
+            tls: false,
+            ssh: None,
+            via: Some(addr.parse().unwrap()),
+        };
+        super::ping(&cfg).await.expect("PING through the tunnel address");
     }
 }

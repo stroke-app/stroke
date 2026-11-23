@@ -134,7 +134,7 @@
               aria-expanded={expanded}
             >
               <span class="flex min-w-0 items-baseline font-mono text-ui-xs" style:padding-left="{d * 0.9}rem" title={f.path}>
-                {#if parent}<span class="shrink-0 text-muted-foreground/60">{parent}</span>{/if}<span class="truncate text-foreground">{leaf}</span>
+                {#if parent}<span class="shrink-0 text-muted-foreground">{parent}</span>{/if}<span class="truncate text-foreground">{leaf}</span>
               </span>
               <span class="flex min-w-0 flex-wrap gap-1">
                 {#each f.types as [t, n] (t)}
@@ -146,7 +146,7 @@
               <span class={cn('text-right text-ui-xs tabular-nums', f.presence < 0.995 ? 'text-warning' : 'text-muted-foreground')} title="{f.count.toLocaleString()} of {data.sampled.toLocaleString()} sampled documents">{pct(f.presence)}</span>
               <span class="min-w-0 truncate font-mono text-ui-2xs text-muted-foreground">
                 {#if f.min != null || f.max != null}{show(f.min)} – {show(f.max)}
-                {:else if f.top.length}{f.top.slice(0, 4).map(([v]) => show(v)).join(' · ')}{#if f.distinct > 4} · {(f.distinct - 4).toLocaleString()}{f.distinctCapped ? '+' : ''} more{/if}
+                {:else if f.top.length}{f.top.slice(0, 4).map(([v]) => show(v)).join(' · ')}{#if f.distinct > 4}{' '}· {(f.distinct - 4).toLocaleString()}{f.distinctCapped ? '+' : ''} more{/if}
                 {/if}
               </span>
             </button>

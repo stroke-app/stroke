@@ -27,6 +27,15 @@ describe('variables', () => {
     expect(r.missing).toEqual(['other'])
     expect(variableNames('{{a}} {{ b }} {{a}}')).toEqual(['a', 'b'])
   })
+  test('doubles quotes in a value that sits inside a string literal', () => {
+    const vars = [{ name: 'name', value: "O'Neil" }, { name: 'n', value: '5' }]
+    expect(substituteVars("select * from people where name = '{{name}}' limit {{n}}", vars).sql)
+      .toBe("select * from people where name = 'O''Neil' limit 5")
+    // Not inside quotes: as written. A comment's apostrophe does not count.
+    expect(substituteVars("-- it's here\nselect {{name}}", vars).sql).toBe("-- it's here\nselect O'Neil")
+    // After a literal that holds a doubled quote, the count is still right.
+    expect(substituteVars("select 'it''s', '{{name}}'", vars).sql).toBe("select 'it''s', 'O''Neil'")
+  })
   test('round-trips through .sqlnb', () => {
     const nb = createNotebook('x')
     nb.variables = [{ name: 'a', value: '1' }]

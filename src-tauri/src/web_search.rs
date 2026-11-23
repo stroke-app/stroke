@@ -34,7 +34,7 @@ pub struct SearchHit {
 }
 
 fn client() -> Result<reqwest::Client, String> {
-    reqwest::Client::builder()
+    crate::proxy::http_builder(crate::proxy::Kind::Ai)
         .timeout(TIMEOUT)
         .user_agent(UA)
         .build()

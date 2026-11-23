@@ -35,6 +35,7 @@ mod omniroute;
 mod plugins;
 mod metrics;
 mod proc;
+pub(crate) mod proxy;
 mod providers;
 mod secrets;
 mod sync;
@@ -498,6 +499,18 @@ pub fn run() {
         .manage(launch::LaunchState::default())
         .setup(move |app| {
             display_backend::watch(app.handle().clone());
+            // Explicit transactions: roll back the ones left idle, on a timer,
+            // so a forgotten tab does not hold its locks until someone looks.
+            db::tx::init(app.handle().clone());
+            // SSH tunnels report when they drop and when they are back.
+            db::ssh_tunnel::init(app.handle().clone());
+            tauri::async_runtime::spawn(async {
+                let mut tick = tokio::time::interval(db::tx::SWEEP_EVERY);
+                loop {
+                    tick.tick().await;
+                    db::tx::sweep_idle().await;
+                }
+            });
             // Local servers marked "Start with Stroke".
             local_servers::autostart(app.handle().clone());
             // Linux packages renamed the binary from `app` to `stroke` (2.5.6), and
@@ -683,6 +696,8 @@ pub fn run() {
             plugins::plugins_dir,
             commands::ai_fetch,
             commands::ai_fetch_cancel,
+            proxy::proxy_set,
+            proxy::proxy_test,
             commands::ai_list_models,
             commands::ollama_registry,
             commands::ai_device_id,
@@ -761,6 +776,28 @@ pub fn run() {
             commands::cassandra_delete,
             commands::test_firestore,
             commands::connect_firestore_db,
+            commands::test_neo4j,
+            commands::connect_neo4j_db,
+            commands::neo4j_labels,
+            commands::neo4j_describe,
+            commands::neo4j_page,
+            commands::neo4j_save,
+            commands::neo4j_delete,
+            commands::test_influx,
+            commands::connect_influx_db,
+            commands::influx_measurements,
+            commands::influx_describe,
+            commands::influx_page,
+            commands::test_spanner,
+            commands::connect_spanner_db,
+            commands::test_bigquery,
+            commands::connect_bigquery_db,
+            commands::test_odbc,
+            commands::connect_odbc_db,
+            commands::test_snowflake,
+            commands::connect_snowflake_db,
+            commands::odbc_drivers,
+            commands::odbc_data_sources,
             commands::firestore_request,
             commands::test_mongo,
             commands::connect_mongo_db,
@@ -824,6 +861,7 @@ pub fn run() {
             commands::share_execute_sql,
             commands::pg_execute_sql_multi,
             commands::pg_execute_sql_stream,
+            commands::table_mirror,
             commands::result_window,
             commands::result_sort,
             commands::result_drop,
@@ -904,6 +942,7 @@ pub fn run() {
             db::tx::tx_commit,
             db::tx::tx_rollback,
             db::tx::tx_status,
+            db::tx::tx_open_sessions,
             db::terminal::terminal_client,
             db::terminal::terminal_open,
             db::terminal::terminal_install_client,
@@ -1007,25 +1046,39 @@ fn install_open_links(app: &tauri::AppHandle) {
     let links = app.deep_link();
     // The installers register the scheme; a dev build or an AppImage has no
     // installer, so it registers itself (per-user, overwritten on each run).
+    // Off the main thread: on Linux it runs `update-desktop-database` and
+    // `xdg-mime`, and setup waited for both before the window could open.
+    // Measured with realistic 250ms tools: first screen at 1.52s instead of
+    // 1.07s. Nothing at startup needs the registration to have finished.
     #[cfg(any(target_os = "linux", all(debug_assertions, windows)))]
     {
-        if let Err(e) = links.register_all() {
-            log::warn!("Could not register stroke:// links: {e}");
-        }
+        let handle = app.clone();
+        std::thread::spawn(move || {
+            use tauri_plugin_deep_link::DeepLinkExt;
+            if let Err(e) = handle.deep_link().register_all() {
+                log::warn!("Could not register stroke:// links: {e}");
+            }
+        });
     }
     let cwd = std::env::current_dir().unwrap_or_default();
-    let first = links
-        .get_current()
-        .ok()
-        .flatten()
-        .and_then(|urls| urls.iter().find_map(|u| launch::parse_link(u.as_str())))
+    let current = links.get_current().ok().flatten().unwrap_or_default();
+    for page in current.iter().filter_map(|u| launch::parse_studio_link(u.as_str())) {
+        launch::open_studio_window(app, &page);
+    }
+    let first = current
+        .iter()
+        .find_map(|u| launch::parse_link(u.as_str()))
         .or_else(|| launch::from_args(std::env::args(), &cwd));
     if let Some(req) = first {
         launch::deliver(app, req);
     }
     let handle = app.clone();
     links.on_open_url(move |event| {
-        if let Some(req) = event.urls().iter().find_map(|u| launch::parse_link(u.as_str())) {
+        let urls = event.urls();
+        for page in urls.iter().filter_map(|u| launch::parse_studio_link(u.as_str())) {
+            launch::open_studio_window(&handle, &page);
+        }
+        if let Some(req) = urls.iter().find_map(|u| launch::parse_link(u.as_str())) {
             launch::deliver(&handle, req);
         }
     });

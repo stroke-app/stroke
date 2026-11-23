@@ -239,7 +239,7 @@ Response `200`:
 
 - `plan` is `pro` when the user has an active, unrevoked, unexpired license, or
   a trial still running. The account trial starts on the first `/api/me` and
-  lasts 17 days (the app's `TRIAL_DAYS`), keyed by user id.
+  lasts 30 days (the server's `TRIAL_DAYS`), keyed by user id.
 - `valid_until` = `issued_at` + 7 days: the app may trust a cached, signature-
   checked entitlement offline until then.
 - Signing reuses `LICENSE_PRIVATE_KEY_HEX`; the app verifies with the existing

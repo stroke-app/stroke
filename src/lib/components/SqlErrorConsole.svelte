@@ -71,9 +71,13 @@
   })
 
   // Keywords are written as they are, never quoted.
+  // A syntax error at a word that is already a keyword ("near from") matched
+  // that keyword and offered "Did you mean FROM": the same word, which can't
+  // be the fix. The mistake is earlier in the statement.
   const suggestions = $derived(
     explained.name && onsuggest
       ? suggestNames(explained.name, candidates, explained.kind === 'syntax' ? '' : dialect)
+          .filter((s) => explained.kind !== 'syntax' || s.toLowerCase() !== explained.name.toLowerCase())
       : [],
   )
   /** A suggestion that only adds quotes is the Postgres case trap: say why. */

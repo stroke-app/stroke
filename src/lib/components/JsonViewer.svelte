@@ -4,6 +4,8 @@
   import Copy from '@lucide/svelte/icons/copy'
   import Download from '@lucide/svelte/icons/download'
   import CheckCheck from '@lucide/svelte/icons/check-check'
+  import Share2 from '@lucide/svelte/icons/share-2'
+  import { requestShare } from '$lib/share-flow.js'
   import JsonWrapToggle from './JsonWrapToggle.svelte'
   import JsonPathSuggest from './JsonPathSuggest.svelte'
   import { appJsonWordWrap } from '$lib/stores/settings.js'
@@ -27,6 +29,9 @@
     rowCount = 0,
     onshowtable = () => {},
     ondownload = /** @type {(() => void) | undefined} */ (undefined),
+    /** A share link's title, and where the JSON came from. */
+    sharetitle = 'JSON',
+    sharesource = /** @type {string | undefined} */ (undefined),
   } = $props()
 
   /** True when the caller trimmed the result to keep this view responsive. */
@@ -106,6 +111,14 @@
   }
 
 
+  /** Share what is shown as an encrypted link: the JSONPath result when there is one. */
+  function handleShare() {
+    const value = pathResult?.ok ? pathResult.value : parsedJson
+    if (value === null || value === undefined) return
+    const p = jsonPath.trim()
+    requestShare({ kind: 'json', title: p && p !== '$' ? `${sharetitle} ${p}` : sharetitle, source: sharesource, value })
+  }
+
   function handleCopy() {
     navigator.clipboard.writeText(displayedJson).then(() => {
       copied = true
@@ -116,7 +129,9 @@
 
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col overflow-hidden">
+<!-- A size container: in the results-beside pane the toolbar ran past the
+     edge and cut off Show table. Narrow, its labels give way to icons. -->
+<div class="@container/jv flex min-h-0 flex-1 flex-col overflow-hidden">
   <!-- JSONPath bar -->
   <div class="studio-chrome relative flex h-8 shrink-0 items-center gap-1.5 border-b border-border bg-panel px-3">
     <span class="select-none font-mono text-ui-xs text-muted-foreground">$</span>
@@ -172,11 +187,21 @@
       >
         {#if copied}
           <CheckCheck class="size-3 shrink-0 text-success" />
-          <span>Copied</span>
+          <span class="@max-[34rem]/jv:sr-only">Copied</span>
         {:else}
           <Copy class="size-3 shrink-0" />
-          <span>Copy</span>
+          <span class="@max-[34rem]/jv:sr-only">Copy</span>
         {/if}
+      </button>
+
+      <button
+        type="button"
+        title="Share as an encrypted link"
+        class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-ui-2xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+        onclick={handleShare}
+      >
+        <Share2 class="size-3 shrink-0" />
+        <span class="@max-[34rem]/jv:sr-only">Share</span>
       </button>
 
       {#if ondownload}
@@ -195,10 +220,11 @@
       <button
         type="button"
         class="inline-flex items-center gap-1.5 rounded-md px-2 py-1 font-mono text-ui-2xs font-medium text-foreground transition-colors hover:bg-muted"
+        title="Show table"
         onclick={onshowtable}
       >
         <Table2 class="size-3 shrink-0" />
-        Show table
+        <span class="@max-[34rem]/jv:sr-only">Show table</span>
       </button>
     </div>
   </div>

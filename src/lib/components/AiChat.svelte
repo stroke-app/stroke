@@ -1,4 +1,6 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
+  import { errorText } from '$lib/utils.js'
   import Share2 from '@lucide/svelte/icons/share-2'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { buildPayload, publishShare } from '$lib/share-flow.js'
@@ -168,7 +170,7 @@
    *   | { id: string, kind: 'assistant', parts: import('$lib/ai.js').AssistantPart[], ts?: number }
    *   | { id: string, kind: 'streaming' }
    *   | { id: string, kind: 'generating', what: 'chart' | 'diagram' }
-   *   | { id: string, kind: 'result', sql: string, columns: {name:string,dataType?:string}[], rows: unknown[][], total: number, error: string|null, isSchema?: boolean, capped?: boolean }
+   *   | { id: string, kind: 'result', sql: string, columns: {name:string,dataType?:string}[], rows: unknown[][], total: number, error: string|null, isSchema?: boolean, capped?: boolean, userRun?: boolean }
    *   | { id: string, kind: 'chart', spec: { type: string, title: string, data: object[], x_col: string, y_col: string, z_col?: string, group_col?: string }, error: string|null }
    *   | { id: string, kind: 'confirm', sql: string, resolve: (ok: boolean) => void }
    *   | { id: string, kind: 'share-confirm', summary: { what: string, title: string, rows: number, masked: string[], expires: string, once: boolean }, resolve: (ok: boolean) => void }
@@ -343,7 +345,7 @@
       if (!path) return; // save dialog cancelled
       toast.success("Chart saved", { description: `Saved to ${path}` });
     } catch (e) {
-      toast.error("Could not save the chart", { description: String(e) });
+      toast.error("Could not save the chart", { description: errorText(e) });
     }
   }
 
@@ -432,6 +434,13 @@
   /** Access levels as the backend ranks them (src-tauri/src/mcp/access.rs). @type {Record<string, number>} */
   const ACCESS_RANK = { read: 0, write: 1, modify: 2, dangerous: 3 };
   const ACCESS_NAMES = ["Read only", "Read & write", "Modify schema", "Dangerous"];
+  /** What execute_sql runs at each access level, as the agent is told it. */
+  const ACCESS_RULES = [
+    "execute_sql runs reads only (SELECT, WITH, EXPLAIN, SHOW). For anything that changes data or schema, give the SQL in a ```sql block for the user to run, and say they can raise the access level under the composer.",
+    "execute_sql runs reads, INSERTs, and UPDATEs or DELETEs with a WHERE clause. Schema changes go in a ```sql block for the user.",
+    "execute_sql runs reads, writes with a WHERE clause, and CREATE, ALTER and indexes. Nothing that drops or truncates: give that SQL in a ```sql block.",
+    "execute_sql runs anything; destructive statements still ask the user first.",
+  ];
   /** Engines where execute_sql's `database` argument can open another database by name. */
   const CROSS_DB_ENGINES = new Set(["postgres", "cockroachdb", "mysql", "mariadb", "mssql", "clickhouse"]);
 
@@ -810,8 +819,15 @@
     const title = renamingTitle.trim();
     renamingConvId = null;
     if (!id || !title) return;
-    await updateConversation(id, { title });
+    // Optimistic: the new title shows now; the old one comes back on failure.
+    const before = convList;
     convList = convList.map((c) => (c.id === id ? { ...c, title } : c));
+    try {
+      await updateConversation(id, { title });
+    } catch (e) {
+      convList = before;
+      toast.error("Couldn't rename the chat", { description: errorText(e) });
+    }
   }
 
   function cancelRename() {
@@ -1030,7 +1046,7 @@
     };
     items.forEach((it, i) => {
       if (it.kind === "result") {
-        if (!$appAgentQueryCards && !it.error) return;
+        if (!$appAgentQueryCards && !it.error && !it.userRun) return;
         if (loading && i > lastUser) { out.set(it.id, { hidden: true, pos: "single", runKey: it.id }); return; }
         run.push(it.id);
       } else if (it.kind === "assistant" && !it.parts?.some((p) => p.type !== "text" || p.content.trim())) {
@@ -1052,7 +1068,7 @@
    * @param {ChatItem} item
    */
   function drawsNothing(item) {
-    if (item.kind === "result") return (!$appAgentQueryCards && !item.error) || !!resultLayout.get(item.id)?.hidden;
+    if (item.kind === "result") return (!$appAgentQueryCards && !item.error && !item.userRun) || !!resultLayout.get(item.id)?.hidden;
     if (item.kind === "assistant") return !item.parts?.some((p) => p.type !== "text" || p.content.trim());
     return false;
   }
@@ -1642,7 +1658,7 @@
       if (!path) return; // save dialog cancelled
       toast.success("SVG exported", { description: `Saved to ${path}` });
     } catch (e) {
-      toast.error("Could not export the SVG", { description: String(e) });
+      toast.error("Could not export the SVG", { description: errorText(e) });
     }
   }
 
@@ -2392,12 +2408,7 @@
     // What execute_sql will run, so the model proposes SQL instead of
     // sending statements the access level refuses.
     const rank = isReadOnly() ? 0 : ACCESS_RANK[$agentPrefs.access] ?? 0;
-    const accessNote = `=== ACCESS ===\nThe user set this chat to "${ACCESS_NAMES[rank]}". ${[
-      "execute_sql runs reads only (SELECT, WITH, EXPLAIN, SHOW). For anything that changes data or schema, give the SQL in a ```sql block for the user to run, and say they can raise the access level under the composer.",
-      "execute_sql runs reads, INSERTs, and UPDATEs or DELETEs with a WHERE clause. Schema changes go in a ```sql block for the user.",
-      "execute_sql runs reads, writes with a WHERE clause, and CREATE, ALTER and indexes. Nothing that drops or truncates: give that SQL in a ```sql block.",
-      "execute_sql runs anything; destructive statements still ask the user first.",
-    ][rank]}`;
+    const accessNote = `=== ACCESS ===\nThe user set this chat to "${ACCESS_NAMES[rank]}". ${ACCESS_RULES[rank]}`;
     const withAccess = `${basePrompt}\n\n${accessNote}`;
     turnSystemPrompt = ci ? `${ci}\n\n---\n\n${withAccess}` : withAccess;
 
@@ -2683,6 +2694,19 @@
   /** Ends the running turn early (Stop, or a switch of conversation). */
   let agentSettle = /** @type {(() => void) | null} */ (null);
 
+  /** The access level the agent last heard in a turn, so a change can be announced. */
+  let agentToldAccess = /** @type {string | null} */ (null);
+
+  // Picking a level restarts an idle agent at once, so the next message does
+  // not wait on the restart. Mid-turn, the change waits for the turn to end.
+  $effect(() => {
+    void $agentPrefs.access;
+    void $readOnlyMode;
+    untrack(() => {
+      if (agentSession && !loading) prewarmAgent();
+    });
+  });
+
   function stopAgentSession() {
     if (agentSession) void agentStop(agentSession.key).catch(() => {});
     agentSession = null;
@@ -2787,6 +2811,16 @@
    */
   async function runAgentTurn(agent, model, text, disowned) {
     const key = await ensureAgentSession(agent, model);
+    // A changed access level restarts the agent with the new tools, but it
+    // resumes the same conversation, and that history still says what it
+    // could not do ("I only have read access"). Tell it, in the turn itself,
+    // so Claude, Codex or Cursor act on the new level straight away.
+    const access = isReadOnly() ? "read" : $agentPrefs.access;
+    if (agentToldAccess && agentToldAccess !== access) {
+      const rank = ACCESS_RANK[access] ?? 0;
+      text = `[Stroke: the user changed this chat's access level to "${ACCESS_NAMES[rank]}". ${ACCESS_RULES[rank]} Earlier limits in this conversation no longer apply.]\n\n${text}`;
+    }
+    agentToldAccess = access;
     let content = "";
     let reply = "";
     let itemId = /** @type {string | null} */ (null);
@@ -3884,6 +3918,9 @@
         rows,
         total: data.rowCount ?? rows.length,
         error: null,
+        // Asked for with Run: always shown. The "query cards" setting hides the
+        // agent's own reads, and hid this too, so Run looked like it did nothing.
+        userRun: true,
       });
       const execIdx = items.findIndex((i) => i.id === execId);
       if (execIdx >= 0) items.splice(execIdx, 1, resultItem);
@@ -4161,7 +4198,7 @@
     try {
       const saved = await exportRows(format, item.columns.map((c) => ({ name: c?.name ?? String(c) })), item.rows, "query");
       if (saved)
-        toast.success(`Exported ${formatCompactCount(item.rows.length)} rows`, {
+        toast.success(`Exported ${formatCompactCount(item.rows.length)} ${item.rows.length === 1 ? 'row' : 'rows'}`, {
           description: buildExportFilename("query", format),
         });
     } catch (e) {
@@ -4493,7 +4530,7 @@
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          title="Hide chats ({modKey}B)"
+          title="Hide chats ({comboTitle('Mod+B')})"
           onclick={toggleAiSidebar}
         >
           <PanelLeft class="size-3.5 shrink-0" />
@@ -4650,7 +4687,7 @@
                   {/if}
                   <span class="min-w-0 truncate text-ui-sm leading-snug">{displayTitle(conv)}</span>
                 </span>
-                <span class={cn("shrink-0 self-end pb-px font-mono text-ui-2xs tabular-nums text-muted-foreground/80", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
+                <span class={cn("shrink-0 self-end pb-px font-mono text-ui-2xs tabular-nums text-muted-foreground", !selecting && "group-hover/conv:invisible")}>{relativeTime(conv.updatedAt)}</span>
               </button>
               {#if !selecting}
               <div
@@ -4707,7 +4744,7 @@
           {#if onopenshortcuts}
             <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
           {/if}
-          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Hide chats ({modKey}B)" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
+          <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Hide chats ({comboTitle('Mod+B')})" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
           <button
             type="button"
             class="ml-auto inline-flex size-8 items-center justify-center rounded-full text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
@@ -4896,7 +4933,7 @@
       <button
         type="button"
         class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        title={sidebarVisible ? `Hide chats (${modKey}B)` : `Show chats (${modKey}B)`}
+        title={sidebarVisible ? `Hide chats (${comboTitle('Mod+B')})` : `Show chats (${comboTitle('Mod+B')})`}
         aria-label={sidebarVisible ? "Hide chats" : "Show chats"}
         onclick={toggleAiSidebar}
       >
@@ -5083,7 +5120,9 @@
                   {#if schemaContext.activeTable}
                     {schemaContext.activeSchema}.{schemaContext.activeTable}
                   {:else}
-                    {schemaContext.activeSchema} · {schemaContext.tables.length} tables
+                    {@const views = schemaContext.viewCount ?? 0}
+                    {@const tableCount = schemaContext.tables.length - views}
+                    {schemaContext.activeSchema} · {tableCount} {tableCount === 1 ? 'table' : 'tables'}{#if views}{` · ${views} ${views === 1 ? 'view' : 'views'}`}{/if}
                   {/if}
                 </p>
               {/if}
@@ -5502,7 +5541,7 @@
                 <!-- Hidden by the Agent setting, except when the query failed:
                      suppressing an error would leave the model's recovery in the
                      transcript with nothing explaining what it recovered from. -->
-                {#if $appAgentQueryCards || item.error}
+                {#if $appAgentQueryCards || item.error || item.userRun}
                 {@const resOpen = openResultId === item.id}
                 <!-- One neutral card for every outcome. Tinting the whole
                      container per state (red for errors, primary for schema)
@@ -6280,7 +6319,7 @@
             </button>
 
             <p class="text-center text-ui-3xs text-muted-foreground">
-              Shared with AI sidebar · <kbd class="font-mono">{modKey}I</kbd>
+              Shared with AI sidebar · <kbd class="font-mono">{comboTitle('Mod+Shift+E')}</kbd>
             </p>
           </div>
 
@@ -6549,7 +6588,7 @@
                       <p class="text-ui-xs font-medium text-foreground">{b.name}</p>
                       <p class="truncate text-ui-2xs text-muted-foreground">{b.desc}</p>
                     </div>
-                    <span class="mt-0.5 shrink-0 text-ui-3xs text-muted-foreground/80" title="Loads when a question is about {b.when}">auto</span>
+                    <span class="mt-0.5 shrink-0 text-ui-3xs text-muted-foreground" title="Loads when a question is about {b.when}">auto</span>
                   </li>
                 {/each}
               </ul>

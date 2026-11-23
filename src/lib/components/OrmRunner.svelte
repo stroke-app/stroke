@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { onMount, untrack } from "svelte";
   import { Prec } from "@codemirror/state";
   import { tooltips } from "@codemirror/view";
@@ -410,7 +411,7 @@
       size="sm"
       class="h-7 shrink-0 px-2.5 font-mono text-ui-xs text-muted-foreground hover:text-foreground"
       disabled={!code.trim()}
-      title={`Format code (${mod}S)`}
+      title={`Format code (${comboTitle('Mod+S')})`}
       onclick={() => editor?.getAction("editor.action.formatDocument")?.run()}
     >
       Format
@@ -586,6 +587,7 @@
           {loading}
           primaryKey={[]}
           foreignKeys={[]}
+          emptyText="The query returned no rows"
         />
         <!-- JSON toggle overlay, top right, matching JsonViewer toolbar style -->
         <div
@@ -641,10 +643,10 @@
         <p class="text-ui-sm text-muted-foreground">
           Run a query to see results
         </p>
+        <!-- The starter for this database: the hint named a "users" table
+             that most databases don't have. -->
         <p class="font-mono text-ui-xs text-muted-foreground">
-          {mode === "drizzle"
-            ? `db.select().from(users).limit(10)`
-            : `prisma.users.findMany({ take: 10 })`}
+          {defaultCode()}
         </p>
       </div>
     {/if}

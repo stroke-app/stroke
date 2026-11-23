@@ -61,10 +61,13 @@ export function createSmoothScroll(el) {
   // the measured distance unchanged: the loop then runs forever without moving
   // and scrolling appears dead. Owning the float means every frame makes progress
   // and the animation always converges.
-  let targetTop = el.scrollTop
-  let targetLeft = el.scrollLeft
-  let curTop = targetTop
-  let curLeft = targetLeft
+  // Not read from the element here: this runs while the grid mounts, and
+  // reading scrollTop then forced a layout in the middle of that render. The
+  // first push() adopts the real position (sync) before moving.
+  let targetTop = 0
+  let targetLeft = 0
+  let curTop = 0
+  let curLeft = 0
   let raf = 0
   /** Timestamp of the last animated frame, 0 when the animation is at rest. */
   let _lastFrame = 0
@@ -190,7 +193,9 @@ export function smoothScroll(node, params = {}) {
     const inner = e.target instanceof Element ? e.target.closest('[data-native-scroll]') : null
     if (inner && inner !== node) return
     const { dx, dy } = wheelPixels(e, node.clientHeight)
-    const wantX = axis === 'x' || (axis === 'both' && Math.abs(dx) > Math.abs(dy)) || (axis === 'y' && e.shiftKey)
+    // Shift turns a vertical wheel sideways on either axis setting. On Windows
+    // and Linux the delta stays on Y with Shift held, so `both` scrolled down.
+    const wantX = axis === 'x' || (axis === 'both' && (e.shiftKey || Math.abs(dx) > Math.abs(dy))) || (axis === 'y' && e.shiftKey)
     const canScrollY = node.scrollHeight > node.clientHeight
     const canScrollX = node.scrollWidth > node.clientWidth
     if (wantX) {

@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import GitCompare from '@lucide/svelte/icons/git-compare'
   import { getAppScale } from '$lib/app-zoom.js'
@@ -13,6 +14,8 @@
   import Search from '@lucide/svelte/icons/search'
   import { onMount, untrack } from 'svelte'
   import { cn } from '$lib/utils.js'
+  import { buildSelectSql } from '$lib/table-query.js'
+  import { engineLabel } from '$lib/connection-provider.js'
   import CodeEditor from './CodeEditor.svelte'
   import {
     getTableRows,
@@ -287,7 +290,6 @@
 
   /** True while either side is re-listing, so the button can show it. */
   let refreshing = $state(false)
-  const modKey = typeof navigator !== 'undefined' && /mac/i.test(navigator.platform) ? '\u2318' : 'Ctrl+'
 
   /**
    * Re-list databases, schemas and tables for both sides from scratch.
@@ -361,26 +363,36 @@
     selectedKeyCols = next
   }
 
+  /** Rows read from each side, at most. */
+  const ROW_CAP = 10000
+  /** A side returned the cap, so rows past it were not compared. */
+  let capped = $state(false)
+
   async function runFetch(/** @type {SourceState} */ src) {
     if (src.mode === 'sql') {
       const res = isCurrent(src.connId) ? await executeSql(src.sql) : await executeSqlOnConnection(effectiveConfig(src), src.sql)
       return { columns: res.columns ?? [], rows: res.rows ?? [] }
     }
     if (isCurrent(src.connId) && effectiveConfig(src)?.database === connById(src.connId)?.database) {
-      const res = await getTableRows(src.schema, src.table, 10000, 0)
+      const res = await getTableRows(src.schema, src.table, ROW_CAP, 0)
       return { columns: res.columns ?? [], rows: res.rows ?? [] }
     }
-    const sql = `SELECT * FROM "${src.schema}"."${src.table}" LIMIT 10000`
+    // Written for the side's own engine: this was `"schema"."table" LIMIT`
+    // everywhere, which MySQL, SQL Server and Oracle all reject.
+    const sql = buildSelectSql({ schema: src.schema, table: src.table, limit: ROW_CAP, engine: connById(src.connId)?.type ?? 'postgres' })
     const res = await executeSqlOnConnection(effectiveConfig(src), sql)
     return { columns: res.columns ?? [], rows: res.rows ?? [] }
   }
 
+  /** Both sides name a table or hold SQL, so Compare has something to run. */
+  const bothReady = $derived(
+    (L.mode === 'table' ? !!L.table : !!L.sql.trim()) && (R.mode === 'table' ? !!R.table : !!R.sql.trim()),
+  )
+
   async function compare() {
     if (comparing) return
     error = ''
-    const lReady = L.mode === 'table' ? !!L.table : !!L.sql.trim()
-    const rReady = R.mode === 'table' ? !!R.table : !!R.sql.trim()
-    if (!lReady || !rReady) { error = 'Configure both sources first.'; return }
+    if (!bothReady) { error = 'Pick a table or write SQL for both the source and the target.'; return }
     comparing = true
     try {
       const [lRes, rRes] = await Promise.all([runFetch(L), runFetch(R)])
@@ -388,6 +400,7 @@
       const keyNames = selectedKeyCols.size ? [...selectedKeyCols] : null
       const keyIdx = keyNames ? keyNames.map((n) => columns.findIndex((c) => c.name === n)).filter((i) => i >= 0) : [0]
       if (!keyIdx.length) { error = 'Key columns not found in result set.'; return }
+      capped = lRes.rows.length >= ROW_CAP || rRes.rows.length >= ROW_CAP
       diffRows = await computeDiff(lRes.rows, rRes.rows, columns.length, keyIdx)
       activeFilter = 'changed'
       searchQuery = ''
@@ -495,7 +508,7 @@
         <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />
         <span class="text-muted-foreground">{placeholder}</span>
       {:else}
-        <span class={cn('max-w-[140px] truncate', value && 'font-medium')}>{value || placeholder}</span>
+        <span class={cn('max-w-[8.75rem] truncate', value && 'font-medium')}>{value || placeholder}</span>
         {#if options.length > 0 || value}
           <ChevronDown class={cn('ml-auto size-3 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
         {/if}
@@ -508,11 +521,11 @@
         style="top:{ddTop}px;left:{ddLeft}px"
         onpointerdown={(e) => e.stopPropagation()}
       >
-        <div class="flex items-center gap-2 border-b border-border/25 px-3 py-2">
+        <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search…"
             class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
-          {#if dropdownSearch}<button onclick={() => { dropdownSearch = '' }} class="text-muted-foreground hover:text-foreground"><X class="size-3 shrink-0" /></button>{/if}
+          {#if dropdownSearch}<button aria-label="Clear search" title="Clear search" onclick={() => { dropdownSearch = '' }} class="text-muted-foreground hover:text-foreground"><X class="size-3 shrink-0" /></button>{/if}
         </div>
         <div class="max-h-52 overflow-y-auto py-1">
           {#if filtered.length === 0}
@@ -537,14 +550,14 @@
 {#snippet ConnSelect({ id, value, onchange })}
   {@const isOpen = openDropdown === id}
   {@const selected = connections.find((c) => c.id === value)}
-  {@const filtered = dropdownSearch ? connections.filter((c) => c.name.toLowerCase().includes(dropdownSearch.toLowerCase())) : connections}
+  {@const filtered = dropdownSearch ? connections.filter((c) => `${c.name} ${engineLabel(c.type)}`.toLowerCase().includes(dropdownSearch.toLowerCase())) : connections}
   <div class="relative inline-flex">
     <button type="button"
       onclick={(e) => { e.stopPropagation(); if (isOpen) closeDd(); else openDd(id, e) }}
-      class={cn('flex h-7 max-w-[200px] items-center gap-1.5 rounded-md border border-border/40 bg-muted/25 px-2.5 text-ui-xs font-medium text-foreground/90 transition-colors hover:bg-muted/45 select-none', isOpen && 'border-border/70 bg-muted/50 text-foreground')}
+      class={cn('flex h-7 max-w-[12.5rem] items-center gap-1.5 rounded-md border border-border/40 bg-muted/25 px-2.5 text-ui-xs font-medium text-foreground/90 transition-colors hover:bg-muted/45 select-none', isOpen && 'border-border/70 bg-muted/50 text-foreground')}
     >
       {#if value === currentConnectionId}<span class="size-1.5 shrink-0 rounded-full bg-info" title="Active connection"></span>{/if}
-      <span class="max-w-[140px] truncate">{selected?.name ?? 'Connection'}</span>
+      <span class="max-w-[8.75rem] truncate">{selected?.name ?? 'Connection'}</span>
       <ChevronDown class={cn('ml-auto size-3 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
     </button>
     {#if isOpen}
@@ -554,7 +567,7 @@
         style="top:{ddTop}px;left:{ddLeft}px"
         onpointerdown={(e) => e.stopPropagation()}
       >
-        <div class="flex items-center gap-2 border-b border-border/25 px-3 py-2">
+        <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search connections…"
             class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
@@ -569,7 +582,8 @@
               >
                 <span class={cn('w-3 shrink-0 text-center text-ui-3xs', value === conn.id ? 'text-primary' : 'opacity-0')}>✓</span>
                 <span class="flex-1 truncate text-left">{conn.name}</span>
-                {#if conn.id === currentConnectionId}<span class="shrink-0 text-ui-3xs text-info">active</span>{/if}
+                {#if conn.id === currentConnectionId}<span class="shrink-0 text-ui-3xs text-info">active</span>
+                {:else}<span class="shrink-0 text-ui-3xs text-muted-foreground">{engineLabel(conn.type)}</span>{/if}
               </button>
             {/each}
           {/if}
@@ -600,7 +614,7 @@
 
         <!-- SOURCE row -->
         <div class="flex items-center gap-2.5 px-5 py-2.5">
-          <span class="flex w-[74px] shrink-0 items-center gap-1.5">
+          <span class="flex w-[4.625rem] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-info"></span>
             <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-info">Source</span>
           </span>
@@ -619,7 +633,7 @@
           <!-- Named, not silent. An empty option list renders as an unclickable
                chip, so without this a dropped connection and "no tables here"
                looked identical - and neither said anything. -->
-          <p class="px-5 pb-1 ps-[104px] font-mono text-ui-2xs text-destructive">{L.error}</p>
+          <p class="px-5 pb-1 ps-[6.5rem] font-mono text-ui-2xs text-destructive">{L.error}</p>
         {/if}
 
         <div class="relative flex items-center px-5">
@@ -637,7 +651,7 @@
 
         <!-- TARGET row -->
         <div class="flex items-center gap-2.5 px-5 py-2.5">
-          <span class="flex w-[74px] shrink-0 items-center gap-1.5">
+          <span class="flex w-[4.625rem] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-success"></span>
             <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-success">Target</span>
           </span>
@@ -656,7 +670,7 @@
           <!-- Named, not silent. An empty option list renders as an unclickable
                chip, so without this a dropped connection and "no tables here"
                looked identical - and neither said anything. -->
-          <p class="px-5 pb-1 ps-[104px] font-mono text-ui-2xs text-destructive">{R.error}</p>
+          <p class="px-5 pb-1 ps-[6.5rem] font-mono text-ui-2xs text-destructive">{R.error}</p>
         {/if}
 
       </div>
@@ -669,7 +683,7 @@
 
     <!-- Key cols + compare -->
     <div class="flex items-center gap-2.5 border-t border-border/15 px-5 py-2.5">
-      <span class="w-[74px] shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
+      <span class="w-[4.625rem] shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
       <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {#each [...selectedKeyCols] as col}
           <button onclick={() => toggleKeyCol(col)}
@@ -692,15 +706,16 @@
         type="button"
         onclick={() => void refresh()}
         disabled={refreshing}
-        title="Reload databases, schemas and tables ({modKey}R)"
+        title="Reload databases, schemas and tables ({comboTitle('Mod+R')})"
         aria-label="Reload source and target lists"
         class="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-border/40 px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
       >
         <RefreshCw class={cn('size-3.5', refreshing && 'animate-spin')} />
         Refresh
       </button>
-      <Button onclick={compare} disabled={comparing}
+      <Button onclick={compare} disabled={comparing || !bothReady}
         class="shrink-0" size="sm"
+        title={bothReady ? `Compare the source with the target` : 'Pick a table or write SQL for both sides first'}
 >
         {#if comparing}<Loader2 class="size-3.5 shrink-0 animate-spin" />{:else}<GitCompare class="size-3.5 shrink-0" />{/if}
         Compare
@@ -761,7 +776,7 @@
            stranded outside a pill it clearly belonged to.
            `ps-4`, not `pl-4` - this strip mirrors under RTL. -->
       <div class="ms-auto flex items-center gap-2 pb-2.5 ps-4">
-        <div class="flex h-7 items-center gap-1.5 rounded-md border border-border/40 bg-muted/30 px-2 transition-colors focus-within:border-border">
+        <div class="search-shell flex h-7 items-center gap-1.5 px-2">
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input type="text" bind:value={searchQuery} placeholder="Search rows…"
             aria-label="Search diff rows"
@@ -782,6 +797,11 @@
       </div>
     </div>
 
+    {#if capped}
+      <p class="shrink-0 border-b border-border/40 px-5 py-1.5 text-ui-2xs text-muted-foreground">
+        Compared the first {ROW_CAP.toLocaleString()} rows of each side; rows past that were not read.
+      </p>
+    {/if}
     <!-- Virtual-scroll table ── -->
     <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
     <div
@@ -844,7 +864,7 @@
               isModified? 'bg-warning/25' : ''}
             <tr class="{rowBg || 'hover:bg-foreground/[0.025]'} transition-colors" style="height:{rowHeight}px">
               <td class="relative select-none border-b border-border/8 px-2 text-center font-mono text-ui-3xs font-semibold {statusColor}">
-                {#if accentColor}<span class="absolute inset-y-0 left-0 w-[2px] {accentColor}"></span>{/if}
+                {#if accentColor}<span class="absolute inset-y-0 left-0 w-[0.125rem] {accentColor}"></span>{/if}
                 {statusGlyph}
               </td>
               {#each columns as _col, ci}
@@ -887,6 +907,13 @@
           {#if bottomPad > 0}<tr style="height:{bottomPad}px"><td colspan={columns.length + 2}></td></tr>{/if}
         </tbody>
       </table>
+      {#if displayRows.length === 0}
+        <!-- The Changed view opens first, and with nothing changed it was a
+             header over blank space: the same as a diff that hadn't run. -->
+        <p class="px-5 py-10 text-center text-ui-xs text-muted-foreground">
+          {debouncedQuery ? 'No rows match the search.' : activeFilter === 'changed' ? 'No differences: every compared row matches.' : 'No rows in this view.'}
+        </p>
+      {/if}
     </div>
 
   {:else if comparing}
@@ -899,8 +926,8 @@
         <GitCompare class="size-6 shrink-0 opacity-20" />
       </div>
       <div class="text-center">
-        <p class="text-ui-sm font-medium text-foreground/40">Compare any two data sources</p>
-        <p class="mt-1 text-ui-xs text-muted-foreground">Tables or SQL, even across different hosts</p>
+        <p class="text-ui-sm font-medium text-foreground">Compare any two data sources</p>
+        <p class="mt-1 text-ui-xs text-muted-foreground">{bothReady ? 'Tables or SQL, even across different hosts' : 'Pick a table or write SQL for the source and the target'}</p>
       </div>
     </div>
   {/if}

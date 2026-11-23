@@ -1,4 +1,6 @@
 <script>
+  import { errorText } from '$lib/utils.js'
+  import { comboTitle } from '$lib/shortcuts.js'
   import { onDestroy, tick, untrack } from "svelte";
   import { createSwapy } from "swapy";
   import EChartPanel from "./EChartPanel.svelte";
@@ -40,6 +42,7 @@
   import Pencil from "@lucide/svelte/icons/pencil";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import Check from "@lucide/svelte/icons/check";
+  import Bookmark from "@lucide/svelte/icons/bookmark";
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import LayoutGrid from "@lucide/svelte/icons/layout-grid";
   import Presentation from "@lucide/svelte/icons/presentation";
@@ -256,7 +259,7 @@
 
   /** @param {KeyboardEvent} e */
   function handleWindowKeydown(e) {
-    if (e.key === "Escape" && presenting) {
+    if (e.key === "Escape" && presenting && !e.defaultPrevented) {
       e.preventDefault();
       setViewOnly(false);
     }
@@ -273,7 +276,7 @@
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("open_dashboard_window", { dashboardId: activeDash.id, connectionId: dashboardsConnectionId() || connection.id, title: activeDash.name });
     } catch (e) {
-      toast.error("Could not open the window", { description: String(e) });
+      toast.error("Could not open the window", { description: errorText(e) });
     }
   }
 
@@ -851,9 +854,32 @@
       </div>
     </Dialog.Header>
 
-    {#if pickerTab === "queries"}
+    {#if pickerTab === "queries" && savedQs.length === 0}
+      <div class="flex flex-col items-center gap-3 px-6 pt-4 pb-8 text-center">
+        <div class="flex size-11 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground">
+          <Bookmark class="size-5 shrink-0" aria-hidden="true" />
+        </div>
+        <div class="flex max-w-80 flex-col gap-1">
+          <p class="text-ui-sm font-medium text-foreground">No saved queries yet</p>
+          <p class="text-ui-xs text-muted-foreground">
+            Save a query in the SQL editor ({comboTitle("Mod+S")}). It will be listed here.
+          </p>
+        </div>
+        {#if onopensqleditor}
+          <Button
+            class="mt-1"
+            onclick={() => {
+              pickerOpen = false;
+              onopensqleditor();
+            }}
+          >
+            Open query editor
+          </Button>
+        {/if}
+      </div>
+    {:else if pickerTab === "queries"}
       <div class="flex shrink-0 flex-col gap-2 px-6 pb-2">
-        <label class="field-surface flex h-8 items-center gap-2 px-2.5">
+        <label class="search-shell flex h-8 items-center gap-2 px-2.5">
           <SearchIcon class="size-3.5 shrink-0 text-muted-foreground" />
           <input bind:value={pickerQuery} placeholder="Search saved queries" aria-label="Search saved queries" class="no-field-frame min-w-0 flex-1 bg-transparent text-ui-sm outline-none placeholder:text-muted-foreground" />
         </label>
@@ -887,7 +913,7 @@
           {/each}
         </ul>
         {#if !pickerQueries.length}
-          <p class="py-8 text-center text-ui-xs text-muted-foreground">{savedQs.length ? "No saved queries match." : "Queries you save in the SQL editor show up here."}</p>
+          <p class="py-8 text-center text-ui-xs text-muted-foreground">No saved queries match.</p>
         {/if}
       </div>
       <div class="flex shrink-0 items-center justify-between gap-3 border-t border-border/40 px-6 py-3">
@@ -919,7 +945,7 @@
       </div>
     {:else}
       <div class="flex shrink-0 flex-col gap-2 px-6 pb-2">
-        <label class="field-surface flex h-8 items-center gap-2 px-2.5">
+        <label class="search-shell flex h-8 items-center gap-2 px-2.5">
           <SearchIcon class="size-3.5 shrink-0 text-muted-foreground" />
           <input bind:value={pickerQuery} placeholder="Search charts" aria-label="Search charts" class="no-field-frame min-w-0 flex-1 bg-transparent text-ui-sm outline-none placeholder:text-muted-foreground" />
         </label>

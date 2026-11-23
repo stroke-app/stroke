@@ -5,6 +5,8 @@ import { recordQuery } from '$lib/stores/query-log.js'
 import { assertWritable } from '$lib/stores/read-only.js'
 import { getLastConnection } from '$lib/stores/connections.js'
 import { isWriteSql } from '$lib/sql-write.js'
+import { odbcConfigOf } from '$lib/odbc-presets.js'
+import { setOdbcDialect, setSpannerDialect } from '$lib/sql-ident.js'
 
 /** @typedef {{ name: string, host: string, port: number, database: string, user: string, password: string, ssl: boolean }} PgConnectionConfig */
 /** @typedef {{ name: string, filePath: string }} SqliteConnectionConfig */
@@ -191,19 +193,34 @@ export async function liveStop() {
 
 // ── PostgreSQL ────────────────────────────────────────────────────────────────
 
-/** @param {{ host: string, port?: number, username: string, privateKeyPath?: string }} ssh */
+/** @param {{ host: string, port?: number, username: string, privateKeyPath?: string, keepalive?: number }} ssh */
 function normalizeSshConfig(ssh) {
   return {
     host: String(ssh.host || '').trim(),
     port: Math.min(65535, Math.max(1, Number(ssh.port) || 22)),
     username: String(ssh.username || '').trim(),
     privateKeyPath: String(ssh.privateKeyPath || '').trim(),
+    // Seconds; 0 turns it off. Dropped here before, so the form's value never
+    // reached ssh and every tunnel ran at the default 30.
+    keepalive: Math.max(0, Math.min(3600, Number(ssh.keepalive ?? 30) || 0)),
+    // Kubernetes and SSM tunnels (db/ssh_tunnel.rs): `host` is the resource or
+    // the target, and these say where to find it.
+    ...(ssh.kind === 'kubernetes' || ssh.kind === 'ssm'
+      ? {
+          kind: ssh.kind,
+          context: String(ssh.context || '').trim(),
+          namespace: String(ssh.namespace || '').trim(),
+          region: String(ssh.region || '').trim(),
+          profile: String(ssh.profile || '').trim(),
+        }
+      : {}),
   }
 }
 
 /** Attach SSH config to a connection payload when the user has configured a tunnel. */
 function withSsh(payload, config) {
-  if (config.ssh && config.ssh.host && config.ssh.username) {
+  const s = config.ssh
+  if (s && s.host && (s.username || s.kind === 'kubernetes' || s.kind === 'ssm')) {
     return { ...payload, ssh: normalizeSshConfig(config.ssh) }
   }
   return payload
@@ -224,12 +241,29 @@ function withTimezone(payload) {
   return payload
 }
 
+/**
+ * The TLS verification level and CA, and a Postgres URL's other parameters.
+ * The payloads above are rebuilt field by field, and these were not among the
+ * fields: a connection set to verify-full with a CA connected as plain
+ * `require` (encrypted, certificate never checked), and a pasted URL's
+ * application_name or options never left the form. Sent only with TLS on, as
+ * the form does: `sslMode` alone would turn it back on in the backend.
+ * @param {Record<string, any>} payload @param {Record<string, any>} config
+ */
+export function withTlsAndParams(payload, config) {
+  const out = { ...payload }
+  if (config.ssl && config.sslMode) out.sslMode = String(config.sslMode)
+  if (config.ssl && config.sslRootCert) out.sslRootCert = String(config.sslRootCert)
+  if (config.params && String(config.params).trim()) out.params = String(config.params).trim()
+  return out
+}
+
 export async function testPostgresConnection(config) {
-  return inv('test_postgres_connection', { config: withSsh(withTimezone(normalizeConnectionConfig(config)), config) })
+  return inv('test_postgres_connection', { config: withSsh(withTlsAndParams(withTimezone(normalizeConnectionConfig(config)), config), config) })
 }
 
 export async function connectPostgres(config) {
-  return connectInv('connect_postgres', { config: withSsh(withTimezone(normalizeConnectionConfig(config)), config) })
+  return connectInv('connect_postgres', { config: withSsh(withTlsAndParams(withTimezone(normalizeConnectionConfig(config)), config), config) })
 }
 
 /** Toggle the WebView DevTools (no-op in release builds). */
@@ -271,7 +305,7 @@ export async function testMysqlConnection(config) {
     password: String(config.password || ''),
     ssl: Boolean(config.ssl),
   }
-  return inv('test_mysql', { config: withSsh(withTimezone(base), config) })
+  return inv('test_mysql', { config: withSsh(withTlsAndParams(withTimezone(base), config), config) })
 }
 
 /** @param {{ name: string, host: string, port: number, database: string, user: string, password: string, ssl: boolean, ssh?: object }} config */
@@ -285,7 +319,7 @@ export async function connectMysql(config) {
     password: String(config.password || ''),
     ssl: Boolean(config.ssl),
   }
-  return connectInv('connect_mysql_db', { config: withSsh(withTimezone(base), config) })
+  return connectInv('connect_mysql_db', { config: withSsh(withTlsAndParams(withTimezone(base), config), config) })
 }
 
 // ── Cloudflare D1 ─────────────────────────────────────────────────────────────
@@ -418,7 +452,7 @@ export async function connectPosthog(config) {
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, secure?: boolean }} config */
 function normalizeClickhouse(config) {
-  return {
+  return withSsh({
     name: String(config.name || 'ClickHouse'),
     host: String(config.host || '127.0.0.1'),
     port: Math.min(65535, Math.max(1, Number(config.port) || 8123)),
@@ -426,7 +460,7 @@ function normalizeClickhouse(config) {
     user: String(config.user || 'default'),
     password: String(config.password || ''),
     secure: Boolean(config.secure),
-  }
+  }, config)
 }
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, secure?: boolean }} config */
@@ -443,7 +477,7 @@ export async function connectClickhouse(config) {
 
 /** @param {{ name: string, host: string, port: number|string, password?: string, db?: number|string, tls?: boolean }} config */
 function normalizeRedis(config) {
-  return {
+  return withSsh({
     type: 'redis',
     name: String(config.name || 'Redis'),
     host: String(config.host || '127.0.0.1'),
@@ -451,7 +485,7 @@ function normalizeRedis(config) {
     password: config.password || null,
     db: Number(config.db) || 0,
     tls: !!config.tls,
-  }
+  }, config)
 }
 
 /** @param {{ name: string, host: string, port: number|string, password?: string, db?: number|string, tls?: boolean }} config */
@@ -609,13 +643,13 @@ export async function dynamoRequest(op, body = {}) {
 
 /** @param {CouchConnConfig} config */
 function normalizeCouch(config) {
-  return {
+  return withSsh({
     type: 'couchdb',
     name: String(config.name || 'CouchDB'),
     url: String(config.url || 'http://localhost:5984').trim(),
     user: (config.user && String(config.user).trim()) || null,
     password: config.password || null,
-  }
+  }, config)
 }
 
 /** @param {CouchConnConfig} config */
@@ -646,7 +680,7 @@ export async function couchRequest(method, path, body) {
 /** @param {EsConnConfig} config */
 function normalizeEs(config) {
   const flavor = config.type === 'opensearch' ? 'opensearch' : 'elasticsearch'
-  return {
+  return withSsh({
     type: flavor,
     flavor,
     name: String(config.name || (flavor === 'opensearch' ? 'OpenSearch' : 'Elasticsearch')),
@@ -655,7 +689,7 @@ function normalizeEs(config) {
     password: config.password || null,
     apiKey: (config.apiKey && String(config.apiKey).trim()) || null,
     insecure: !!config.insecure,
-  }
+  }, config)
 }
 
 /**
@@ -702,12 +736,12 @@ export async function elasticImport(index, path, opts = {}) {
 
 /** @param {MongoConnConfig} config */
 function normalizeMongo(config) {
-  return {
+  return withSsh({
     type: 'mongodb',
     name: String(config.name || 'MongoDB'),
     uri: String(config.uri || 'mongodb://localhost:27017').trim(),
     database: (config.database && String(config.database).trim()) || null,
-  }
+  }, config)
 }
 
 /** @param {MongoConnConfig} config */
@@ -888,6 +922,110 @@ export async function connectFirestore(config) {
   return connectInv('connect_firestore_db', { config: normalizeFirestore(config) })
 }
 
+// ── InfluxDB (beta, read-only) ────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, url?: string, version?: '1'|'2'|'3', database?: string, org?: string,
+ *   token?: string, user?: string, password?: string }} InfluxConnConfig
+ */
+
+/** @param {InfluxConnConfig} config */
+function normalizeInflux(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  const version = config.version || '2'
+  return {
+    type: 'influxdb',
+    name: String(config.name || 'InfluxDB'),
+    url: String(config.url || '').trim(),
+    version,
+    database: String(config.database || '').trim(),
+    org: version === '2' ? opt(config.org) : null,
+    token: version === '1' ? null : (config.token || null),
+    user: version === '1' ? opt(config.user) : null,
+    password: version === '1' ? (config.password || null) : null,
+  }
+}
+
+/** @param {InfluxConnConfig} config */
+export async function testInflux(config) {
+  return inv('test_influx', { config: normalizeInflux(config) })
+}
+
+/** @param {InfluxConnConfig} config */
+export async function connectInflux(config) {
+  return connectInv('connect_influx_db', { config: normalizeInflux(config) })
+}
+
+export async function influxMeasurements() {
+  return inv('influx_measurements')
+}
+
+/** @param {string} measurement */
+export async function influxDescribe(measurement) {
+  return inv('influx_describe', { measurement })
+}
+
+/** @param {string} measurement @param {string} filter @param {number} skip @param {number} limit */
+export async function influxPage(measurement, filter, skip, limit) {
+  return inv('influx_page', { measurement, filter: filter || null, skip, limit })
+}
+
+// ── Neo4j (beta) ──────────────────────────────────────────────────────────────
+
+/** @typedef {{ name?: string, url?: string, database?: string, user?: string, password?: string }} Neo4jConnConfig */
+
+/** @param {Neo4jConnConfig} config */
+function normalizeNeo4j(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    type: 'neo4j',
+    name: String(config.name || 'Neo4j'),
+    url: String(config.url || '').trim(),
+    database: opt(config.database),
+    user: opt(config.user),
+    password: config.password || null,
+  }
+}
+
+/** @param {Neo4jConnConfig} config */
+export async function testNeo4j(config) {
+  return inv('test_neo4j', { config: normalizeNeo4j(config) })
+}
+
+/** @param {Neo4jConnConfig} config */
+export async function connectNeo4j(config) {
+  return connectInv('connect_neo4j_db', { config: normalizeNeo4j(config) })
+}
+
+/** Node labels with their node counts. @returns {Promise<[string, number][]>} */
+export async function neo4jLabels() {
+  return inv('neo4j_labels')
+}
+
+/** @param {string} label */
+export async function neo4jDescribe(label) {
+  return inv('neo4j_describe', { label })
+}
+
+/** @param {string} label @param {string} filter @param {number} skip @param {number} limit */
+export async function neo4jPage(label, filter, skip, limit) {
+  return inv('neo4j_page', { label, filter: filter || null, skip, limit })
+}
+
+/** @param {string} label @param {Record<string, any>} doc */
+export async function neo4jSave(label, doc) {
+  assertWritable('change nodes')
+  return inv('neo4j_save', { label, doc })
+}
+
+/** @param {string} id */
+export async function neo4jDelete(id) {
+  assertWritable('delete nodes')
+  return inv('neo4j_delete', { id })
+}
+
 /**
  * One Firestore REST call on the active connection; `path` starts with
  * `projects/...`. Only this database's documents are reachable.
@@ -899,6 +1037,131 @@ export async function firestoreRequest(method, path, body) {
   return inv('firestore_request', { method, path, body: body ?? null })
 }
 
+// ── Spanner (beta) ───────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, projectId?: string, instanceId?: string, databaseId?: string,
+ *   auth?: 'emulator' | 'serviceAccount' | 'gcloud', keyFile?: string, emulatorHost?: string }} SpannerConnConfig
+ */
+
+/** @param {SpannerConnConfig} config */
+function normalizeSpanner(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    name: String(config.name || 'Spanner'),
+    projectId: String(config.projectId || '').trim(),
+    instanceId: String(config.instanceId || '').trim(),
+    databaseId: String(config.databaseId || '').trim(),
+    auth: config.auth || 'gcloud',
+    keyFile: opt(config.keyFile),
+    emulatorHost: opt(config.emulatorHost),
+  }
+}
+
+/** @param {SpannerConnConfig} config */
+export async function testSpanner(config) {
+  return inv('test_spanner', { config: normalizeSpanner(config) })
+}
+
+/** @param {SpannerConnConfig} config */
+export async function connectSpanner(config) {
+  const dialect = await connectInv('connect_spanner_db', { config: normalizeSpanner(config) })
+  setSpannerDialect(/** @type {string} */ (dialect))
+  return dialect
+}
+
+// ── BigQuery (beta) ──────────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ name?: string, projectId?: string, dataset?: string, location?: string,
+ *   auth?: 'emulator' | 'serviceAccount' | 'gcloud', keyFile?: string, emulatorHost?: string }} BigqueryConnConfig
+ */
+
+/** @param {BigqueryConnConfig} config */
+function normalizeBigquery(config) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    name: String(config.name || 'BigQuery'),
+    projectId: String(config.projectId || '').trim(),
+    dataset: opt(config.dataset),
+    location: opt(config.location),
+    auth: config.auth || 'gcloud',
+    keyFile: opt(config.keyFile),
+    emulatorHost: opt(config.emulatorHost),
+  }
+}
+
+/** @param {BigqueryConnConfig} config */
+export async function testBigquery(config) {
+  return inv('test_bigquery', { config: normalizeBigquery(config) })
+}
+
+/** @param {BigqueryConnConfig} config */
+export async function connectBigquery(config) {
+  return connectInv('connect_bigquery_db', { config: normalizeBigquery(config) })
+}
+
+// ── Snowflake (beta) ─────────────────────────────────────────────────────────
+
+/** @param {any} c a saved-connection shaped Snowflake config */
+function normalizeSnowflake(c) {
+  /** @param {string | undefined} s */
+  const opt = (s) => (s && String(s).trim()) || null
+  return {
+    name: String(c.name || 'Snowflake'),
+    account: String(c.account || '').trim(),
+    user: String(c.user || '').trim(),
+    auth: c.auth === 'token' ? 'token' : 'keypair',
+    privateKeyFile: opt(c.privateKeyFile),
+    password: c.auth === 'token' ? c.password || null : null,
+    warehouse: opt(c.warehouse),
+    database: String(c.database || '').trim(),
+    schema: opt(c.schema),
+    role: opt(c.role),
+    host: opt(c.host),
+  }
+}
+
+/** @param {any} config */
+export async function testSnowflake(config) {
+  return inv('test_snowflake', { config: normalizeSnowflake(config) })
+}
+
+/** @param {any} config */
+export async function connectSnowflake(config) {
+  return connectInv('connect_snowflake_db', { config: normalizeSnowflake(config) })
+}
+
+// ── ODBC (beta) ──────────────────────────────────────────────────────────────
+
+/**
+ * Test an ODBC connection; resolves to what the driver says it is
+ * (`DB2/LINUXX8664`, `HDB`, ...).
+ * @param {any} config a saved-connection shaped ODBC config
+ */
+export async function testOdbc(config) {
+  return /** @type {Promise<string>} */ (inv('test_odbc', { config: odbcConfigOf(config) }))
+}
+
+/** @param {any} config */
+export async function connectOdbc(config) {
+  const info = await connectInv('connect_odbc_db', { config: odbcConfigOf(config) })
+  setOdbcDialect(info)
+  return info
+}
+
+/** The ODBC drivers installed here. @returns {Promise<{ name: string, path?: string }[]>} */
+export async function odbcDrivers() {
+  return inv('odbc_drivers')
+}
+
+/** The ODBC data sources (DSNs) set up here. @returns {Promise<{ name: string, driver: string }[]>} */
+export async function odbcDataSources() {
+  return inv('odbc_data_sources')
+}
+
 // ── Cassandra ─────────────────────────────────────────────────────────────────
 
 /** @typedef {{ name?: string, hosts?: string, user?: string, password?: string, keyspace?: string }} CassandraConnConfig */
@@ -907,14 +1170,14 @@ export async function firestoreRequest(method, path, body) {
 function normalizeCassandra(config) {
   /** @param {string | undefined} s */
   const opt = (s) => (s && String(s).trim()) || null
-  return {
+  return withSsh({
     type: 'cassandra',
     name: String(config.name || 'Cassandra'),
     hosts: String(config.hosts || '127.0.0.1').trim(),
     user: opt(config.user),
     password: config.password || null,
     keyspace: opt(config.keyspace),
-  }
+  }, config)
 }
 
 /** @param {CassandraConnConfig} config */
@@ -985,7 +1248,7 @@ export async function connectDuckdb(config) {
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, encrypt?: boolean, trustCert?: boolean }} config */
 function normalizeMssql(config) {
-  return {
+  return withSsh({
     name: String(config.name || 'SQL Server'),
     host: String(config.host || '127.0.0.1'),
     port: Math.min(65535, Math.max(1, Number(config.port) || 1433)),
@@ -994,7 +1257,7 @@ function normalizeMssql(config) {
     password: String(config.password || ''),
     encrypt: Boolean(config.encrypt),
     trustCert: Boolean(config.trustCert),
-  }
+  }, config)
 }
 
 /** @param {{ name: string, host: string, port: number|string, database: string, user: string, password: string, encrypt?: boolean, trustCert?: boolean }} config */
@@ -1016,7 +1279,7 @@ export async function connectMssql(config) {
 
 /** @param {OracleConnConfig} config */
 function normalizeOracle(config) {
-  return {
+  return withSsh({
     name: String(config.name || 'Oracle'),
     host: String(config.host || '127.0.0.1').trim(),
     port: Math.min(65535, Math.max(1, Number(config.port) || 1521)),
@@ -1026,7 +1289,7 @@ function normalizeOracle(config) {
     user: String(config.user ?? '').trim(),
     password: String(config.password ?? ''),
     clientLibDir: String(config.clientLibDir ?? '').trim(),
-  }
+  }, config)
 }
 
 /** @param {OracleConnConfig} config */
@@ -1383,6 +1646,23 @@ export async function getTableRows(schema, table, limit, offset, query = {}) {
     table,
     limit,
     offset,
+    ...tableRowsQueryArgs(query),
+    // The grid view this is for ({ group: tab id, generation: its load number});
+    // a newer load of the same tab cancels it on the server.
+    fetchTag: query.fetchTag ?? null,
+  })
+  recordQuery({ sql: r?.sql, durationMs: r?.queryMs ?? Math.round(performance.now() - _t0), schema, table, source: 'browse', success: true })
+  traceRows('pg_get_table_rows', r, performance.now() - _t0)
+  return r
+}
+
+/**
+ * The query half of a table-rows call, shared by getTableRows and the table
+ * mirror so both run exactly the same SELECT.
+ * @param {any} query
+ */
+function tableRowsQueryArgs(query) {
+  return {
     search: query.search?.trim() || null,
     searchIsRegex: query.searchIsRegex ?? false,
     searchCaseSensitive: query.searchCaseSensitive ?? false,
@@ -1403,10 +1683,21 @@ export async function getTableRows(schema, table, limit, offset, query = {}) {
     // Fetch a wide column as a size and load its value per cell (Settings →
     // Data). Off means every value on the page, whatever it weighs.
     previewWide: (() => { try { return loadSettings().lazyWideColumns !== false } catch { return true } })(),
-  })
-  recordQuery({ sql: r?.sql, durationMs: r?.queryMs ?? Math.round(performance.now() - _t0), schema, table, source: 'browse', success: true })
-  traceRows('pg_get_table_rows', r, performance.now() - _t0)
-  return r
+  }
+}
+
+/**
+ * Copy a windowed table view into the backend's result store, page by page, so
+ * its windows can be read locally (`resultWindow`) instead of by a remote OFFSET.
+ * Resolves with the rows mirrored once the walk ends; `resultDrop(id)` stops it.
+ * @param {string} id @param {string} schema @param {string} table @param {any} query as for getTableRows
+ * @param {{ column: string, sqlType: string, desc: boolean, index: number }} seek
+ * @param {number} maxRows
+ * @returns {Promise<number>}
+ */
+export async function startTableMirror(id, schema, table, query, seek, maxRows, { pageRows, parallel } = /** @type {{ pageRows?: number, parallel?: number }} */ ({})) {
+  const { keyset: _k, includeMeta: _m, includeCount: _c, ...args } = tableRowsQueryArgs(query)
+  return await inv('table_mirror', { id, schema, table, ...args, seek, maxRows, pageRows: pageRows ?? null, parallel: parallel ?? null })
 }
 
 /**
@@ -1690,10 +1981,11 @@ export async function instanceSetConfig(name, value) {
 /**
  * The query plan. `analyze` (Postgres) runs the statement for actual rows and
  * times, inside a transaction that is rolled back; off, only estimates.
- * @param {string} sql @param {{ analyze?: boolean }} [opts]
+ * `queryId` lets `cancelQuery` stop an ANALYZE on the server.
+ * @param {string} sql @param {{ analyze?: boolean, queryId?: string }} [opts]
  */
 export async function explainSql(sql, opts = {}) {
-  return inv('pg_explain_sql', { sql, analyze: opts.analyze ?? true })
+  return inv('pg_explain_sql', { sql, analyze: opts.analyze ?? true, queryId: opts.queryId ?? null })
 }
 
 /**
@@ -1966,6 +2258,7 @@ export async function backupCancel() {
  * @property {number} rowsAffected
  * @property {number} openMs how long the transaction has been held
  * @property {string|null} engine
+ * @property {number|null} [blocking] sessions waiting on a lock it holds (null: the engine can't say)
  */
 
 /**
@@ -2010,6 +2303,11 @@ export async function txRollback(sessionId) {
 /** @param {string} sessionId @returns {Promise<TxStatus>} */
 export async function txStatus(sessionId) {
   return inv('tx_status', { sessionId })
+}
+
+/** Ids of every open transaction session, for the quit guard. @returns {Promise<string[]>} */
+export async function txOpenSessions() {
+  return inv('tx_open_sessions', {})
 }
 
 /**
@@ -2159,6 +2457,18 @@ export async function openNotebookFile() {
   if (!path || typeof path !== 'string') return null
   const content = await readFile(path)
   return { path, content }
+}
+
+/**
+ * Show an open dialog for one file of `filter`'s kind and read it as text.
+ * @param {{ name: string, extensions: string[] }} filter
+ * @returns {Promise<{ path: string, content: string } | null>} null when cancelled
+ */
+export async function openTextFileAs(filter) {
+  const { open } = await import('@tauri-apps/plugin-dialog')
+  const path = await open({ filters: [filter], multiple: false })
+  if (!path || typeof path !== 'string') return null
+  return { path, content: await readFile(path) }
 }
 
 /**

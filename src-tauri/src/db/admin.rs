@@ -37,7 +37,7 @@ impl Dialect {
             ActiveConnection::Mssql(_) => Some(Self::Mssql),
             ActiveConnection::Oracle(_) => Some(Self::Oracle),
             ActiveConnection::Clickhouse(_) => Some(Self::Clickhouse),
-            ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => None,
+            ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_) => None,
         }
     }
 
@@ -139,6 +139,10 @@ pub(crate) async fn run_statement(conn: &ActiveConnection, sql: &str) -> Result<
         ActiveConnection::Mssql(h) => super::mssql::execute_sql(h, sql).await.map(|_| ()),
         ActiveConnection::Oracle(h) => super::oracle::execute_sql(h, sql).await.map(|_| ()),
         ActiveConnection::Clickhouse(cfg) => super::clickhouse::query(cfg, sql).await.map(|_| ()),
+        ActiveConnection::Spanner(h) => super::spanner::query(h, sql).await.map(|_| ()),
+        ActiveConnection::Bigquery(h) => super::bigquery::query(h, sql).await.map(|_| ()),
+        ActiveConnection::Snowflake(h) => super::snowflake::query(h, sql).await.map(|_| ()),
+        ActiveConnection::Odbc(h) => super::odbc::query(h, sql).await.map(|_| ()),
         ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("This connection does not run DDL statements".into()),
     }
 }
@@ -877,7 +881,7 @@ mod admin_live {
     #[ignore]
     async fn clickhouse_copies_and_drops() {
         let port = std::env::var("STROKE_CH_PORT").ok().and_then(|p| p.parse().ok()).unwrap_or(58123);
-        let cfg = ClickhouseConfig {
+        let cfg = ClickhouseConfig { ssh: None, via: None,
             name: "test".into(),
             host: "127.0.0.1".into(),
             port,
@@ -928,7 +932,7 @@ mod admin_live {
     #[tokio::test]
     #[ignore]
     async fn mssql_copies_and_drops() {
-        let cfg = super::super::connection::MssqlConfig {
+        let cfg = super::super::connection::MssqlConfig { ssh: None, via: None,
             name: "test".into(),
             host: "127.0.0.1".into(),
             port: 51433,

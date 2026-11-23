@@ -34,10 +34,39 @@ pub struct PgConfig {
     pub ssl_root_cert: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh: Option<SshConfig>,
+    /// Where to dial instead of `host`, through an SSH tunnel (with `port`
+    /// set to the tunnel's). `host` stays the server's real name so TLS checks
+    /// the certificate against it. Set by the tunnel resolver, never saved.
+    #[serde(skip)]
+    pub via: Option<std::net::SocketAddr>,
     /// Session time zone applied on every pooled connection (IANA name, e.g.
     /// "America/New_York"). `None`/"SYSTEM" leaves the server default in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub timezone: Option<String>,
+    /// The rest of a connection URL's query, as written (`application_name=x&
+    /// options=endpoint%3Dep-1`): what a pasted URL carried beyond the fields.
+    /// TLS keys are the fields' to set and are skipped here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub params: Option<String>,
+}
+
+/// Extra query parameters that can be appended to a Postgres URL: `key=value`
+/// pairs, minus the ones the form owns, and nothing that would end the query
+/// or start a fragment.
+fn extra_pg_params(raw: Option<&str>) -> Vec<String> {
+    const OWNED: [&str; 3] = ["sslmode", "sslrootcert", "ssl"];
+    raw.unwrap_or("")
+        .trim()
+        .trim_start_matches('?')
+        .split('&')
+        .map(str::trim)
+        .filter(|p| !p.is_empty() && !p.contains(['#', ' ', '?']))
+        .filter(|p| {
+            let key = p.split('=').next().unwrap_or("").to_ascii_lowercase();
+            !key.is_empty() && !OWNED.contains(&key.as_str())
+        })
+        .map(String::from)
+        .collect()
 }
 
 impl PgConfig {
@@ -62,6 +91,7 @@ impl PgConfig {
                 params.push(format!("sslrootcert={}", urlencoding::encode(ca)));
             }
         }
+        params.extend(extra_pg_params(self.params.as_deref()));
         let ssl = if params.is_empty() {
             String::new()
         } else {
@@ -115,6 +145,11 @@ pub struct MysqlConfig {
     pub ssl_root_cert: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh: Option<SshConfig>,
+    /// Where to dial instead of `host`, through an SSH tunnel (with `port`
+    /// set to the tunnel's). `host` stays the server's real name so TLS checks
+    /// the certificate against it. Set by the tunnel resolver, never saved.
+    #[serde(skip)]
+    pub via: Option<std::net::SocketAddr>,
     /// Session time zone applied on connect (`SET time_zone`). `None`/"SYSTEM"
     /// leaves the server default in place.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -187,13 +222,28 @@ pub struct ClickhouseConfig {
     /// Use HTTPS (port 8443) instead of plain HTTP (port 8123).
     #[serde(default)]
     pub secure: bool,
+    /// Reach the server through an SSH tunnel (see `tunnel_to`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshConfig>,
+    /// Where to dial instead of `host:port`: the tunnel's local end. `host`
+    /// stays the server's real name, so TLS checks the certificate against
+    /// it rather than against 127.0.0.1. Set by `tunnel_via`, never saved.
+    #[serde(skip)]
+    pub via: Option<std::net::SocketAddr>,
 }
 
 impl ClickhouseConfig {
     /// Base HTTP(S) URL for the ClickHouse HTTP interface, no trailing slash.
     pub fn base_url(&self) -> String {
         let scheme = if self.secure { "https" } else { "http" };
-        format!("{scheme}://{}:{}", self.host, self.port)
+        match self.via {
+            // Through a tunnel: the real name (TLS checks it, and the HTTP
+            // client resolves it to the tunnel), at the tunnel's port. An IP
+            // address has no name to keep, so it is replaced outright.
+            Some(via) if self.host.parse::<std::net::IpAddr>().is_ok() => format!("{scheme}://{via}"),
+            Some(via) => format!("{scheme}://{}:{}", self.host, via.port()),
+            None => format!("{scheme}://{}:{}", self.host, self.port),
+        }
     }
 }
 
@@ -239,6 +289,14 @@ pub struct RedisConfig {
     /// Use TLS (rediss://) instead of plain TCP (redis://).
     #[serde(default)]
     pub tls: bool,
+    /// Reach the server through an SSH tunnel (see `tunnel_to`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshConfig>,
+    /// Where to dial instead of `host:port`: the tunnel's local end. `host`
+    /// stays the server's real name, so TLS checks the certificate against
+    /// it rather than against 127.0.0.1. Set by `tunnel_via`, never saved.
+    #[serde(skip)]
+    pub via: Option<std::net::SocketAddr>,
 }
 
 // ── DuckDB ────────────────────────────────────────────────────────────────────
@@ -273,6 +331,14 @@ pub struct MssqlConfig {
     /// Skip TLS certificate validation (self-signed dev servers).
     #[serde(default)]
     pub trust_cert: bool,
+    /// Reach the server through an SSH tunnel (see `tunnel_to`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshConfig>,
+    /// Where to dial instead of `host:port`: the tunnel's local end. `host`
+    /// stays the server's real name, so TLS checks the certificate against
+    /// it rather than against 127.0.0.1. Set by `tunnel_via`, never saved.
+    #[serde(skip)]
+    pub via: Option<std::net::SocketAddr>,
 }
 
 /// tiberius `Client` is async and not clonable; share it behind an async mutex.
@@ -306,6 +372,9 @@ pub struct OracleConfig {
     /// finds by itself.
     #[serde(default)]
     pub client_lib_dir: String,
+    /// Reach the server through an SSH tunnel (see `tunnel_to`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ssh: Option<SshConfig>,
 }
 
 fn default_oracle_port() -> u16 {
@@ -374,6 +443,14 @@ pub enum ActiveConnection {
     Mssql(MssqlHandle),
     Oracle(OracleHandle),
     Posthog(PosthogConfig),
+    /// Google Cloud Spanner (beta), over its REST API.
+    Spanner(crate::db::spanner::SpannerHandle),
+    /// Google BigQuery (beta), over its REST API.
+    Bigquery(crate::db::bigquery::BigQueryHandle),
+    /// Any database through its ODBC driver (beta).
+    Odbc(crate::db::odbc::OdbcHandle),
+    /// Snowflake (beta), over its SQL REST API.
+    Snowflake(crate::db::snowflake::SnowflakeHandle),
 }
 
 impl ActiveConnection {
@@ -392,6 +469,10 @@ impl ActiveConnection {
             Self::Mssql(_) => "mssql",
             Self::Oracle(_) => "oracle",
             Self::Posthog(_) => "posthog",
+            Self::Spanner(_) => "spanner",
+            Self::Bigquery(_) => "bigquery",
+            Self::Odbc(_) => "odbc",
+            Self::Snowflake(_) => "snowflake",
         }
     }
 }
@@ -544,6 +625,8 @@ pub fn update_d1_token(token: &str) {
 }
 
 fn set_conn(state: &Db<'_>, conn: Option<ActiveConnection>) -> Result<(), String> {
+    // Open transactions belong to the connection being replaced.
+    super::tx::connection_changed();
     *state.conn.lock().map_err(|e| e.to_string())? = conn;
     // A fresh pool: the page names its key once it knows it (set_active_conn_key).
     *state.active_key.lock().map_err(|e| e.to_string())? = None;
@@ -551,6 +634,10 @@ fn set_conn(state: &Db<'_>, conn: Option<ActiveConnection>) -> Result<(), String
 }
 
 async fn close_existing(state: &Db<'_>) {
+    super::tx::connection_changed();
+    // The tunnel under the closing connection goes with it. Connects that
+    // tunnel set their new one after this.
+    super::ssh_tunnel::drop_active();
     let old = state.conn.lock().ok().and_then(|mut g| g.take());
     let Some(conn) = old else { return };
     close_in_background(conn);
@@ -1074,6 +1161,10 @@ fn pg_pool_builder() -> PgPoolOptions {
         // first table open's six queries for the same ten slots. The row counts
         // lost that race, which is exactly what "pool timed out while waiting for
         // an open connection" was in the log.
+        // A connection a stopped run or a superseded fetch left mid-result is
+        // closed rather than reused: reusing it first drains the rest of the
+        // abandoned result over the link (query.rs `discard_connection`).
+        .after_release(|conn, _meta| Box::pin(async move { Ok(!super::query::take_discard(conn.backend_process_id())) }))
         .min_connections(2)
         // 20s, not 10: a single handshake to a proxied serverless host measured
         // 5.7s, so a query queued behind two of them blew a 10s ceiling and failed
@@ -1267,6 +1358,10 @@ pub(crate) async fn open_pg(config: &PgConfig) -> Result<PgPool, String> {
         .connection_url()
         .parse()
         .map_err(|e| format!("Connection failed: {e}"))?;
+    let opts = match config.via {
+        Some(via) => opts.hostaddr(&via.ip().to_string()),
+        None => opts,
+    };
     // The hostname is deliberately kept rather than swapped for the probed IP:
     // the driver needs it for TLS SNI (managed Postgres behind a proxy routes on
     // it) and the OS resolver caches the lookup anyway.
@@ -1334,7 +1429,8 @@ connect_pg_pool(
         }
     };
 
-    connect_racing_probe(&config.host, config.port, Some(&tcp_ok), connect).await
+    let (probe_host, probe_port) = probe_target(&config.host, config.port, config.via);
+    connect_racing_probe(&probe_host, probe_port, Some(&tcp_ok), connect).await
 }
 
 pub async fn test_connection(config: PgConfig) -> Result<(), String> {
@@ -1353,7 +1449,6 @@ pub async fn connect(
     tunnel_state: State<'_, TunnelState>,
     config: PgConfig,
 ) -> Result<(), String> {
-    tunnel_state.clear();
     let (effective, tunnel) = resolve_pg_ssh(config).await?;
     let pool = open_pg(&effective).await?;
     close_existing(&state).await;
@@ -1365,14 +1460,164 @@ pub async fn connect(
     Ok(())
 }
 
+/// Open `ssh`, when set, to `host:port`, and say where to dial instead: the
+/// tunnel's local end. The tunnel must outlive every connection made through it.
+pub(crate) async fn tunnel_to(
+    ssh: &Option<SshConfig>,
+    host: &str,
+    port: u16,
+) -> Result<(String, u16, Option<SshTunnel>), String> {
+    let Some(ssh) = crate::db::ssh_tunnel::effective(ssh) else { return Ok((host.to_string(), port, None)) };
+    let tunnel = SshTunnel::establish(&ssh, host, port).await?;
+    Ok(("127.0.0.1".into(), tunnel.local_port, Some(tunnel)))
+}
+
+/// Open `ssh`, when set, and return the address its local end listens on, for
+/// a driver that dials one address while TLS checks another name.
+pub(crate) async fn tunnel_via(
+    ssh: &Option<SshConfig>,
+    host: &str,
+    port: u16,
+) -> Result<(Option<std::net::SocketAddr>, Option<SshTunnel>), String> {
+    let Some(ssh) = crate::db::ssh_tunnel::effective(ssh) else { return Ok((None, None)) };
+    let tunnel = SshTunnel::establish(&ssh, host, port).await?;
+    Ok((Some(std::net::SocketAddr::from(([127, 0, 0, 1], tunnel.local_port))), Some(tunnel)))
+}
+
+/// The address a probe should race: the tunnel's local end when there is one.
+pub(crate) fn probe_target(host: &str, port: u16, via: Option<std::net::SocketAddr>) -> (String, u16) {
+    match via {
+        Some(a) => (a.ip().to_string(), a.port()),
+        None => (host.to_string(), port),
+    }
+}
+
+pub(crate) async fn resolve_clickhouse_ssh(mut c: ClickhouseConfig) -> Result<(ClickhouseConfig, Option<SshTunnel>), String> {
+    let (via, t) = tunnel_via(&c.ssh, &c.host, c.port).await?;
+    c.via = via;
+    Ok((c, t))
+}
+
+pub(crate) async fn resolve_redis_ssh(mut c: RedisConfig) -> Result<(RedisConfig, Option<SshTunnel>), String> {
+    let (via, t) = tunnel_via(&c.ssh, &c.host, c.port).await?;
+    c.via = via;
+    Ok((c, t))
+}
+
+pub(crate) async fn resolve_mssql_ssh(mut c: MssqlConfig) -> Result<(MssqlConfig, Option<SshTunnel>), String> {
+    let (via, t) = tunnel_via(&c.ssh, &c.host, c.port).await?;
+    c.via = via;
+    Ok((c, t))
+}
+
+pub(crate) async fn resolve_oracle_ssh(mut c: OracleConfig) -> Result<(OracleConfig, Option<SshTunnel>), String> {
+    if c.ssh.is_some() && !c.connect_string.trim().is_empty() {
+        return Err("An SSH tunnel needs the host and port fields, not a connect string: the tunnel has to know where to forward to.".into());
+    }
+    let (host, port, t) = tunnel_to(&c.ssh, &c.host, c.port).await?;
+    (c.host, c.port) = (host, port);
+    Ok((c, t))
+}
+
+pub(crate) async fn resolve_mongo_ssh(mut c: crate::db::mongo::MongoConfig) -> Result<(crate::db::mongo::MongoConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = crate::db::ssh_tunnel::effective(&c.ssh) else { return Ok((c, None)) };
+    // Refuse what the tunnel can't carry before opening it.
+    crate::db::ssh_tunnel::mongo_uri_via(&c.uri, 0)?;
+    let (host, port) = crate::db::ssh_tunnel::mongo_first_host(&c.uri).ok_or("No host in the connection string")?;
+    let tunnel = SshTunnel::establish(&ssh, &host, port).await?;
+    c.uri = crate::db::ssh_tunnel::mongo_uri_via(&c.uri, tunnel.local_port)?;
+    Ok((c, Some(tunnel)))
+}
+
+pub(crate) async fn resolve_cassandra_ssh(mut c: crate::db::cassandra::CassandraConfig) -> Result<(crate::db::cassandra::CassandraConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = crate::db::ssh_tunnel::effective(&c.ssh) else { return Ok((c, None)) };
+    // One contact point is enough: the driver reaches every node through it.
+    let first = c.hosts.split(',').map(str::trim).find(|h| !h.is_empty()).ok_or("Enter at least one host")?.to_string();
+    let (host, port) = match first.rsplit_once(':') {
+        Some((h, p)) if p.parse::<u16>().is_ok() => (h.trim_matches(['[', ']']).to_string(), p.parse::<u16>().unwrap_or(9042)),
+        _ => (first.clone(), 9042),
+    };
+    let tunnel = SshTunnel::establish(&ssh, &host, port).await?;
+    c.hosts = format!("127.0.0.1:{}", tunnel.local_port);
+    Ok((c, Some(tunnel)))
+}
+
+pub(crate) async fn resolve_couch_ssh(mut c: crate::db::couchdb::CouchConfig) -> Result<(crate::db::couchdb::CouchConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    let (host, port) = crate::db::ssh_tunnel::url_target(&c.url)?;
+    let (via, t) = tunnel_via(&Some(ssh), &host, port).await?;
+    c.via = via;
+    Ok((c, t))
+}
+
+pub(crate) async fn resolve_elastic_ssh(mut c: crate::db::elastic::EsConfig) -> Result<(crate::db::elastic::EsConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    let (host, port) = crate::db::ssh_tunnel::url_target(&c.url)?;
+    let (via, t) = tunnel_via(&Some(ssh), &host, port).await?;
+    c.via = via;
+    Ok((c, t))
+}
+
+/// Open the SSH tunnel a saved connection asks for, whatever its engine, and
+/// return the config pointed through it. Hold the tunnel for as long as
+/// anything opened from the config is in use: dropping it closes ssh.
+///
+/// For the paths that open a connection of their own beside the open one
+/// (Data Diff, schema compare, scheduled backups). They dialed the server
+/// directly, so a database only reachable through a bastion failed there
+/// while it worked everywhere else.
+pub(crate) async fn tunnel_any(config: AnyConnectionConfig) -> Result<(AnyConnectionConfig, Option<SshTunnel>), String> {
+    Ok(match config {
+        AnyConnectionConfig::Postgres(c) => {
+            let (c, t) = resolve_pg_ssh(c).await?;
+            (AnyConnectionConfig::Postgres(c), t)
+        }
+        AnyConnectionConfig::Mysql(c) => {
+            let (c, t) = resolve_mysql_ssh(c).await?;
+            (AnyConnectionConfig::Mysql(c), t)
+        }
+        AnyConnectionConfig::Mssql(c) => {
+            let (c, t) = resolve_mssql_ssh(c).await?;
+            (AnyConnectionConfig::Mssql(c), t)
+        }
+        AnyConnectionConfig::Oracle(c) => {
+            let (c, t) = resolve_oracle_ssh(c).await?;
+            (AnyConnectionConfig::Oracle(c), t)
+        }
+        AnyConnectionConfig::Clickhouse(c) => {
+            let (c, t) = resolve_clickhouse_ssh(c).await?;
+            (AnyConnectionConfig::Clickhouse(c), t)
+        }
+        AnyConnectionConfig::Redis(c) => {
+            let (c, t) = resolve_redis_ssh(c).await?;
+            (AnyConnectionConfig::Redis(c), t)
+        }
+        AnyConnectionConfig::Mongodb(c) => {
+            let (c, t) = resolve_mongo_ssh(c).await?;
+            (AnyConnectionConfig::Mongodb(c), t)
+        }
+        AnyConnectionConfig::Couchdb(c) => {
+            let (c, t) = resolve_couch_ssh(c).await?;
+            (AnyConnectionConfig::Couchdb(c), t)
+        }
+        AnyConnectionConfig::Elasticsearch(c) => {
+            let (c, t) = resolve_elastic_ssh(c).await?;
+            (AnyConnectionConfig::Elasticsearch(c), t)
+        }
+        other => (other, None),
+    })
+}
+
 /// Establish an SSH tunnel if `config.ssh` is set, return a direct config pointing
 /// at the local forwarded port. The tunnel's lifetime must outlive the connection.
 pub(crate) async fn resolve_pg_ssh(config: PgConfig) -> Result<(PgConfig, Option<SshTunnel>), String> {
-    if let Some(ref ssh_cfg) = config.ssh {
+    if let Some(ref ssh_cfg) = crate::db::ssh_tunnel::effective(&config.ssh) {
         let tunnel = SshTunnel::establish(ssh_cfg, &config.host, config.port).await?;
         let local_port = tunnel.local_port;
         let mut direct = config.clone();
-        direct.host = "127.0.0.1".to_string();
+        // Dial the tunnel, keep the name: TLS (verify-full, VERIFY_IDENTITY)
+        // checks the certificate against the real host, not 127.0.0.1.
+        direct.via = Some(std::net::SocketAddr::from(([127, 0, 0, 1], local_port)));
         direct.port = local_port;
         direct.ssh = None;
         Ok((direct, Some(tunnel)))
@@ -1440,6 +1685,10 @@ pub(crate) async fn open_mysql(config: &MysqlConfig) -> Result<MySqlPool, String
         .connection_url()
         .parse()
         .map_err(|e| format!("Connection failed: {e}"))?;
+    let opts = match config.via {
+        Some(via) => opts.hostaddr(&via.ip().to_string()),
+        None => opts,
+    };
     let opts = opts.log_slow_statements(LevelFilter::Debug, Duration::from_secs(5));
 
     // Optional session time zone (Settings → Database), applied per connection
@@ -1507,9 +1756,10 @@ pub(crate) async fn open_mysql(config: &MysqlConfig) -> Result<MySqlPool, String
         Ok::<_, sqlx::Error>(pool)
     };
 
+    let (probe_host, probe_port) = probe_target(&config.host, config.port, config.via);
     connect_racing_probe(
-        &config.host,
-        config.port,
+        &probe_host,
+        probe_port,
         None,
         async { connect.await.map_err(|e| format!("Connection failed: {e}")) },
     )
@@ -1532,7 +1782,6 @@ pub async fn connect_mysql(
     tunnel_state: State<'_, TunnelState>,
     config: MysqlConfig,
 ) -> Result<(), String> {
-    tunnel_state.clear();
     let (effective, tunnel) = resolve_mysql_ssh(config).await?;
     let pool = open_mysql(&effective).await?;
     close_existing(&state).await;
@@ -1542,11 +1791,13 @@ pub async fn connect_mysql(
 }
 
 pub(crate) async fn resolve_mysql_ssh(config: MysqlConfig) -> Result<(MysqlConfig, Option<SshTunnel>), String> {
-    if let Some(ref ssh_cfg) = config.ssh {
+    if let Some(ref ssh_cfg) = crate::db::ssh_tunnel::effective(&config.ssh) {
         let tunnel = SshTunnel::establish(ssh_cfg, &config.host, config.port).await?;
         let local_port = tunnel.local_port;
         let mut direct = config.clone();
-        direct.host = "127.0.0.1".to_string();
+        // Dial the tunnel, keep the name: TLS (verify-full, VERIFY_IDENTITY)
+        // checks the certificate against the real host, not 127.0.0.1.
+        direct.via = Some(std::net::SocketAddr::from(([127, 0, 0, 1], local_port)));
         direct.port = local_port;
         direct.ssh = None;
         Ok((direct, Some(tunnel)))
@@ -1585,7 +1836,13 @@ pub async fn connect_libsql(state: Db<'_>, config: LibSqlConfig) -> Result<(), S
 // ── ClickHouse connect / test ─────────────────────────────────────────────────
 
 pub async fn test_clickhouse_connection(config: ClickhouseConfig) -> Result<(), String> {
-    let (host, port) = (config.host.clone(), config.port);
+    let (config, _tunnel) = resolve_clickhouse_ssh(config).await?;
+    probe_clickhouse(config).await
+}
+
+/// `config` already points where to dial (through its tunnel, if any).
+async fn probe_clickhouse(config: ClickhouseConfig) -> Result<(), String> {
+    let (host, port) = probe_target(&config.host, config.port, config.via);
     connect_racing_probe(&host, port, None, async move {
         crate::db::clickhouse::query(&config, "SELECT 1").await?;
         Ok(())
@@ -1593,11 +1850,14 @@ pub async fn test_clickhouse_connection(config: ClickhouseConfig) -> Result<(), 
     .await
 }
 
-pub async fn connect_clickhouse(state: Db<'_>, config: ClickhouseConfig) -> Result<(), String> {
+pub async fn connect_clickhouse(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: ClickhouseConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_clickhouse_ssh(config).await?;
     // Validate credentials/reachability before storing.
-    test_clickhouse_connection(config.clone()).await?;
+    probe_clickhouse(config.clone()).await?;
     close_existing(&state).await;
-    set_conn(&state, Some(ActiveConnection::Clickhouse(config)))
+    set_conn(&state, Some(ActiveConnection::Clickhouse(config)))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
 // ── PostHog connect / test ────────────────────────────────────────────────────
@@ -1621,14 +1881,93 @@ pub async fn connect_dynamodb(state: Db<'_>, config: crate::db::dynamodb::Dynamo
 
 // ── Document engines connect ──────────────────────────────────────────────────
 
-pub async fn connect_cassandra(state: Db<'_>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+pub async fn connect_cassandra(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::cassandra::CassandraConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_cassandra_ssh(config).await?;
     let session = crate::db::cassandra::connect(&config).await?;
-    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Cassandra(session))))
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Cassandra(session))))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
-pub async fn connect_mongo(state: Db<'_>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+pub async fn connect_mongo(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::mongo::MongoConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_mongo_ssh(config).await?;
     let handle = crate::db::mongo::connect(&config).await?;
-    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(handle))))
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Mongo(handle))))?;
+    tunnel_state.set(tunnel);
+    Ok(())
+}
+
+/// Google Cloud Spanner (beta): checks the database, learns its dialect and
+/// opens a session before it becomes the active connection.
+/// Returns the database's dialect ("googlesql" or "postgresql"): the
+/// frontend writes its review and generated SQL in it.
+pub async fn connect_spanner(state: Db<'_>, config: crate::db::spanner::SpannerConfig) -> Result<String, String> {
+    let h = crate::db::spanner::connect(&config).await?;
+    let dialect = match h.dialect {
+        crate::db::spanner::Dialect::Postgres => "postgresql",
+        crate::db::spanner::Dialect::GoogleSql => "googlesql",
+    };
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Spanner(h)))?;
+    Ok(dialect.to_string())
+}
+
+/// Google BigQuery (beta): the project answers before it becomes the active
+/// connection.
+pub async fn connect_bigquery(state: Db<'_>, config: crate::db::bigquery::BigQueryConfig) -> Result<(), String> {
+    let h = crate::db::bigquery::connect(&config).await?;
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Bigquery(h)))
+}
+
+/// A database through its ODBC driver (beta): connects and reads what the
+/// driver says about naming and paging before it becomes active.
+pub async fn connect_odbc(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::odbc::OdbcConfig) -> Result<crate::db::odbc::OdbcSummary, String> {
+    let (config, tunnel) = resolve_odbc_ssh(config).await?;
+    let h = crate::db::odbc::connect(&config).await?;
+    let summary = h.info.summary();
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Odbc(h)))?;
+    tunnel_state.set(tunnel);
+    Ok(summary)
+}
+
+/// An ODBC connection through SSH: the tunnel to the preset's host and port,
+/// and the connection string pointed at its local end.
+pub(crate) async fn resolve_odbc_ssh(mut c: crate::db::odbc::OdbcConfig) -> Result<(crate::db::odbc::OdbcConfig, Option<SshTunnel>), String> {
+    let Some(ssh) = c.ssh.clone() else { return Ok((c, None)) };
+    let (Some(host), Some(port)) = (c.target_host.clone().filter(|h| !h.trim().is_empty()), c.target_port) else {
+        return Err("An SSH tunnel needs the database's host and port: fill them in on the Fields tab".into());
+    };
+    let tunnel = SshTunnel::establish(&ssh, host.trim(), port).await?;
+    let cs = crate::db::odbc::connection_string(&c)?;
+    c.connection_string = Some(crate::db::odbc::retarget(&cs, &host, port, tunnel.local_port));
+    c.dsn = None;
+    // The credentials are in the retargeted string already.
+    c.user = None;
+    c.password = None;
+    Ok((c, Some(tunnel)))
+}
+
+/// Snowflake (beta): signs in and runs SELECT 1 before it becomes active.
+pub async fn connect_snowflake(state: Db<'_>, config: crate::db::snowflake::SnowflakeConfig) -> Result<(), String> {
+    let h = crate::db::snowflake::connect(&config).await?;
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Snowflake(h)))
+}
+
+/// InfluxDB (beta, read-only): 1.x, 2.x or 3.x over HTTP.
+pub async fn connect_influx(state: Db<'_>, config: crate::db::influx::InfluxConfig) -> Result<(), String> {
+    let config = crate::db::influx::connect(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Influx(config))))
+}
+
+/// Neo4j (beta): over its HTTP API.
+pub async fn connect_neo4j(state: Db<'_>, config: crate::db::neo4j::Neo4jConfig) -> Result<(), String> {
+    let config = crate::db::neo4j::connect(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Neo4j(config))))
 }
 
 pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {
@@ -1636,28 +1975,45 @@ pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::Fire
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Firestore(config))))
 }
 
-pub async fn connect_couchdb(state: Db<'_>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+pub async fn connect_couchdb(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::couchdb::CouchConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_couch_ssh(config).await?;
     crate::db::couchdb::ping(&config).await?;
-    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(config))))
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Couch(config))))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
-pub async fn connect_elastic(state: Db<'_>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+pub async fn connect_elastic(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: crate::db::elastic::EsConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_elastic_ssh(config).await?;
     let config = crate::db::elastic::connect(config).await?;
-    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(config))))
+    close_existing(&state).await;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Elastic(config))))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
 // ── Redis connect / test ──────────────────────────────────────────────────────
 
 pub async fn test_redis_connection(config: RedisConfig) -> Result<(), String> {
-    let (host, port) = (config.host.clone(), config.port);
-    connect_racing_probe(&host, port, None, crate::db::redis::ping(&config)).await
+    let (config, _tunnel) = resolve_redis_ssh(config).await?;
+    probe_redis(&config).await
 }
 
-pub async fn connect_redis(state: Db<'_>, config: RedisConfig) -> Result<(), String> {
+/// `config` already points where to dial (through its tunnel, if any).
+async fn probe_redis(config: &RedisConfig) -> Result<(), String> {
+    let (host, port) = probe_target(&config.host, config.port, config.via);
+    connect_racing_probe(&host, port, None, crate::db::redis::ping(config)).await
+}
+
+pub async fn connect_redis(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: RedisConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_redis_ssh(config).await?;
     // Validate credentials/reachability before storing.
-    test_redis_connection(config.clone()).await?;
+    probe_redis(&config).await?;
     close_existing(&state).await;
-    set_conn(&state, Some(ActiveConnection::Redis(config)))
+    set_conn(&state, Some(ActiveConnection::Redis(config)))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
 // ── DuckDB connect / test ──────────────────────────────────────────────────────
@@ -1699,20 +2055,27 @@ pub async fn connect_duckdb(state: Db<'_>, config: DuckdbConfig) -> Result<(), S
 // ── MS SQL Server connect / test ────────────────────────────────────────────────
 
 pub(crate) async fn open_mssql(config: &MssqlConfig) -> Result<MssqlHandle, String> {
-    let client =
-        connect_racing_probe(&config.host, config.port, None, crate::db::mssql::connect(config)).await?;
-    Ok(Arc::new(tokio::sync::Mutex::new(client)))
+    let (host, port) = probe_target(&config.host, config.port, config.via);
+    let client = connect_racing_probe(&host, port, None, crate::db::mssql::connect(config)).await?;
+    let handle = Arc::new(tokio::sync::Mutex::new(client));
+    // So Stop can find this session (see mssql::cancel).
+    crate::db::mssql::remember(&handle, config).await;
+    Ok(handle)
 }
 
 pub async fn test_mssql_connection(config: MssqlConfig) -> Result<(), String> {
+    let (config, _tunnel) = resolve_mssql_ssh(config).await?;
     let handle = open_mssql(&config).await?;
     crate::db::mssql::ping(&handle).await
 }
 
-pub async fn connect_mssql(state: Db<'_>, config: MssqlConfig) -> Result<(), String> {
+pub async fn connect_mssql(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: MssqlConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_mssql_ssh(config).await?;
     let handle = open_mssql(&config).await?;
     close_existing(&state).await;
-    set_conn(&state, Some(ActiveConnection::Mssql(handle)))
+    set_conn(&state, Some(ActiveConnection::Mssql(handle)))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
 // ── Oracle connect / test ───────────────────────────────────────────────────────
@@ -1729,14 +2092,18 @@ pub(crate) async fn open_oracle(config: &OracleConfig) -> Result<OracleHandle, S
 }
 
 pub async fn test_oracle_connection(config: OracleConfig) -> Result<(), String> {
+    let (config, _tunnel) = resolve_oracle_ssh(config).await?;
     let handle = open_oracle(&config).await?;
     crate::db::oracle::ping(&handle).await
 }
 
-pub async fn connect_oracle(state: Db<'_>, config: OracleConfig) -> Result<(), String> {
+pub async fn connect_oracle(state: Db<'_>, tunnel_state: State<'_, TunnelState>, config: OracleConfig) -> Result<(), String> {
+    let (config, tunnel) = resolve_oracle_ssh(config).await?;
     let handle = open_oracle(&config).await?;
     close_existing(&state).await;
-    set_conn(&state, Some(ActiveConnection::Oracle(handle)))
+    set_conn(&state, Some(ActiveConnection::Oracle(handle)))?;
+    tunnel_state.set(tunnel);
+    Ok(())
 }
 
 // ── Disconnect ────────────────────────────────────────────────────────────────
@@ -1765,6 +2132,7 @@ mod tests {
 
     fn pg(ssl: bool, mode: Option<&str>, ca: Option<&str>) -> PgConfig {
         PgConfig {
+            via: None,
             name: "t".into(),
             host: "db.example.com".into(),
             port: 5432,
@@ -1776,7 +2144,62 @@ mod tests {
             ssl_root_cert: ca.map(str::to_string),
             ssh: None,
             timezone: None,
+            params: None,
         }
+    }
+
+    #[test]
+    fn a_pasted_urls_other_parameters_ride_along() {
+        let mut c = pg(true, Some("verify-full"), None);
+        c.params = Some("application_name=stroke&options=endpoint%3Dep-1&sslmode=disable&bad#frag& &=x".into());
+        let url = c.connection_url();
+        assert!(url.ends_with("?sslmode=verify-full&application_name=stroke&options=endpoint%3Dep-1"), "{url}");
+        let opts: PgConnectOptions = url.parse().unwrap();
+        assert_eq!(opts.get_application_name(), Some("stroke"));
+        // No params, no change.
+        assert!(pg(false, None, None).connection_url().ends_with("/shop"));
+    }
+
+    // Live: TLS through an SSH tunnel verifies the server's real name. The
+    // scratch server's certificate names db.stroke.test, which does not even
+    // resolve: only dialing the tunnel while TLS checks that name can work.
+    // Before, the config was rewritten to 127.0.0.1 and verify-full failed.
+    //   STROKE_TEST_SSH=user@127.0.0.1:2222 STROKE_TEST_SSH_KEY=… STROKE_TEST_KNOWN_HOSTS=…
+    //   STROKE_TEST_TLS_PG=127.0.0.1:5544 STROKE_TEST_TLS_CA=/path/ca.crt
+    #[tokio::test]
+    async fn live_tls_through_a_tunnel_verifies_the_real_name() {
+        let (Ok(target), Ok(key), Ok(tls_pg), Ok(ca)) = (
+            std::env::var("STROKE_TEST_SSH"),
+            std::env::var("STROKE_TEST_SSH_KEY"),
+            std::env::var("STROKE_TEST_TLS_PG"),
+            std::env::var("STROKE_TEST_TLS_CA"),
+        ) else {
+            return;
+        };
+        let (user, hostport) = target.split_once('@').unwrap();
+        let (sh, sp) = hostport.split_once(':').unwrap();
+        let (_, pg_port) = tls_pg.split_once(':').unwrap();
+        let mut c = pg(true, Some("verify-full"), Some(&ca));
+        c.host = "db.stroke.test".into();
+        c.port = pg_port.parse().unwrap();
+        c.user = "postgres".into();
+        c.password = String::new();
+        c.database = "postgres".into();
+        // The tunnel forwards to the scratch server; its far end resolves
+        // nothing, it just connects to 127.0.0.1.
+        let ssh = SshConfig { host: sh.into(), port: sp.parse().unwrap(), username: user.into(), private_key_path: key, keepalive: 30, ..Default::default() };
+        let tunnel = SshTunnel::establish(&ssh, "127.0.0.1", c.port).await.unwrap();
+        c.via = Some(std::net::SocketAddr::from(([127, 0, 0, 1], tunnel.local_port)));
+        c.port = tunnel.local_port;
+        let pool = open_pg(&c).await.expect("verify-full against db.stroke.test through the tunnel");
+        let ssl: bool = sqlx::query_scalar("SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()").fetch_one(&pool).await.unwrap();
+        assert!(ssl);
+        // The old way, dialing and verifying 127.0.0.1, is refused.
+        let mut old = c.clone();
+        old.via = None;
+        old.host = "127.0.0.1".into();
+        let err = open_pg(&old).await.err().expect("127.0.0.1 is not the certificate's name");
+        assert!(err.to_lowercase().contains("certificate") || err.to_lowercase().contains("name"), "{err}");
     }
 
     /// A password ending in `%` and a database name with `%`/`#` must reach
@@ -1828,6 +2251,7 @@ mod tests {
 
     fn my(ssl: bool, mode: Option<&str>, ca: Option<&str>) -> MysqlConfig {
         MysqlConfig {
+            via: None,
             name: "t".into(),
             host: "db.example.com".into(),
             port: 3306,

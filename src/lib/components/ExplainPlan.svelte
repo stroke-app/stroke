@@ -11,10 +11,12 @@
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import {
     normalizePlan, annotatePlan, planInsights, describeNode, CONDITION_KEYS, conditionText, fmtMs, fmtCount, planText,
+    planOutline, foldLabel,
   } from '$lib/explain-plan.js'
 
   /** @typedef {{ plan: object, planningTime: number, executionTime: number, driver: string }} ExplainResult */
   /** @typedef {import('$lib/explain-plan.js').PlanNode} PlanNode */
+  /** @typedef {import('$lib/explain-plan.js').PlanFold} PlanFold */
 
   /**
    * @type {{
@@ -70,20 +72,37 @@
   }
   const ROW_H = $derived(Math.max(...a.nodes.map(cardH), 60) + ROW_GAP)
 
-  /** @typedef {{ n: PlanNode, col: number, row: number }} Placed */
+  // Wide steps (an Append over hundreds of partitions) draw the children that
+  // ran and fold the rest into one card; `expanded` holds the ones opened.
+  let expanded = $state(/** @type {Set<string>} */ (new Set()))
+  $effect(() => { void plan; untrack(() => { expanded = new Set() }) })
+  const outline = $derived(planOutline(a.root, expanded))
+  /** @param {string} parentId */
+  function toggleFold(parentId) {
+    const next = new Set(expanded)
+    if (next.has(parentId)) next.delete(parentId)
+    else next.add(parentId)
+    expanded = next
+  }
+  const FOLD_H = 32
+
+  /** @typedef {{ id: string, parentId: string | null, n: PlanNode | null, fold: PlanFold | null, col: number, row: number }} Placed */
   const layout = $derived.by(() => {
     /** @type {Map<string, Placed>} */
     const at = new Map()
     let leaf = 0
-    /** @param {PlanNode} n @returns {Placed} */
-    const lay = (n) => {
-      if (!n.children.length) {
-        const p = { n, col: 0, row: leaf++ }
-        at.set(n.id, p)
+    /** @param {PlanNode | PlanFold} item @returns {Placed} */
+    const lay = (item) => {
+      if ('kind' in item && item.kind === 'fold') {
+        const p = { id: item.id, parentId: item.parentId, n: null, fold: item, col: 0, row: leaf++ }
+        at.set(p.id, p)
         return p
       }
-      const kids = n.children.map(lay)
-      const p = { n, col: Math.max(...kids.map((k) => k.col)) + 1, row: (Math.min(...kids.map((k) => k.row)) + Math.max(...kids.map((k) => k.row))) / 2 }
+      const n = /** @type {PlanNode} */ (item)
+      const kids = (outline.childrenOf.get(n.id) ?? []).map(lay)
+      const p = kids.length
+        ? { id: n.id, parentId: n.parentId, n, fold: null, col: Math.max(...kids.map((k) => k.col)) + 1, row: (Math.min(...kids.map((k) => k.row)) + Math.max(...kids.map((k) => k.row))) / 2 }
+        : { id: n.id, parentId: n.parentId, n, fold: null, col: 0, row: leaf++ }
       at.set(n.id, p)
       return p
     }
@@ -91,11 +110,13 @@
     return at
   })
   const placed = $derived([...layout.values()])
+  const placedNodes = $derived(placed.filter((p) => p.n))
+  const placedFolds = $derived(placed.filter((p) => p.fold))
   const maxCol = $derived(placed.reduce((m, p) => Math.max(m, p.col), 0))
   const maxRow = $derived(placed.reduce((m, p) => Math.max(m, p.row), 0))
   const px = (/** @type {Placed} */ p) => PAD + p.col * (NODE_W + COL_GAP)
   const py = (/** @type {Placed} */ p) => PAD + p.row * ROW_H
-  const cy = (/** @type {Placed} */ p) => py(p) + cardH(p.n) / 2
+  const cy = (/** @type {Placed} */ p) => py(p) + (p.n ? cardH(p.n) : FOLD_H) / 2
   const qrX = $derived(PAD + (maxCol + 1) * (NODE_W + COL_GAP))
   const canvasW = $derived(qrX + QR_W + PAD)
   const canvasH = $derived(PAD * 2 + (maxRow + 1) * ROW_H)
@@ -104,7 +125,7 @@
     const r = n.actualRows ?? n.planRows ?? 1
     return Math.min(6, 1.25 + Math.log10(Math.max(1, r)) * 0.8)
   }
-  const edges = $derived(placed.filter((p) => p.n.parentId).map((p) => ({ from: p, to: /** @type {Placed} */ (layout.get(/** @type {string} */ (p.n.parentId))) })))
+  const edges = $derived(placed.filter((p) => p.parentId).map((p) => ({ from: p, to: /** @type {Placed} */ (layout.get(/** @type {string} */ (p.parentId))) })))
   /** @param {Placed} f @param {Placed} t */
   const edgeD = (f, t) => {
     const x1 = px(f) + NODE_W, y1 = cy(f), x2 = px(t), y2 = cy(t), mx = (x1 + x2) / 2
@@ -115,15 +136,24 @@
   let panX = $state(0)
   let panY = $state(0)
   let panning = $state(false)
-  let start = { x: 0, y: 0, px: 0, py: 0, moved: false }
+  // State: the grabbing cursor reads `start.moved`, and as a plain object it
+  // never switched while the plan was dragged.
+  let start = $state({ x: 0, y: 0, px: 0, py: 0, moved: false })
   let cw = $state(0)
   let ch = $state(0)
 
-  function fit() {
+  /** The smallest first view whose step text still reads. */
+  const MIN_FIT = 0.75
+  /** @param {boolean} [whole] the Fit button: the whole plan, however small */
+  function fit(whole = false) {
     if (!cw || !ch) return
     const s = Math.min(1, (cw - 16) / canvasW, (ch - 16) / canvasH)
-    scale = Math.max(0.2, s)
-    panX = (cw - canvasW * scale) / 2
+    // A plan wider than the pane used to shrink until it fit: four steps in
+    // the results-beside pane came out at 27%, text a few pixels tall. Below
+    // the floor, open readable at the leaves (the left, where the plan
+    // starts) and let the pane pan; zoom out still shows the whole of it.
+    scale = Math.max(whole ? 0.2 : MIN_FIT, s)
+    panX = canvasW * scale <= cw ? (cw - canvasW * scale) / 2 : 8
     panY = Math.max(8, (ch - canvasH * scale) / 2)
   }
   /** @param {number} next @param {number} [ox] @param {number} [oy] */
@@ -138,7 +168,7 @@
     const p = plan, w = cw, h = ch, v = view
     if (!p || !w || !h || v !== 'diagram' || p === fittedFor) return
     fittedFor = p
-    untrack(fit)
+    untrack(() => fit())
   })
 
   /** @param {PointerEvent} e */
@@ -239,8 +269,11 @@
 
 <div class="flex h-full min-h-0 w-full flex-col">
   <!-- Summary -->
-  <div class="flex h-10 shrink-0 items-center gap-3 border-b border-border/50 px-3">
-    <div class="flex min-w-0 flex-1 items-center gap-3 overflow-hidden text-ui-xs text-muted-foreground">
+  <!-- A size container: in the results-beside pane the controls on the right
+       squeezed the summary until "Measured" read "Measur". Narrow, the stats
+       and Ask AI's label give way first. -->
+  <div class="@container/xp flex h-10 shrink-0 items-center gap-3 border-b border-border/50 px-3">
+    <div class="flex min-w-0 flex-1 items-center gap-3 overflow-hidden text-ui-xs text-muted-foreground [&>*:not(:first-child)]:@max-[34rem]/xp:hidden">
       <span class="shrink-0 font-medium text-foreground">{a.analyzed ? 'Measured' : 'Estimated'}</span>
       <span class="h-3 w-px shrink-0 bg-border"></span>
       {#if result?.executionTime > 0}
@@ -285,7 +318,7 @@
       </DropdownMenu.Root>
       {#if onaskai}
         <button type="button" class="inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={askAi}>
-          <Icon name="sparkles" class="size-3.5 shrink-0" />Ask AI
+          <Icon name="sparkles" class="size-3.5 shrink-0" /><span class="@max-[34rem]/xp:sr-only">Ask AI</span>
         </button>
       {/if}
     </div>
@@ -302,7 +335,7 @@
           <span class={cn('size-1.5 shrink-0 rounded-full', sevTone[ins.severity])}></span>
           <span class="shrink-0 text-ui-xs text-foreground">{ins.title}</span>
           <span class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">{ins.detail}</span>
-          {#if ins.nodeId}<Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground/60" />{/if}
+          {#if ins.nodeId}<Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />{/if}
         </button>
       {/each}
       {#if insights.length > 3}
@@ -333,9 +366,10 @@
           <div class="pointer-events-none absolute inset-0 text-border/40" style="background-image: radial-gradient(circle, currentColor 1px, transparent 1px); background-size: {22 * scale}px {22 * scale}px; background-position: {panX}px {panY}px"></div>
           <div class="absolute top-0 left-0" style="width:{canvasW}px;height:{canvasH}px;transform:translate({panX}px,{panY}px) scale({scale});transform-origin:0 0">
             <svg class="pointer-events-none absolute inset-0 overflow-visible" width={canvasW} height={canvasH}>
-              {#each edges as e (e.from.n.id)}
-                <path d={edgeD(e.from, e.to)} fill="none" stroke="currentColor" stroke-linecap="round" stroke-width={edgeW(e.from.n)}
-                  class={cn('transition-colors', selectedId && (selectedId === e.from.n.id || selectedId === e.to.n.id) ? 'text-foreground/35' : 'text-border')} />
+              {#each edges as e (e.from.id)}
+                <path d={edgeD(e.from, e.to)} fill="none" stroke="currentColor" stroke-linecap="round" stroke-width={e.from.n ? edgeW(e.from.n) : 1}
+                  stroke-dasharray={e.from.fold ? '3 4' : undefined}
+                  class={cn('transition-colors', selectedId && (selectedId === e.from.id || selectedId === e.to.id) ? 'text-foreground/35' : 'text-border')} />
               {/each}
               {#if a.root && layout.get(a.root.id)}
                 {@const r = /** @type {Placed} */ (layout.get(a.root.id))}
@@ -343,14 +377,29 @@
               {/if}
             </svg>
 
-            {#each placed as p (p.n.id)}
-              {@const n = p.n}
+            {#each placedFolds as p (p.id)}
+              {@const f = /** @type {PlanFold} */ (p.fold)}
+              <button
+                type="button"
+                style="left:{px(p)}px;top:{py(p)}px;width:{NODE_W}px;height:{FOLD_H}px"
+                class="absolute flex items-center gap-1.5 rounded-lg border border-dashed border-border px-3 text-left text-ui-2xs text-muted-foreground transition-colors hover:border-foreground/25 hover:text-foreground"
+                onpointerdown={(e) => e.stopPropagation()}
+                onclick={() => toggleFold(f.parentId)}
+                aria-expanded={f.expanded}
+              >
+                <Icon name={f.expanded ? 'chevrons-down-up' : 'chevrons-up-down'} class="size-3 shrink-0" />
+                <span class="truncate">{foldLabel(f)}</span>
+              </button>
+            {/each}
+
+            {#each placedNodes as p (p.id)}
+              {@const n = /** @type {PlanNode} */ (p.n)}
               {@const sel = selectedId === n.id}
               <div
                 data-plan-node={n.id}
                 style="left:{px(p)}px;top:{py(p)}px;width:{NODE_W}px;height:{cardH(n)}px"
                 class={cn(
-                  'absolute flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-card shadow-sm transition-[border-color,box-shadow] duration-150',
+                  'absolute flex cursor-pointer flex-col overflow-hidden rounded-lg border bg-card transition-[border-color,box-shadow] duration-150',
                   sel ? 'border-foreground/40 ring-1 ring-foreground/15' : 'border-border/70 hover:border-foreground/25',
                 )}
               >
@@ -400,7 +449,7 @@
 
         <div class="absolute right-3 bottom-3 flex items-center gap-0.5 rounded-lg border border-border/60 bg-popover p-0.5">
           <button type="button" class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Zoom out" onclick={() => zoomTo(scale / 1.2)}><Icon name="minus" class="size-3.5 shrink-0" /></button>
-          <button type="button" class="h-7 min-w-11 rounded-md px-1 text-ui-2xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground" title="Fit" onclick={fit}>{Math.round(scale * 100)}%</button>
+          <button type="button" class="h-7 min-w-11 rounded-md px-1 text-ui-2xs tabular-nums text-muted-foreground hover:bg-accent hover:text-foreground" title="Fit the whole plan" onclick={() => fit(true)}>{Math.round(scale * 100)}%</button>
           <button type="button" class="flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Zoom in" onclick={() => zoomTo(scale * 1.2)}><Icon name="plus" class="size-3.5 shrink-0" /></button>
         </div>
       {:else}
@@ -416,7 +465,24 @@
               </tr>
             </thead>
             <tbody>
-              {#each a.nodes as n (n.id)}
+              {#each outline.entries as entry (entry.kind === 'fold' ? entry.id : entry.node.id)}
+                {#if entry.kind === 'fold'}
+                  <tr class="h-8 border-b border-border/30">
+                    <td colspan="5" class="px-3">
+                      <button
+                        type="button"
+                        class="flex items-center gap-1.5 rounded text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
+                        style="padding-left:{entry.depth * 16}px"
+                        onclick={() => toggleFold(entry.parentId)}
+                        aria-expanded={entry.expanded}
+                      >
+                        <Icon name={entry.expanded ? 'chevrons-down-up' : 'chevrons-up-down'} class="size-3 shrink-0" />
+                        {foldLabel(entry)}
+                      </button>
+                    </td>
+                  </tr>
+                {:else}
+                {@const n = entry.node}
                 <tr
                   class={cn('h-8 cursor-pointer border-b border-border/30 transition-colors', selectedId === n.id ? 'bg-muted/60' : 'hover:bg-muted/30')}
                   onclick={() => (selectedId = selectedId === n.id ? null : n.id)}
@@ -439,6 +505,7 @@
                     </div>
                   </td>
                 </tr>
+                {/if}
               {/each}
             </tbody>
           </table>

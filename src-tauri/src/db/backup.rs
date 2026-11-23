@@ -487,6 +487,24 @@ impl InsertBatcher {
 
 /// Double-quoted identifier (Postgres / SQLite).
 fn qi(s: &str) -> String { format!("\"{}\"", s.replace('"', "\"\"")) }
+
+/// `CREATE EXTENSION` that cannot sink a restore: inside its own block, so a
+/// target without the extension (or a role not allowed to add it) logs a
+/// warning and the script goes on. CASCADE brings what it requires.
+fn pg_create_extension_guarded(name: &str, schema: Option<&str>) -> String {
+    let in_schema = match schema {
+        Some(s) if s != "public" => format!("CREATE SCHEMA IF NOT EXISTS {}; ", qi(s)),
+        _ => String::new(),
+    };
+    let with = schema.map(|s| format!(" WITH SCHEMA {}", qi(s))).unwrap_or_default();
+    format!(
+        "DO $$ BEGIN {in_schema}CREATE EXTENSION IF NOT EXISTS {}{with} CASCADE; \
+         EXCEPTION WHEN OTHERS THEN RAISE WARNING 'extension {} was not created: %', SQLERRM; END $$;\n",
+        qi(name),
+        name.replace('\'', "''"),
+    )
+}
+
 /// Schema-qualified double-quoted name.
 fn qn(schema: &str, name: &str) -> String { format!("{}.{}", qi(schema), qi(name)) }
 /// Backtick identifier (MySQL).
@@ -639,6 +657,10 @@ async fn export_into(
         ActiveConnection::LibSql(cfg) => export_d1(rep, Remote::LibSql(&cfg), tables.as_deref(), opts, out).await,
         ActiveConnection::Clickhouse(_) => Err("Backup export is not supported for ClickHouse connections".to_string()),
         ActiveConnection::Posthog(_) => Err("Backup is not supported for PostHog".to_string()),
+        c @ (ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_)) => {
+            let eng = SqlEngine::of(&c).ok_or("Not an API engine")?;
+            export_api_sql(rep, &eng, schema.as_deref(), tables.as_deref(), opts, out).await
+        }
         ActiveConnection::Redis(_) => Err("Backup is not supported on Redis".to_string()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Backup is not supported on DynamoDB".to_string()),
         ActiveConnection::Duckdb(h) => export_duckdb(rep, &h, out).await,
@@ -672,6 +694,10 @@ pub async fn backup_import(
         ActiveConnection::LibSql(cfg) => import_d1(&rep, Remote::LibSql(&cfg), &script).await,
         ActiveConnection::Clickhouse(_) => Err("Backup import is not supported for ClickHouse connections".to_string()),
         ActiveConnection::Posthog(_) => Err("Backup is not supported for PostHog".to_string()),
+        c @ (ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_)) => {
+            let eng = SqlEngine::of(&c).ok_or("Not an API engine")?;
+            import_api_sql(&rep, &eng, &script).await
+        }
         ActiveConnection::Redis(_) => Err("Backup is not supported on Redis".to_string()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Backup is not supported on DynamoDB".to_string()),
         ActiveConnection::Duckdb(h) => import_duckdb(&rep, &h, &script).await,
@@ -1525,6 +1551,28 @@ async fn export_postgres(
     }
     out.push('\n');
 
+    // ── Extensions ── Before anything that uses them: a column defaulting to
+    // uuid_generate_v4() needs uuid-ossp, a geometry column needs PostGIS.
+    // Without these a restore into a fresh database (an RDS instance, say)
+    // failed on every such table and rolled back. Each is guarded, so one the
+    // target cannot install is a warning, not a failed restore; the objects
+    // the extension owns are left out below, since it brings them itself.
+    let res = sqlx::query_as::<_, (String, String)>(
+        "SELECT e.extname::text, n.nspname::text \
+         FROM pg_catalog.pg_extension e \
+         JOIN pg_catalog.pg_namespace n ON n.oid = e.extnamespace \
+         WHERE e.extname <> 'plpgsql' ORDER BY e.oid"
+    )
+    .fetch_all(pool).await;
+    let exts = catalog_or_warn(res, rep, out, "extensions");
+    if !exts.is_empty() {
+        out.push_str("-- Extensions\n");
+        for (name, schema) in &exts {
+            out.push_str(&pg_create_extension_guarded(name, Some(schema)));
+        }
+        out.push('\n');
+    }
+
     // ── Catalog: one query per object kind for every schema at once. Per-table
     // lookups cost three round trips a table, which on a far host is seconds.
     let tables = pg_load_tables(pool, &schemas, table_filter).await?;
@@ -1540,6 +1588,7 @@ async fn export_postgres(
              JOIN pg_catalog.pg_enum e ON e.enumtypid = t.oid \
              JOIN pg_catalog.pg_namespace n ON n.oid = t.typnamespace \
              WHERE n.nspname = ANY($1) \
+               AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.pg_type'::regclass AND d.objid = t.oid AND d.deptype = 'e') \
              GROUP BY n.nspname, t.typname ORDER BY 1, 2"
         )
         .bind(&schemas).fetch_all(pool).await;
@@ -1575,6 +1624,8 @@ async fn export_postgres(
             LEFT JOIN pg_catalog.pg_namespace dn ON dn.oid = dt.relnamespace
             LEFT JOIN pg_catalog.pg_attribute da ON da.attrelid = d.refobjid AND da.attnum = d.refobjsubid
             WHERE s.schemaname = ANY($1)
+              AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend xd
+                              WHERE xd.classid = 'pg_catalog.pg_class'::regclass AND xd.objid = sc.oid AND xd.deptype = 'e')
             ORDER BY 1, 2
             "#,
         )
@@ -1690,6 +1741,7 @@ async fn export_postgres(
              FROM pg_catalog.pg_class c \
              JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
              WHERE n.nspname = ANY($1) AND c.relkind = 'v' \
+               AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e') \
              ORDER BY 1, 2"
         )
         .bind(&schemas).fetch_all(pool).await;
@@ -1762,6 +1814,7 @@ async fn pg_load_tables(pool: &sqlx::PgPool, schemas: &[String], filter: Option<
          FROM pg_catalog.pg_class c \
          JOIN pg_catalog.pg_namespace n ON n.oid = c.relnamespace \
          WHERE n.nspname = ANY($1) AND c.relkind = 'r' AND NOT c.relispartition \
+           AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend d WHERE d.classid = 'pg_catalog.pg_class'::regclass AND d.objid = c.oid AND d.deptype = 'e') \
          ORDER BY 1, 2"
     )
     .bind(schemas).fetch_all(pool).await.map_err(|e| e.to_string())?;
@@ -2019,6 +2072,77 @@ fn pg_batchable(low: &str) -> bool {
         && !(low.starts_with("create unique index concurrently"))
 }
 
+/// What a script's DDL calls or declares, and the extension that provides it.
+/// Matched against lowercased DDL only, never row data.
+const SCRIPT_EXTENSIONS: &[(&str, &[&str])] = &[
+    ("uuid-ossp", &["uuid_generate_v1", "uuid_generate_v3", "uuid_generate_v4", "uuid_generate_v5", "uuid_nil()"]),
+    ("pgcrypto", &["gen_salt(", "pgp_sym_encrypt", "pgp_sym_decrypt", "hmac("]),
+    ("citext", &[" citext", ".citext", "\"citext\""]),
+    ("hstore", &[" hstore", ".hstore", "\"hstore\""]),
+    ("postgis", &["geometry(", "geography(", ".geometry", ".geography", " geometry,", " geometry\n", " geometry not null", " geography,"]),
+    ("pg_trgm", &["gin_trgm_ops", "gist_trgm_ops"]),
+    ("vector", &[" vector(", ".vector(", "vector_cosine_ops", "vector_l2_ops", "vector_ip_ops"]),
+    ("ltree", &[" ltree", ".ltree"]),
+    ("unaccent", &["unaccent("]),
+];
+
+/// Most a script's head is scanned for DDL when it has no COPY block to stop at.
+const EXT_SCAN_MAX: usize = 64 * 1024 * 1024;
+
+/// Extensions a backup relies on, created before it runs when the target
+/// lacks them.
+///
+/// A backup made before Stroke wrote extensions into its scripts (or by a
+/// tool that leaves them out) restored into a fresh database - a new RDS
+/// database, say - failed on every table defaulting to uuid_generate_v4():
+/// "function uuid_generate_v4() does not exist", 93 failures, rolled back.
+/// The DDL says which extensions it needs, so this reads it (the part before
+/// the first COPY block and after the last; the rows in between are never
+/// scanned) and adds what is missing. Each in a savepoint: one the server or
+/// the role will not allow is a warning naming the fix, and the restore goes
+/// on to report the real failures.
+async fn pg_ensure_script_extensions(conn: &mut sqlx::PgConnection, sql: &str, rep: &Reporter) {
+    let floor = |i: usize| { let mut i = i.min(sql.len()); while !sql.is_char_boundary(i) { i -= 1; } i };
+    let head_end = sql.find("\nCOPY ").unwrap_or_else(|| floor(EXT_SCAN_MAX));
+    let mut ddl = sql[..head_end].to_ascii_lowercase();
+    if let Some(i) = sql.rfind("\n\\.\n") {
+        if i > head_end {
+            let start = floor(i.max(sql.len().saturating_sub(EXT_SCAN_MAX)));
+            ddl.push_str(&sql[start..].to_ascii_lowercase());
+        }
+    }
+    let mut wanted: Vec<&str> = SCRIPT_EXTENSIONS
+        .iter()
+        .filter(|(_, needles)| needles.iter().any(|n| ddl.contains(n)))
+        .map(|(name, _)| *name)
+        .collect();
+    // Built into Postgres 13 and later; from pgcrypto before that.
+    if ddl.contains("gen_random_uuid") {
+        let builtin: Option<bool> = sqlx::Executor::fetch_one(&mut *conn, "SELECT to_regproc('gen_random_uuid') IS NOT NULL")
+            .await.ok().and_then(|r| r.try_get::<bool, _>(0).ok());
+        if builtin == Some(false) && !wanted.contains(&"pgcrypto") { wanted.push("pgcrypto"); }
+    }
+    for name in wanted {
+        // A name from SCRIPT_EXTENSIONS, quoted as a literal: no bind needed.
+        let probe = format!("SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_extension WHERE extname = {})", ql(name));
+        let have: Option<bool> = sqlx::Executor::fetch_one(&mut *conn, probe.as_str())
+            .await.ok().and_then(|r| r.try_get::<bool, _>(0).ok());
+        if have != Some(false) { continue; }
+        let create = format!("SAVEPOINT stroke_ext; CREATE EXTENSION IF NOT EXISTS {} CASCADE; RELEASE SAVEPOINT stroke_ext", qi(name));
+        match sqlx::Executor::execute(&mut *conn, create.as_str()).await {
+            Ok(_) => rep.log("info", format!("Added the {name} extension, which this backup's tables use.")),
+            Err(e) => {
+                let _ = sqlx::Executor::execute(&mut *conn, "ROLLBACK TO SAVEPOINT stroke_ext; RELEASE SAVEPOINT stroke_ext").await;
+                let msg = e.to_string();
+                let msg = msg.strip_prefix("error returned from database: ").unwrap_or(&msg);
+                rep.log("warn", format!(
+                    "This backup uses the {name} extension, which could not be added ({msg}). An admin can run CREATE EXTENSION \"{name}\"; on the target, then restore again."
+                ));
+            }
+        }
+    }
+}
+
 async fn import_postgres(rep: &Reporter, pool: &sqlx::PgPool, sql: &str) -> Result<ImportResult, String> {
     let started = Instant::now();
     rep.log("info", "Starting restore…");
@@ -2036,6 +2160,7 @@ async fn import_postgres(rep: &Reporter, pool: &sqlx::PgPool, sql: &str) -> Resu
     {
         (&mut *conn).execute("ROLLBACK TO SAVEPOINT stroke_rr; RELEASE SAVEPOINT stroke_rr").await.ok();
     }
+    pg_ensure_script_extensions(&mut conn, sql, rep).await;
 
     let mut run = Runner::new(rep, sql.len());
     let mut sp = Splitter::new(sql, Escapes::Standard);
@@ -2177,6 +2302,9 @@ async fn export_mysql(
 
     out.push_str(&backup_header("MySQL", schema_filter));
     out.push_str("SET NAMES utf8mb4;\nSET FOREIGN_KEY_CHECKS=0;\nSET UNIQUE_CHECKS=0;\nSET AUTOCOMMIT=0;\n\n");
+    // SHOW CREATE for views, routines and triggers on a connection with
+    // ANSI_QUOTES off, so the dump uses backticks (see backtick_conn).
+    let mut ddl_conn = super::mysql::backtick_conn(pool).await?;
 
     // Every table up front, for the progress plan.
     let mut by_schema: Vec<(String, Vec<(String, Option<i64>)>)> = Vec::new();
@@ -2238,7 +2366,7 @@ async fn export_mysql(
             if !view_names.is_empty() {
                 out.push_str("-- Views\n");
                 for view in &view_names {
-                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE VIEW {}.{}", qb(schema), qb(view))).fetch_one(pool).await {
+                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE VIEW {}.{}", qb(schema), qb(view))).fetch_one(&mut ddl_conn).await {
                         let create = super::mysql::my_text(&row, 1).unwrap_or_default();
                         out.push_str(&create.replacen("CREATE ", "CREATE OR REPLACE ", 1));
                         out.push_str(";\n");
@@ -2260,7 +2388,7 @@ async fn export_mysql(
                 out.push_str("-- Functions & Procedures\nDELIMITER //\n");
                 for (name, rtype) in &routines {
                     let keyword = if rtype == "FUNCTION" { "FUNCTION" } else { "PROCEDURE" };
-                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE {keyword} {}.{}", qb(schema), qb(name))).fetch_one(pool).await {
+                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE {keyword} {}.{}", qb(schema), qb(name))).fetch_one(&mut ddl_conn).await {
                         let create = super::mysql::my_text(&row, 2).unwrap_or_default();
                         out.push_str(&create);
                         out.push_str("//\n\n");
@@ -2283,7 +2411,7 @@ async fn export_mysql(
             if !triggers.is_empty() {
                 out.push_str("-- Triggers\nDELIMITER //\n");
                 for (trig, _) in &triggers {
-                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE TRIGGER {}.{}", qb(schema), qb(trig))).fetch_one(pool).await {
+                    if let Ok(row) = sqlx::query(&format!("SHOW CREATE TRIGGER {}.{}", qb(schema), qb(trig))).fetch_one(&mut ddl_conn).await {
                         let create = super::mysql::my_text(&row, 2).unwrap_or_default();
                         out.push_str(&create);
                         out.push_str("//\n\n");
@@ -2380,8 +2508,10 @@ async fn my_dump_table(
     let mut conn = pool.acquire().await.map_err(|e| e.to_string())?;
 
     if opts.include_schema {
+        // Backticks, whatever the pool's ANSI_QUOTES (see backtick_conn).
+        let mut ddl = super::mysql::backtick_conn(pool).await?;
         let row = sqlx::query(&format!("SHOW CREATE TABLE {}.{}", qb(schema), qb(table)))
-            .fetch_one(&mut *conn).await
+            .fetch_one(&mut ddl).await
             .map_err(|e| format!("SHOW CREATE TABLE failed: {e}"))?;
         let create_sql = super::mysql::my_text(&row, 1).unwrap_or_default();
         chunk.put_str(&create_sql.replacen("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS ", 1));
@@ -2924,10 +3054,577 @@ async fn import_mssql(
     Ok(finish_import(rep, run.total, run.ok, run.errors, started))
 }
 
+// ── Spanner, BigQuery, Snowflake and ODBC ──────────────────────────────────
+//
+// These answer over an API or a driver rather than a wire protocol with a dump
+// tool, so the backup is built from what every driver already has: the table
+// list, each table's own DDL, and its rows read page by page through the grid's
+// reader (for BigQuery that is tabledata.list, which runs no query and bills
+// nothing). Rows are written as INSERTs in the engine's own literal syntax, and
+// a restore runs the script back statement by statement through the driver.
+
+/// How an engine writes a literal.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum LitStyle {
+    /// Standard SQL: '' inside strings.
+    Ansi,
+    /// Standard SQL, but 1 and 0 for booleans (SQL Server, Oracle, Sybase ...).
+    AnsiNumericBool,
+    /// GoogleSQL (Spanner, BigQuery): backslash escapes, typed JSON and arrays.
+    GoogleSql,
+    /// Snowflake: semi-structured values through PARSE_JSON.
+    Snowflake,
+    /// MySQL and MariaDB through ODBC: a backslash in a string is an escape.
+    MySql,
+}
+
+pub(crate) enum SqlEngine {
+    Spanner(super::spanner::SpannerHandle),
+    Bigquery(super::bigquery::BigQueryHandle),
+    Snowflake(super::snowflake::SnowflakeHandle),
+    Odbc(super::odbc::OdbcHandle),
+}
+
+impl SqlEngine {
+    pub(crate) fn of(conn: &ActiveConnection) -> Option<Self> {
+        Some(match conn {
+            ActiveConnection::Spanner(h) => Self::Spanner(h.clone()),
+            ActiveConnection::Bigquery(h) => Self::Bigquery(h.clone()),
+            ActiveConnection::Snowflake(h) => Self::Snowflake(h.clone()),
+            ActiveConnection::Odbc(h) => Self::Odbc(h.clone()),
+            _ => return None,
+        })
+    }
+
+    pub(crate) fn label(&self) -> String {
+        match self {
+            Self::Spanner(_) => "Spanner".into(),
+            Self::Bigquery(_) => "BigQuery".into(),
+            Self::Snowflake(_) => "Snowflake".into(),
+            Self::Odbc(h) => format!("ODBC ({})", h.info.dbms),
+        }
+    }
+
+    pub(crate) fn style(&self) -> LitStyle {
+        match self {
+            Self::Spanner(h) if h.dialect == super::spanner::Dialect::Postgres => LitStyle::Ansi,
+            Self::Spanner(_) | Self::Bigquery(_) => LitStyle::GoogleSql,
+            Self::Snowflake(_) => LitStyle::Snowflake,
+            Self::Odbc(h) => {
+                let d = h.info.dbms.to_ascii_lowercase();
+                if d.contains("mysql") || d.contains("mariadb") {
+                    return LitStyle::MySql;
+                }
+                if ["sql server", "oracle", "sybase", "adaptive server", "informix", "teradata", "access"].iter().any(|w| d.contains(w)) {
+                    LitStyle::AnsiNumericBool
+                } else {
+                    LitStyle::Ansi
+                }
+            }
+        }
+    }
+
+    pub(crate) fn quote(&self, id: &str) -> String {
+        match self {
+            Self::Spanner(h) => super::spanner::quote_ident(h, id),
+            Self::Bigquery(_) => qb(id),
+            Self::Snowflake(_) => super::snowflake::quote(id),
+            Self::Odbc(h) => super::odbc::quote(&h.info, id),
+        }
+    }
+
+    /// The table as a restore writes it: without the project or database, so
+    /// the script loads into whichever one it is run against.
+    pub(crate) fn table_ref(&self, schema: &str, table: &str) -> String {
+        match self {
+            Self::Spanner(h) => super::spanner::table_ref(h, schema, table),
+            Self::Bigquery(_) => format!("{}.{}", qb(schema), qb(table)),
+            Self::Snowflake(_) => format!("{}.{}", super::snowflake::quote(schema), super::snowflake::quote(table)),
+            Self::Odbc(h) => super::odbc::table_ref(&h.info, schema, table),
+        }
+    }
+
+    pub(crate) async fn schemas(&self) -> Result<Vec<String>, String> {
+        match self {
+            Self::Spanner(h) => super::spanner::list_schemas(h).await,
+            Self::Bigquery(h) => super::bigquery::list_schemas(h).await,
+            Self::Snowflake(h) => super::snowflake::list_schemas(h).await,
+            Self::Odbc(h) => super::odbc::list_schemas(h).await,
+        }
+    }
+
+    async fn tables(&self, schema: &str) -> Result<Vec<super::schema::TableInfo>, String> {
+        match self {
+            Self::Spanner(h) => super::spanner::list_tables(h, schema).await,
+            Self::Bigquery(h) => super::bigquery::list_tables(h, schema).await,
+            Self::Snowflake(h) => super::snowflake::list_tables(h, schema).await,
+            Self::Odbc(h) => super::odbc::list_tables(h, schema).await,
+        }
+    }
+
+    pub(crate) async fn columns(&self, schema: &str, table: &str) -> Result<Vec<super::schema::ColumnStructureRow>, String> {
+        match self {
+            Self::Spanner(h) => super::spanner::get_column_structure(h, schema, table).await,
+            Self::Bigquery(h) => super::bigquery::get_column_structure(h, schema, table).await,
+            Self::Snowflake(h) => super::snowflake::get_column_structure(h, schema, table).await,
+            Self::Odbc(h) => super::odbc::get_column_structure(h, schema, table).await,
+        }
+    }
+
+    async fn ddl(&self, schema: &str, table: &str) -> Result<String, String> {
+        let ddl = match self {
+            Self::Spanner(h) => super::spanner::get_ddl(h, schema, table).await?,
+            Self::Bigquery(h) => {
+                // INFORMATION_SCHEMA writes `project.dataset.table`: drop the
+                // project so the script restores into any project.
+                let p = h.project_id.trim();
+                super::bigquery::get_ddl(h, schema, table).await?.replace(&format!("`{p}`."), "").replace(&format!("`{p}."), "`")
+            }
+            Self::Snowflake(h) => super::snowflake::get_ddl(h, schema, table).await?,
+            Self::Odbc(h) => super::odbc::get_ddl(h, schema, table).await?,
+        };
+        Ok(ddl)
+    }
+
+    async fn page(&self, schema: &str, table: &str, limit: i64, offset: i64) -> Result<super::query::TableRows, String> {
+        match self {
+            Self::Spanner(h) => super::spanner::get_table_rows(h, schema, table, limit, offset, None, None, None, None).await,
+            Self::Bigquery(h) => super::bigquery::get_table_rows(h, schema, table, limit, offset, None, None, None, None).await,
+            Self::Snowflake(h) => super::snowflake::get_table_rows(h, schema, table, limit, offset, None, None, None, None).await,
+            Self::Odbc(h) => super::odbc::get_table_rows(h, schema, table, limit, offset, None, None, None, None).await,
+        }
+    }
+
+    pub(crate) async fn exec(&self, sql: &str) -> Result<(), String> {
+        match self {
+            Self::Spanner(h) => super::spanner::query(h, sql).await.map(|_| ()),
+            Self::Bigquery(h) => super::bigquery::query(h, sql).await.map(|_| ()),
+            Self::Snowflake(h) => super::snowflake::query(h, sql).await.map(|_| ()),
+            Self::Odbc(h) => super::odbc::query(h, sql).await.map(|_| ()),
+        }
+    }
+
+    /// Whether this engine's grid pages are ordered (by primary key, or by
+    /// BigQuery's storage order) so that reading page after page never skips
+    /// or repeats a row.
+    fn pages_are_stable(&self, has_key: bool) -> bool {
+        matches!(self, Self::Bigquery(_) | Self::Spanner(_)) || has_key
+    }
+}
+
+fn base_type_of(ty: &str) -> String {
+    ty.trim().to_ascii_uppercase().split(['(', '<', ' ']).next().unwrap_or("").to_string()
+}
+
+/// A string literal in the engine's syntax.
+fn str_lit(s: &str, style: LitStyle) -> String {
+    match style {
+        LitStyle::GoogleSql => {
+            let mut out = String::with_capacity(s.len() + 2);
+            out.push('\'');
+            for c in s.chars() {
+                match c {
+                    '\\' => out.push_str("\\\\"),
+                    '\'' => out.push_str("\\'"),
+                    '\n' => out.push_str("\\n"),
+                    '\r' => out.push_str("\\r"),
+                    '\t' => out.push_str("\\t"),
+                    c => out.push(c),
+                }
+            }
+            out.push('\'');
+            out
+        }
+        LitStyle::Snowflake | LitStyle::MySql => format!("'{}'", s.replace('\\', "\\\\").replace('\'', "''")),
+        _ => ql(s),
+    }
+}
+
+/// Field names of a `STRUCT<a INT64, b STRING>` type, top level only.
+fn struct_fields(ty: &str) -> Vec<String> {
+    let Some(inner) = ty.trim().strip_prefix("STRUCT<").and_then(|r| r.strip_suffix('>')) else { return vec![] };
+    let mut out = Vec::new();
+    let mut depth = 0;
+    let mut cur = String::new();
+    for c in inner.chars() {
+        match c {
+            '<' | '(' => { depth += 1; cur.push(c) }
+            '>' | ')' => { depth -= 1; cur.push(c) }
+            ',' if depth == 0 => { out.push(std::mem::take(&mut cur)) }
+            c => cur.push(c),
+        }
+    }
+    if !cur.trim().is_empty() { out.push(cur) }
+    out.into_iter().filter_map(|f| f.split_whitespace().next().map(String::from)).collect()
+}
+
+fn is_text_type(base: &str) -> bool {
+    base.is_empty() || ["CHAR", "TEXT", "STRING", "CLOB", "NCHAR", "NVARCHAR", "VARCHAR", "NTEXT", "LONGVARCHAR", "CHARACTER", "VARIANT", "JSON"].iter().any(|t| base.contains(t))
+}
+
+fn is_number_type(base: &str) -> bool {
+    ["INT", "NUMBER", "NUMERIC", "DECIMAL", "FLOAT", "DOUBLE", "REAL", "BIGINT", "SMALLINT", "TINYINT"].iter().any(|t| base.contains(t))
+        && !base.contains("INTERVAL")
+        && !base.contains("POINT")
+}
+
+fn parse_bool(s: &str) -> Option<bool> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "true" | "t" | "1" | "yes" | "y" => Some(true),
+        "false" | "f" | "0" | "no" | "n" => Some(false),
+        _ => None,
+    }
+}
+
+/// A grid value as a literal for a column of type `ty`.
+pub(crate) fn value_lit(v: &serde_json::Value, ty: &str, style: LitStyle) -> String {
+    use serde_json::Value;
+    let base = base_type_of(ty);
+    match v {
+        Value::Null => "NULL".into(),
+        Value::Bool(b) => match style {
+            LitStyle::AnsiNumericBool => if *b { "1" } else { "0" }.into(),
+            _ => if *b { "TRUE" } else { "FALSE" }.into(),
+        },
+        Value::Number(n) => n.to_string(),
+        // Text into a typed column (a CSV cell, a grid's formatted timestamp):
+        // empty is NULL, numbers and booleans go in bare, and GoogleSQL dates
+        // and times as typed literals. BigQuery will not cast '123' into INT64.
+        Value::String(s) if s.is_empty() && !is_text_type(&base) => "NULL".into(),
+        Value::String(s) if is_number_type(&base) && s.trim().parse::<f64>().is_ok_and(f64::is_finite) && !(style == LitStyle::GoogleSql && matches!(base.as_str(), "NUMERIC" | "BIGNUMERIC")) => {
+            s.trim().to_string()
+        }
+        Value::String(s) if matches!(base.as_str(), "BOOL" | "BOOLEAN" | "BIT") && parse_bool(s).is_some() => {
+            value_lit(&Value::Bool(parse_bool(s).unwrap_or(false)), ty, style)
+        }
+        Value::String(s) if style == LitStyle::GoogleSql && matches!(base.as_str(), "DATE" | "DATETIME" | "TIMESTAMP" | "TIME") => {
+            format!("{base} {}", str_lit(s, style))
+        }
+        Value::String(s) => match (style, base.as_str()) {
+            (LitStyle::GoogleSql, "BYTES") => format!("FROM_BASE64({})", str_lit(s, style)),
+            (LitStyle::GoogleSql, "JSON") => format!("JSON {}", str_lit(s, style)),
+            (LitStyle::GoogleSql, "NUMERIC" | "BIGNUMERIC") => format!("NUMERIC {}", str_lit(s, style)),
+            (LitStyle::Snowflake, "VARIANT" | "OBJECT" | "ARRAY") => format!("PARSE_JSON({})", str_lit(s, style)),
+            (LitStyle::Snowflake, "BINARY" | "VARBINARY") => format!("TO_BINARY({}, 'HEX')", str_lit(s, style)),
+            _ => str_lit(s, style),
+        },
+        Value::Array(items) => match style {
+            LitStyle::GoogleSql => {
+                // ARRAY<T>: the element type from inside the brackets.
+                let elem = ty.trim().strip_prefix("ARRAY<").and_then(|r| r.strip_suffix('>')).unwrap_or("");
+                format!("[{}]", items.iter().map(|x| value_lit(x, elem, style)).collect::<Vec<_>>().join(", "))
+            }
+            LitStyle::Snowflake => format!("PARSE_JSON({})", str_lit(&v.to_string(), style)),
+            _ => str_lit(&v.to_string(), style),
+        },
+        Value::Object(map) => match (style, base.as_str()) {
+            (LitStyle::GoogleSql, "STRUCT") => {
+                let names = struct_fields(ty);
+                let parts: Vec<String> = map
+                    .iter()
+                    .enumerate()
+                    .map(|(i, (_, x))| value_lit(x, "", style) + &names.get(i).map(|n| format!(" AS {}", qb(n))).unwrap_or_default())
+                    .collect();
+                format!("STRUCT({})", parts.join(", "))
+            }
+            (LitStyle::GoogleSql, _) => format!("JSON {}", str_lit(&v.to_string(), style)),
+            (LitStyle::Snowflake, _) => format!("PARSE_JSON({})", str_lit(&v.to_string(), style)),
+            _ => str_lit(&v.to_string(), style),
+        },
+    }
+}
+
+/// Rows written per INSERT statement: small enough for every engine's limits
+/// (Spanner's mutations, BigQuery's statement size).
+const API_BATCH_ROWS: usize = 200;
+/// Rows read per page.
+const API_PAGE_ROWS: i64 = 1000;
+
+/// One INSERT for a batch of rows. Snowflake takes PARSE_JSON only in a
+/// SELECT, so it gets INSERT ... SELECT ... UNION ALL SELECT ...
+pub(crate) fn insert_stmt(target: &str, cols: &str, rows: &[String], style: LitStyle) -> String {
+    if style == LitStyle::Snowflake {
+        let selects: Vec<String> = rows.iter().map(|r| format!("SELECT {r}")).collect();
+        format!("INSERT INTO {target} ({cols})\n{};\n", selects.join("\nUNION ALL "))
+    } else {
+        let values: Vec<String> = rows.iter().map(|r| format!("({r})")).collect();
+        format!("INSERT INTO {target} ({cols}) VALUES\n{};\n", values.join(",\n"))
+    }
+}
+
+async fn export_api_sql(
+    rep: &Reporter,
+    eng: &SqlEngine,
+    schema: Option<&str>,
+    filter: Option<&[String]>,
+    opts: &ExportOptions,
+    out: &mut Out,
+) -> Result<Stats, String> {
+    let label = eng.label();
+    rep.log("info", format!("Starting {label} export…"));
+    let schema = match schema.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => eng.schemas().await?.into_iter().next().ok_or("This database has no schemas to export")?,
+    };
+    out.push_str(&backup_header(&label, Some(&schema)));
+    let style = eng.style();
+    let all = eng.tables(&schema).await?;
+    let in_filter = |t: &str| filter.map_or(true, |f| f.iter().any(|x| x == t));
+    let tables: Vec<&super::schema::TableInfo> = all.iter().filter(|t| t.kind == "table" && in_filter(&t.name)).collect();
+    let views: Vec<&super::schema::TableInfo> = all.iter().filter(|t| t.kind == "view" && in_filter(&t.name)).collect();
+    rep.plan(
+        tables
+            .iter()
+            .map(|t| PlanEntry { schema: Some(schema.clone()), name: t.name.clone(), est_rows: (t.row_count >= 0).then_some(t.row_count) })
+            .collect(),
+    );
+
+    let mut stats = Stats { tables: tables.len(), ..Stats::default() };
+    for t in &tables {
+        if is_cancelled() { break; }
+        let name = &t.name;
+        rep.table(Some(&schema), name, "running", 0, None);
+        if opts.include_schema {
+            match eng.ddl(&schema, name).await {
+                Ok(ddl) if !ddl.trim().is_empty() => {
+                    let ddl = ddl.trim();
+                    out.push_str(&format!("\n{ddl}{}\n", if ddl.ends_with(';') { "" } else { ";" }));
+                }
+                Ok(_) => out.push_str(&format!("\n-- No DDL available for {name}\n")),
+                Err(e) => {
+                    out.push_str(&format!("\n-- ERROR reading the DDL of {name}: {e}\n"));
+                    rep.log("warn", format!("{name}: no DDL ({e})"));
+                }
+            }
+        }
+        if !opts.include_data {
+            rep.table(Some(&schema), name, "done", 0, None);
+            continue;
+        }
+        let cols = match eng.columns(&schema, name).await {
+            Ok(c) => c,
+            Err(e) => {
+                out.push_str(&format!("-- ERROR exporting {name}: {e}\n"));
+                rep.table(Some(&schema), name, "error", 0, Some(e.clone()));
+                stats.failed += 1;
+                continue;
+            }
+        };
+        let has_key = cols.iter().any(|c| c.is_primary_key);
+        if !eng.pages_are_stable(has_key) {
+            rep.log("warn", format!("{name} has no primary key: its rows are read in pages without a fixed order, so a table that changes during the backup may come out with rows missing or doubled"));
+        }
+        let target = eng.table_ref(&schema, name);
+        let col_list = cols.iter().map(|c| eng.quote(&c.name)).collect::<Vec<_>>().join(", ");
+        let mut chunk = Chunk::new();
+        let mut batch: Vec<String> = Vec::new();
+        let mut n = 0u64;
+        let mut offset = 0i64;
+        let mut failed: Option<String> = None;
+        loop {
+            if is_cancelled() { break; }
+            let page = match eng.page(&schema, name, API_PAGE_ROWS, offset).await {
+                Ok(p) => p,
+                Err(e) => { failed = Some(e); break; }
+            };
+            // The page's own columns, matched to the table's by name.
+            let idx: Vec<Option<usize>> = cols.iter().map(|c| page.columns.iter().position(|pc| pc.name == c.name)).collect();
+            let got = page.rows.len();
+            for row in &page.rows {
+                let lits: Vec<String> = cols
+                    .iter()
+                    .zip(&idx)
+                    .map(|(c, i)| i.and_then(|i| row.get(i)).map_or("NULL".into(), |v| value_lit(v, &c.data_type, style)))
+                    .collect();
+                batch.push(lits.join(", "));
+                if batch.len() >= API_BATCH_ROWS {
+                    chunk.put_str(&insert_stmt(&target, &col_list, &batch, style));
+                    batch.clear();
+                }
+            }
+            n += got as u64;
+            offset += got as i64;
+            rep.table(Some(&schema), name, "running", n, None);
+            if (got as i64) < API_PAGE_ROWS { break; }
+        }
+        if !batch.is_empty() {
+            chunk.put_str(&insert_stmt(&target, &col_list, &batch, style));
+        }
+        out.append(chunk)?;
+        stats.rows += n as usize;
+        match failed {
+            Some(e) => {
+                out.push_str(&format!("-- ERROR exporting {name} after {n} rows: {e}\n"));
+                rep.table(Some(&schema), name, "error", n, Some(e.clone()));
+                rep.log("error", format!("{name}: {e}"));
+                stats.failed += 1;
+            }
+            None => rep.table(Some(&schema), name, "done", n, None),
+        }
+    }
+    if opts.include_views {
+        for v in &views {
+            if let Ok(ddl) = eng.ddl(&schema, &v.name).await {
+                let ddl = ddl.trim();
+                if !ddl.is_empty() {
+                    out.push_str(&format!("\n{ddl}{}\n", if ddl.ends_with(';') { "" } else { ";" }));
+                }
+            }
+        }
+    }
+    out.check()?;
+    Ok(stats)
+}
+
+async fn import_api_sql(rep: &Reporter, eng: &SqlEngine, sql: &str) -> Result<ImportResult, String> {
+    let started = Instant::now();
+    rep.log("info", format!("Starting {} restore…", eng.label()));
+    // GoogleSQL, Snowflake and MySQL read a backslash in a string as an escape.
+    let esc = if matches!(eng.style(), LitStyle::GoogleSql | LitStyle::Snowflake | LitStyle::MySql) { Escapes::Backslash } else { Escapes::Standard };
+    let mut run = Runner::new(rep, sql.len());
+    let mut sp = Splitter::new(sql, esc);
+    while let Some(stmt) = sp.next() {
+        let Stmt::Sql(s) = stmt else { continue };
+        run.total += 1;
+        match eng.exec(&s).await {
+            Ok(()) => run.ok += 1,
+            Err(e) => run.fail(stmt_error(e, &s)),
+        }
+        run.meter.tick(sp.position(), run.ok, run.errors.len(), false);
+        if is_cancelled() { run.total += sp.count(); break; }
+    }
+    Ok(finish_import(rep, run.total, run.ok, run.errors, started))
+}
+
 // ── Tests ───────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
+    // ── Spanner, BigQuery, Snowflake and ODBC ────────────────────────────────
+
+    #[test]
+    fn api_literals_follow_each_dialect() {
+        use serde_json::json;
+        assert_eq!(value_lit(&json!("it's \\ \n"), "STRING", LitStyle::GoogleSql), "'it\\'s \\\\ \\n'");
+        assert_eq!(value_lit(&json!("it's"), "VARCHAR", LitStyle::Ansi), "'it''s'");
+        assert_eq!(value_lit(&json!("a\\b'c"), "VARCHAR", LitStyle::MySql), "'a\\\\b''c'");
+        assert_eq!(value_lit(&json!(true), "BIT", LitStyle::AnsiNumericBool), "1");
+        assert_eq!(value_lit(&json!(["a", "b"]), "ARRAY<STRING>", LitStyle::GoogleSql), "['a', 'b']");
+        assert_eq!(value_lit(&json!({ "a": 1, "b": "x" }), "STRUCT<a INT64, b STRING>", LitStyle::GoogleSql), "STRUCT(1 AS `a`, 'x' AS `b`)");
+        assert_eq!(value_lit(&json!({ "k": 1 }), "JSON", LitStyle::GoogleSql), "JSON '{\"k\":1}'");
+        assert_eq!(value_lit(&json!("aGk="), "BYTES", LitStyle::GoogleSql), "FROM_BASE64('aGk=')");
+        assert_eq!(value_lit(&json!({ "k": 1 }), "VARIANT", LitStyle::Snowflake), "PARSE_JSON('{\"k\":1}')");
+        assert_eq!(value_lit(&serde_json::Value::Null, "INT64", LitStyle::GoogleSql), "NULL");
+        assert_eq!(value_lit(&json!("42"), "INT64", LitStyle::GoogleSql), "42");
+        assert_eq!(value_lit(&json!(""), "INT64", LitStyle::GoogleSql), "NULL");
+        assert_eq!(value_lit(&json!(""), "STRING", LitStyle::GoogleSql), "''");
+        assert_eq!(value_lit(&json!("yes"), "BOOL", LitStyle::GoogleSql), "TRUE");
+        assert_eq!(value_lit(&json!("2026-11-21"), "DATE", LitStyle::GoogleSql), "DATE '2026-11-21'");
+        assert_eq!(value_lit(&json!("12.5"), "NUMERIC", LitStyle::GoogleSql), "NUMERIC '12.5'");
+        assert_eq!(value_lit(&json!("abc"), "INT64", LitStyle::GoogleSql), "'abc'");
+        assert_eq!(struct_fields("STRUCT<a INT64, b STRUCT<x INT64, y STRING>, c ARRAY<STRING>>"), vec!["a", "b", "c"]);
+    }
+
+    #[test]
+    fn api_inserts_batch_rows() {
+        assert_eq!(insert_stmt("t", "a, b", &["1, 'x'".into(), "2, 'y'".into()], LitStyle::Ansi), "INSERT INTO t (a, b) VALUES\n(1, 'x'),\n(2, 'y');\n");
+        assert_eq!(
+            insert_stmt("t", "a", &["PARSE_JSON('1')".into(), "PARSE_JSON('2')".into()], LitStyle::Snowflake),
+            "INSERT INTO t (a)\nSELECT PARSE_JSON('1')\nUNION ALL SELECT PARSE_JSON('2');\n"
+        );
+    }
+
+    /// Dump a table, drop it, restore the dump, and read it back: through a
+    /// real ODBC driver (STROKE_TEST_ODBC), the BigQuery emulator
+    /// (STROKE_TEST_BIGQUERY) and the Spanner emulator (STROKE_TEST_SPANNER).
+    #[tokio::test]
+    async fn live_api_engines_round_trip() {
+        use serde_json::json;
+        let tid = format!("stroke_bk_{}", std::process::id());
+        if let Ok(cs) = std::env::var("STROKE_TEST_ODBC") {
+            let cfg = super::super::odbc::OdbcConfig { name: "t".into(), preset: None, dsn: None, connection_string: Some(cs), user: None, password: None, ssh: None, target_host: None, target_port: None };
+            let h = super::super::odbc::connect(&cfg).await.unwrap();
+            let schema = match h.info.namespace {
+                super::super::odbc::Namespace::Schema => "public".to_string(),
+                super::super::odbc::Namespace::Catalog => h.info.catalog.clone(),
+                super::super::odbc::Namespace::Flat => super::super::odbc::FLAT_SCHEMA.to_string(),
+            };
+            let tref = super::super::odbc::table_ref(&h.info, &schema, &tid);
+            super::super::odbc::query(&h, &format!("CREATE TABLE {tref} (id INTEGER NOT NULL PRIMARY KEY, label VARCHAR(40), ok BOOLEAN)")).await.unwrap();
+            super::super::odbc::query(&h, &format!("INSERT INTO {tref} VALUES (1, 'it''s a \\ test', TRUE), (2, NULL, FALSE)")).await.unwrap();
+            let eng = SqlEngine::Odbc(h.clone());
+            // What the database stored (MySQL reads `\ ` in a literal as an escape).
+            let before = super::super::odbc::query(&h, &format!("SELECT id, label, ok FROM {tref} ORDER BY id")).await.unwrap().rows;
+            let res = run_export(&Reporter::silent(), ActiveConnection::Odbc(h.clone()), Some(schema.clone()), Some(vec![tid.clone()]), &ExportOptions::default(), None).await.unwrap();
+            assert_eq!(res.row_count, 2, "{}", res.sql);
+            super::super::odbc::query(&h, &format!("DROP TABLE {tref}")).await.unwrap();
+            let r = import_api_sql(&Reporter::silent(), &eng, &res.sql).await.unwrap();
+            assert!(r.errors.is_empty(), "{:?}\n{}", r.errors, res.sql);
+            let back = super::super::odbc::query(&h, &format!("SELECT id, label, ok FROM {tref} ORDER BY id")).await.unwrap();
+            assert_eq!(back.rows, before);
+            assert!(back.rows[0][1].as_str().unwrap().starts_with("it's a"));
+            super::super::odbc::query(&h, &format!("DROP TABLE {tref}")).await.unwrap();
+        }
+        if let Ok(spec) = std::env::var("STROKE_TEST_BIGQUERY") {
+            let mut parts = spec.splitn(3, '/');
+            let (host, project, dataset) = (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
+            let cfg = super::super::bigquery::BigQueryConfig {
+                name: "t".into(), project_id: project.into(), dataset: Some(dataset.into()), location: None,
+                auth: "emulator".into(), key_file: None, emulator_host: Some(host.into()),
+            };
+            let h = super::super::bigquery::connect(&cfg).await.unwrap();
+            super::super::bigquery::query(&h, &format!("CREATE TABLE {dataset}.{tid} (id INT64, label STRING, tags ARRAY<STRING>, seen TIMESTAMP)")).await.unwrap();
+            super::super::bigquery::query(&h, &format!("INSERT INTO {dataset}.{tid} (id, label, tags, seen) VALUES (1, 'it\\'s \\\\ x', ['a', 'b'], TIMESTAMP '2026-11-21 05:00:00 UTC'), (2, NULL, [], NULL)")).await.unwrap();
+            let eng = SqlEngine::Bigquery(h.clone());
+            let res = run_export(&Reporter::silent(), ActiveConnection::Bigquery(h.clone()), Some(dataset.into()), Some(vec![tid.clone()]), &ExportOptions::default(), None).await.unwrap();
+            assert_eq!(res.row_count, 2, "{}", res.sql);
+            assert!(!res.sql.contains(&format!("`{project}`.")), "the dump names no project:\n{}", res.sql);
+            super::super::bigquery::query(&h, &format!("DROP TABLE {dataset}.{tid}")).await.unwrap();
+            let r = import_api_sql(&Reporter::silent(), &eng, &res.sql).await.unwrap();
+            assert!(r.errors.is_empty(), "{:?}\n{}", r.errors, res.sql);
+            let back = super::super::bigquery::query(&h, &format!("SELECT id, label, tags, seen FROM {dataset}.{tid} ORDER BY id")).await.unwrap();
+            assert_eq!(back.rows.len(), 2);
+            assert_eq!(back.rows[0][1], json!("it's \\ x"));
+            assert_eq!(back.rows[0][2], json!(["a", "b"]));
+            assert_eq!(back.rows[0][3], json!("2026-11-21T05:00:00Z"));
+            // An import's rows: every value text, as a CSV gives them, typed
+            // by the table's columns (BigQuery won't cast '3' into INT64).
+            let cols = eng.columns(dataset, &tid).await.unwrap();
+            let names = ["id", "label", "seen"];
+            let types: Vec<String> = names.iter().map(|n| cols.iter().find(|c| c.name == *n).unwrap().data_type.clone()).collect();
+            let csv = [json!("3"), json!("from csv"), json!("2026-11-22 10:00:00")];
+            let lits: Vec<String> = csv.iter().zip(&types).map(|(v, t)| value_lit(v, t, eng.style())).collect();
+            let target = eng.table_ref(dataset, &tid);
+            let cl = names.iter().map(|n| eng.quote(n)).collect::<Vec<_>>().join(", ");
+            eng.exec(&insert_stmt(&target, &cl, &[lits.join(", ")], eng.style())).await.unwrap();
+            let r = super::super::bigquery::query(&h, &format!("SELECT label, seen FROM {dataset}.{tid} WHERE id = 3")).await.unwrap();
+            assert_eq!(r.rows[0], vec![json!("from csv"), json!("2026-11-22T10:00:00Z")]);
+            super::super::bigquery::query(&h, &format!("DROP TABLE {dataset}.{tid}")).await.unwrap();
+        }
+        if let Ok(spec) = std::env::var("STROKE_TEST_SPANNER") {
+            let mut parts = spec.splitn(4, '/');
+            let (host, project, instance, database) = (parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap(), parts.next().unwrap());
+            let cfg = super::super::spanner::SpannerConfig {
+                name: "t".into(), project_id: project.into(), instance_id: instance.into(), database_id: database.into(),
+                auth: "emulator".into(), key_file: None, emulator_host: Some(host.into()),
+            };
+            let h = super::super::spanner::connect(&cfg).await.unwrap();
+            super::super::spanner::query(&h, &format!("CREATE TABLE {tid} (id INT64 NOT NULL, label STRING(MAX), tags ARRAY<STRING(MAX)>, ok BOOL) PRIMARY KEY (id)")).await.unwrap();
+            super::super::spanner::query(&h, &format!("INSERT INTO {tid} (id, label, tags, ok) VALUES (1, 'it\\'s', ['x'], TRUE), (2, NULL, NULL, FALSE)")).await.unwrap();
+            let eng = SqlEngine::Spanner(h.clone());
+            let res = run_export(&Reporter::silent(), ActiveConnection::Spanner(h.clone()), Some("default".into()), Some(vec![tid.clone()]), &ExportOptions::default(), None).await.unwrap();
+            assert_eq!(res.row_count, 2, "{}", res.sql);
+            super::super::spanner::query(&h, &format!("DROP TABLE {tid}")).await.unwrap();
+            let r = import_api_sql(&Reporter::silent(), &eng, &res.sql).await.unwrap();
+            assert!(r.errors.is_empty(), "{:?}\n{}", r.errors, res.sql);
+            let back = super::super::spanner::query(&h, &format!("SELECT id, label, tags, ok FROM {tid} ORDER BY id")).await.unwrap();
+            assert_eq!(back.rows[0][1], json!("it's"));
+            assert_eq!(back.rows[0][2], json!(["x"]));
+            assert_eq!(back.rows[1][3], json!(false));
+            super::super::spanner::query(&h, &format!("DROP TABLE {tid}")).await.unwrap();
+        }
+    }
+
     use super::*;
 
     /// Most dialects we export to use standard string rules.
@@ -3315,6 +4012,73 @@ mod tests {
     //
     // Each creates and drops its own databases (stroke_bk_*) on that server.
 
+    /// A database whose tables lean on extensions (uuid_generate_v4() defaults,
+    /// citext, PostGIS) restores into a fresh database: the dump creates its
+    /// extensions and leaves out what they own, and an older dump without them
+    /// gets them added from its DDL before it runs.
+    #[tokio::test(flavor = "multi_thread")]
+    #[ignore]
+    async fn live_postgres_restore_brings_its_extensions() {
+        let Ok(base) = std::env::var("STROKE_TEST_PG_URL") else { return };
+        let admin = sqlx::PgPool::connect(&format!("{base}/postgres")).await.unwrap();
+        for db in ["stroke_bk_ext_src", "stroke_bk_ext_dst", "stroke_bk_ext_old"] {
+            sqlx::query(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)")).execute(&admin).await.unwrap();
+            sqlx::query(&format!("CREATE DATABASE {db}")).execute(&admin).await.unwrap();
+        }
+        let src = sqlx::postgres::PgPoolOptions::new().max_connections(4).connect(&format!("{base}/stroke_bk_ext_src")).await.unwrap();
+        let postgis: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'postgis')").fetch_one(&src).await.unwrap();
+        sqlx::raw_sql(
+            r#"CREATE EXTENSION "uuid-ossp"; CREATE EXTENSION citext;
+               CREATE TABLE job (id uuid PRIMARY KEY DEFAULT uuid_generate_v4(), email citext NOT NULL);
+               INSERT INTO job (email) SELECT 'U' || g || '@x.io' FROM generate_series(1, 25) g;"#,
+        ).execute(&src).await.unwrap();
+        if postgis {
+            sqlx::raw_sql(
+                "CREATE EXTENSION postgis;
+                 CREATE TABLE place (id serial PRIMARY KEY, geom geometry(Point, 4326));
+                 INSERT INTO place (geom) SELECT ST_SetSRID(ST_MakePoint(g, g), 4326) FROM generate_series(1, 5) g;",
+            ).execute(&src).await.unwrap();
+        }
+
+        let rep = Reporter::silent();
+        let mut out = Out::memory();
+        export_postgres(&rep, &src, Some("public"), None, &ExportOptions::default(), &mut out).await.unwrap();
+        let dump = String::from_utf8(out.finish().unwrap().0).unwrap();
+        assert!(dump.contains(r#"CREATE EXTENSION IF NOT EXISTS "uuid-ossp""#), "no uuid-ossp in dump");
+        assert!(dump.contains(r#"CREATE EXTENSION IF NOT EXISTS "citext""#), "no citext in dump");
+        if postgis {
+            assert!(!dump.contains("spatial_ref_sys"), "an extension's own table was dumped");
+            assert!(!dump.contains("geometry_columns"), "an extension's own view was dumped");
+        }
+
+        // A new dump restores as is.
+        let dst = sqlx::postgres::PgPoolOptions::new().max_connections(4).connect(&format!("{base}/stroke_bk_ext_dst")).await.unwrap();
+        let res = import_postgres(&rep, &dst, &dump).await.unwrap();
+        assert!(res.errors.is_empty(), "restore errors: {:?}", res.errors);
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM job WHERE email = 'u7@X.IO'").fetch_one(&dst).await.unwrap();
+        assert_eq!(n, 1, "citext lost its case-insensitivity");
+        sqlx::query("INSERT INTO job (email) VALUES ('new@x.io')").execute(&dst).await.unwrap();
+        if postgis {
+            let p: i64 = sqlx::query_scalar("SELECT count(*) FROM place WHERE ST_X(geom) > 2").fetch_one(&dst).await.unwrap();
+            assert_eq!(p, 3);
+        }
+
+        // An older dump, made before extensions were written into it.
+        let old: String = dump.lines().filter(|l| !l.contains("CREATE EXTENSION")).collect::<Vec<_>>().join("\n");
+        let dst_old = sqlx::postgres::PgPoolOptions::new().max_connections(4).connect(&format!("{base}/stroke_bk_ext_old")).await.unwrap();
+        let res = import_postgres(&rep, &dst_old, &old).await.unwrap();
+        assert!(res.errors.is_empty(), "old dump restore errors: {:?}", res.errors);
+        let n: i64 = sqlx::query_scalar("SELECT count(*) FROM job").fetch_one(&dst_old).await.unwrap();
+        assert_eq!(n, 25);
+
+        src.close().await;
+        dst.close().await;
+        dst_old.close().await;
+        for db in ["stroke_bk_ext_src", "stroke_bk_ext_dst", "stroke_bk_ext_old"] {
+            sqlx::query(&format!("DROP DATABASE IF EXISTS {db} WITH (FORCE)")).execute(&admin).await.ok();
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread")]
     #[ignore]
     async fn live_postgres_dump_restores_with_its_foreign_keys() {
@@ -3427,6 +4191,37 @@ mod tests {
         for db in ["stroke_bk_src", "stroke_bk_dst"] {
             sqlx::query(&format!("DROP DATABASE IF EXISTS {db}")).execute(&admin).await.ok();
         }
+    }
+
+    /// The app's MySQL pool runs with ANSI_QUOTES (connection.rs), which made
+    /// SHOW CREATE write double quotes into the dump, and the mysql client then
+    /// rejected CREATE TABLE "t". The dump's DDL must use backticks regardless.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn live_mysql_dump_ddl_uses_backticks_under_ansi_quotes() {
+        let Ok(base) = std::env::var("STROKE_TEST_MYSQL_URL") else { return };
+        let base = base.trim_end_matches('/').rsplit_once('/').map(|(b, _)| b.to_string()).unwrap_or(base);
+        let admin = sqlx::mysql::MySqlPoolOptions::new().max_connections(1).connect(&base).await.unwrap();
+        sqlx::query("DROP DATABASE IF EXISTS stroke_bk_ansi").execute(&admin).await.unwrap();
+        sqlx::query("CREATE DATABASE stroke_bk_ansi").execute(&admin).await.unwrap();
+        let pool = sqlx::mysql::MySqlPoolOptions::new()
+            .max_connections(3)
+            .after_connect(|conn, _| Box::pin(async move {
+                sqlx::query("SET sql_mode = CONCAT(@@sql_mode, ',ANSI_QUOTES')").execute(&mut *conn).await?;
+                Ok(())
+            }))
+            .connect(&format!("{base}/stroke_bk_ansi")).await.unwrap();
+        sqlx::raw_sql("CREATE TABLE t_ansi (id INT PRIMARY KEY, note VARCHAR(20)); CREATE VIEW v_ansi AS SELECT id FROM t_ansi;")
+            .execute(&pool).await.unwrap();
+        let mut out = Out::memory();
+        export_mysql(&Reporter::silent(), &pool, Some("stroke_bk_ansi"), None, &ExportOptions::default(), &mut out).await.unwrap();
+        let dump = String::from_utf8(out.finish().unwrap().0).unwrap();
+        assert!(dump.contains("CREATE TABLE IF NOT EXISTS `t_ansi`"), "{dump}");
+        assert!(!dump.contains("\"t_ansi\"") && !dump.contains("\"note\""), "double quotes in the dump:\n{dump}");
+        // The pool itself kept ANSI_QUOTES: the changed mode stayed on the detached connection.
+        let mode: String = sqlx::query_scalar("SELECT @@SESSION.sql_mode").fetch_one(&pool).await.unwrap();
+        assert!(mode.contains("ANSI_QUOTES"), "{mode}");
+        pool.close().await;
+        sqlx::query("DROP DATABASE IF EXISTS stroke_bk_ansi").execute(&admin).await.ok();
     }
 
     // ── Benchmark (ignored) ───────────────────────────────────────────────────

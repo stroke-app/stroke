@@ -11,7 +11,7 @@
     buildTriggerSql, validateTrigger, triggerFunctionSnippet,
     hasPlaceholder, placeholderText, toSnippet, TRIGGER_EVENTS,
   } from '$lib/ddl-builders.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import Plus from '@lucide/svelte/icons/plus'
 
   let {
@@ -117,7 +117,7 @@
       toast.success(`Trigger "${name.trim()}" created`)
       onrefresh(); reset(); open = false
     } catch (e) {
-      toast.error('Could not create trigger', { description: String(e) })
+      toast.error('Could not create trigger', { description: errorText(e) })
     } finally { saving = false }
   }
 

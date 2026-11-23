@@ -1,6 +1,6 @@
 <script>
-  import { onMount } from 'svelte'
-  import { cn } from '$lib/utils.js'
+  import { onMount, untrack } from 'svelte'
+  import { cn, errorText } from '$lib/utils.js'
   import EChartPanel from './EChartPanel.svelte'
   import SearchableMenu from './SearchableMenu.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -35,7 +35,7 @@
   import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import CircleX from '@lucide/svelte/icons/circle-x'
 
-  let { active = false, connectionName = '', dbType = '' } = $props()
+  let { active = false, connectionName = '', dbType = '', connectionId = '' } = $props()
 
   const SUBTABS = [
     { id: 'activity', label: 'Activity', icon: Gauge },
@@ -68,6 +68,28 @@
   const isPg = $derived((version?.engine ?? dbType) === 'postgres')
 
   onMount(() => { if (active && supported) void refreshAll() })
+
+  // The page is kept across connections. After a switch it showed the last
+  // server's sessions and settings, and the next sample's rates were the new
+  // server's counters minus the old one's. Start over for the new one.
+  // svelte-ignore state_referenced_locally
+  let shownFor = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === shownFor) return
+    shownFor = id
+    untrack(() => {
+      samples = []
+      version = null
+      activity = null
+      stateData = null
+      config = []
+      replication = null
+      error = ''
+      _everActive = active
+      if (active && supported) void refreshAll()
+    })
+  })
 
   // First-open fetch when the tab becomes active.
   let _everActive = false
@@ -183,7 +205,7 @@
       const reads = d('blksRead'), hits = d('blksHit')
       out.push({
         t: b.t, commits: d('commits'), rollbacks: d('rollbacks'), tps: d('commits') + d('rollbacks'),
-        tupUpdated: d('tupUpdated'), tupDeleted: d('tupDeleted'),
+        tupInserted: d('tupInserted'), tupUpdated: d('tupUpdated'), tupDeleted: d('tupDeleted'),
         reads, hits, hitRatio: (hits + reads) > 0 ? (hits / (hits + reads)) * 100 : 100,
       })
     }
@@ -517,7 +539,7 @@
           duration: 10000,
         })
       } else {
-        toast.error('Could not change setting', { description: String(e), duration: 8000 })
+        toast.error('Could not change setting', { description: errorText(e), duration: 8000 })
       }
     } finally {
       savingSetting = ''
@@ -556,7 +578,10 @@
   const ACRONYMS = new Set(['id', 'ids', 'pid', 'pids', 'db', 'ip', 'addr', 'xid', 'lsn', 'wal', 'gid', 'sql', 'os', 'tcp', 'io'])
   /** `blocking_pids` → `Blocking PIDs`. Raw catalog column names are not labels. */
   const humanize = (/** @type {string} */ k) => String(k).replace(/[_-]+/g, ' ').trim().split(' ')
-    .map((w) => (ACRONYMS.has(w.toLowerCase()) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    // A plural acronym keeps its s small: "PIDs", not "PIDS".
+    .map((w) => (ACRONYMS.has(w.toLowerCase())
+      ? (/^(ids|pids)$/i.test(w) ? w.slice(0, -1).toUpperCase() + 's' : w.toUpperCase())
+      : w.charAt(0).toUpperCase() + w.slice(1)))
     .join(' ')
 
   /** Session state is the one column worth reading at a glance. */
@@ -712,13 +737,14 @@
           })}
           {@render stat({
             label: 'Row writes',
-            help: 'Rows updated and deleted per second across every database on this instance.',
-            value: cur ? num(cur.tupUpdated + cur.tupDeleted) : '—',
+            help: 'Rows inserted, updated and deleted per second across every database on this instance.',
+            value: cur ? num(cur.tupInserted + cur.tupUpdated + cur.tupDeleted) : '—',
             unit: '/s',
             hint: '',
             tone: 'plain',
-            series: rateHistory.map((r) => r.tupUpdated + r.tupDeleted),
+            series: rateHistory.map((r) => r.tupInserted + r.tupUpdated + r.tupDeleted),
             rows: [
+              { k: 'Inserts/s', v: cur ? num(cur.tupInserted) : '—' },
               { k: 'Updates/s', v: cur ? num(cur.tupUpdated) : '—' },
               { k: 'Deletes/s', v: cur ? num(cur.tupDeleted) : '—' },
               { k: 'Fetched total', v: activity ? compact(activity.counters.tupFetched) : '—' },
@@ -824,7 +850,7 @@
                 bind:value={configSearch}
                 placeholder="Search {big(config.length)} settings, names or descriptions"
                 aria-label="Search settings"
-                class="field-surface h-9 w-full pl-9 pr-9 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+                class="search-box no-field-frame h-9 w-full pl-9 pr-9 text-ui-sm"
                 onkeydown={(e) => { if (e.key === 'Escape' && configSearch) { e.preventDefault(); e.stopPropagation(); configSearch = '' } }}
               />
               {#if configSearch}
@@ -843,7 +869,7 @@
               items={[{ value: 'all', label: 'All categories' }, ...configGroups.map((g) => ({ value: g.id, label: g.id }))]}
               placeholder="Filter categories…"
               empty="No matching category"
-              contentClass="min-w-[260px]"
+              contentClass="min-w-[16.25rem]"
               onselect={(it) => (configGroup = it.value)}
             >
               {#snippet trigger(props)}
@@ -870,7 +896,7 @@
             <SearchableMenu
               items={statusOptions.map((o) => ({ value: o.id, label: o.label }))}
               placeholder="Status…"
-              contentClass="min-w-[220px]"
+              contentClass="min-w-[13.75rem]"
               onselect={(it) => (configStatus = /** @type {any} */ (it.value))}
             >
               {#snippet trigger(props)}
@@ -926,7 +952,7 @@
                   <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
                     <Settings class="size-4 shrink-0 text-muted-foreground" />
                     <h3 class="text-ui-sm text-muted-foreground">{sec.group}</h3>
-                    <span class="text-ui-sm tabular-nums text-muted-foreground/70">{sec.rows.length}</span>
+                    <span class="text-ui-sm tabular-nums text-muted-foreground">{sec.rows.length}</span>
                     <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
                   </div>
                 {/if}
@@ -970,11 +996,11 @@
                           {#if row.pendingRestart}
                             <PowerOff class="size-4 text-warning" />
                           {:else if row.editable === false}
-                            <Lock class="size-3.5 text-muted-foreground/60" />
+                            <Lock class="size-3.5 text-muted-foreground" />
                           {:else if modified}
                             <CircleDot class="size-4 text-primary" />
                           {:else}
-                            <Circle class="size-4 text-muted-foreground/40" />
+                            <Circle class="size-4 text-muted-foreground" />
                           {/if}
                         </span>
                         <div class="min-w-0 flex-1">
@@ -1185,7 +1211,7 @@
   <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
     <Glyph class="size-4 shrink-0 text-muted-foreground" />
     <h3 class="text-ui-sm text-muted-foreground">{title}</h3>
-    <span class="text-ui-sm tabular-nums text-muted-foreground/70">{n}</span>
+    <span class="text-ui-sm tabular-nums text-muted-foreground">{n}</span>
     <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
   </div>
 {/snippet}
@@ -1198,7 +1224,7 @@
       {#if s.tone === 'bad'}<CircleX class="size-4 text-destructive" />
       {:else if s.tone === 'warn'}<CircleAlert class="size-4 text-warning" />
       {:else if s.tone === 'ok'}<CircleCheck class="size-4 text-success" />
-      {:else}<Circle class="size-4 text-muted-foreground/40" />{/if}
+      {:else}<Circle class="size-4 text-muted-foreground" />{/if}
     </span>
     <div class="min-w-0 flex-1">
       <div class="truncate text-ui-sm text-foreground">{s.label}</div>
@@ -1322,13 +1348,13 @@
         <tbody>
           {#each rows as row, i (i)}
             <tr class={cn('transition-colors hover:bg-muted/25 [&:last-child>td]:border-b-0', isBlocked(row) && 'bg-destructive/[0.06]')}>
-              <td class="border-b border-border/15 px-2 py-2 text-right tabular-nums text-muted-foreground/70">{i + 1}</td>
+              <td class="border-b border-border/15 px-2 py-2 text-right tabular-nums text-muted-foreground">{i + 1}</td>
               {#each cols as k (k)}
                 {@const raw = row[k]}
                 {@const text = cell(raw)}
                 <td
                   class={cn(
-                    'max-w-[280px] truncate border-b border-border/15 px-3 py-2 font-mono text-foreground/85',
+                    'max-w-[17.5rem] truncate border-b border-border/15 px-3 py-2 font-mono text-foreground/85',
                     numeric.has(k) && 'text-right tabular-nums',
                   )}
                   title={text.length > 32 ? text : undefined}
@@ -1343,7 +1369,7 @@
                     <!-- A column of identical-weight true/false is unreadable at a
                          glance. Only the true half carries information here, so
                          false recedes to the muted tone. -->
-                    <span class={raw ? 'text-foreground/85' : 'text-muted-foreground/70'}>{raw}</span>
+                    <span class={raw ? 'text-foreground/85' : 'text-muted-foreground'}>{raw}</span>
                   {:else}
                     {text}
                   {/if}

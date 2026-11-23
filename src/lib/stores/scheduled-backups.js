@@ -1,3 +1,4 @@
+import { errorText } from '../utils.js'
 import { invoke } from '@tauri-apps/api/core'
 import { writable, get } from 'svelte/store'
 import { Cron } from 'croner'
@@ -194,7 +195,7 @@ async function runJob(job, conn, slot) {
       toast.error(`Scheduled backup of ${job.label} failed`, { description: out.message, duration: 15000 })
     }
   } catch (e) {
-    toast.error(`Scheduled backup of ${job.label} failed`, { description: String(e), duration: 15000 })
+    toast.error(`Scheduled backup of ${job.label} failed`, { description: errorText(e), duration: 15000 })
   } finally {
     runningJobId.set(null)
   }

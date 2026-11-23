@@ -509,7 +509,7 @@
               <span class="min-w-0 truncate font-mono text-ui-xs font-medium leading-tight">{t.name}</span>
             </span>
             <span class="flex min-w-0 items-center gap-1.5 whitespace-nowrap pl-5 text-ui-2xs leading-none text-muted-foreground">
-              <span class="min-w-0 truncate tabular-nums">{colCount.get(t.name) ?? 0} {plural(colCount.get(t.name) ?? 0, 'col')}{#if n !== undefined} · {formatTableRowCount(n)} {plural(n, 'row')}{/if}</span>
+              <span class="min-w-0 truncate tabular-nums">{colCount.get(t.name) ?? 0} {plural(colCount.get(t.name) ?? 0, 'col')}{#if n !== undefined}{' '}· {formatTableRowCount(n)} {plural(n, 'row')}{/if}</span>
               {#if downN}
                 <span class="ml-auto shrink-0 tabular-nums" title="{downN} {plural(downN, 'table')} point at {t.name}">used by {downN}</span>
               {/if}
@@ -524,7 +524,7 @@
             {#if refs}
               <span
                 class="pointer-events-none absolute right-2 top-1.5 rounded-sm bg-info/15 px-1 font-mono text-ui-3xs leading-4 tabular-nums text-info"
-                title="{refs} tables point at {t.name}; their lines are hidden"
+                title="{refs} {refs === 1 ? 'table points' : 'tables point'} at {t.name}; {refs === 1 ? 'its line is' : 'their lines are'} hidden"
               >← {refs}</span>
             {/if}
           </button>

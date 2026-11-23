@@ -1078,7 +1078,7 @@
         nameW -= bw + 8
       }
       if (zoom >= LOD_ROWS) {
-        drawTableGlyph(p.x + 16, p.y + HDR_H / 2 - 6, c('mfg', 0.7))
+        drawTableGlyph(p.x + 16, p.y + HDR_H / 2 - 6, c('mfg', 0.7), !!d.view)
         forgetStyle()
         setFont(`600 14.5px ${FONT_SANS}`)
         setFill(c('fg', 1))
@@ -1089,7 +1089,8 @@
           setFont(FONT_TYPE)
           setFill(c('mfg', 0.55))
           ctx.textAlign = 'right'
-          ctx.fillText(String((d.columns?.length ?? 0) + (d.hiddenCount ?? 0)), p.x + NODE_W - 16, p.y + HDR_H / 2 + 0.5)
+          // A view says so where the column count would be.
+          ctx.fillText(d.matView ? 'mat. view' : d.view ? 'view' : String((d.columns?.length ?? 0) + (d.hiddenCount ?? 0)), p.x + NODE_W - 16, p.y + HDR_H / 2 + 0.5)
         }
       }
     }
@@ -1137,6 +1138,10 @@
       // from the type, which then cut off at numeric(1… and timestamp….
       if (isPk) drawKeyGlyph(p.x + 21, midY, PK_INK, zoom)
       else if (isFk) drawLinkGlyph(p.x + 21, midY, FK_INK)
+      // A key column that is also a foreign key (order_items.order_id in a
+      // composite key) showed only the key, and the reference it holds was
+      // invisible on the row. A small link sits on the key's corner.
+      if (isPk && isFk) drawLinkBadge(p.x + 26, midY + 4, FK_INK)
       forgetStyle()
       // A key into a hub names the hub (that relationship has no line).
       let refW = 0
@@ -1222,11 +1227,28 @@
     ctx.restore()
   }
 
+  /** The link glyph at a third of its size on a card-coloured disc, for a key
+   *  column that is also a foreign key. */
+  function drawLinkBadge(/** @type {number} */ cx, /** @type {number} */ cy, /** @type {string} */ color) {
+    ctx.save()
+    ctx.fillStyle = c('card', 1)
+    ctx.beginPath()
+    ctx.arc(cx, cy, 4.2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.translate(cx, cy)
+    ctx.scale(0.62, 0.62)
+    ctx.translate(-cx, -cy)
+    drawLinkGlyph(cx, cy, color)
+    ctx.restore()
+  }
+
   /** A small table glyph for the card header. */
-  function drawTableGlyph(/** @type {number} */ x, /** @type {number} */ y, /** @type {string} */ color) {
+  /** A table, or with `view` a dashed one: the usual ER mark for a view. */
+  function drawTableGlyph(/** @type {number} */ x, /** @type {number} */ y, /** @type {string} */ color, view = false) {
     ctx.save()
     ctx.strokeStyle = color
     ctx.lineWidth = 1.4
+    if (view) ctx.setLineDash([2.5, 1.5])
     roundRect(x, y, 13, 12, 2.5)
     ctx.stroke()
     ctx.beginPath()

@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import SelectMenu from './SelectMenu.svelte'
   // One page for document and wide-column databases (MongoDB, CouchDB,
   // Cassandra, Firestore). The collection comes from the app sidebar. Layout
@@ -61,9 +62,11 @@
    *   onopensql?: (text: string, collection: string) => void,
    * }}
    */
-  let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {}, live = false } = $props()
+  /** collectionCount: the sidebar's count, -1 while unknown (still loading). */
+  let { active = false, connection = null, adapter, collection = '', where = '', onopensql = () => {}, live = false, collectionCount = -1 } = $props()
 
-  const readOnly = $derived($readOnlyMode)
+  // InfluxDB's adapter only reads, whatever the connection's mode.
+  const readOnly = $derived($readOnlyMode || !!adapter.readOnly)
   const noun = $derived(adapter.noun)
   /** "an index", "a collection". @param {string} w */
   const article = (w) => (/^[aeiou]/i.test(w) ? 'an' : 'a')
@@ -309,7 +312,7 @@ GET products/_search
    *  table keeps its layout across a refresh instead of rebuilding it. */
   let _gridCols = /** @type {any[]} */ ([])
   const grid = $derived.by(() => {
-    const g = docGrid(docs, keys)
+    const g = docGrid(docs, keys, adapter.timeColumns ?? [])
     const same = g.columns.length === _gridCols.length && g.columns.every((c, i) => c.name === _gridCols[i]?.name && c.dataType === _gridCols[i]?.dataType)
     if (same) g.columns = _gridCols
     else _gridCols = g.columns
@@ -560,6 +563,16 @@ GET products/_search
     }
     const prev = creating ? null : editing
     if (prev && adapter.idOf(next, info?.meta) !== adapter.idOf(prev, info?.meta) && !confirm(adapter.keyChangeWarning)) return
+    // Optimistic for an existing document: the list shows the edit now, the
+    // stored version replaces it when the database answers, and a failure
+    // puts the original back. A new one waits: its id comes from the database.
+    const before = docs
+    const beforeVersion = dataVersion
+    if (prev) {
+      const pid = adapter.idOf(prev, info?.meta)
+      docs = docs.map((d) => (adapter.idOf(d, info?.meta) === pid ? next : d))
+      dataVersion += 1
+    }
     saving = true
     try {
       const stored = await adapter.save(coll, next, prev, info?.meta)
@@ -577,6 +590,10 @@ GET products/_search
       editingId = id
       toast.success(prev ? `${noun.item} saved` : `${noun.item} added`)
     } catch (e) {
+      if (prev) {
+        docs = before
+        dataVersion = beforeVersion + 2
+      }
       draftError = msg(e)
     } finally {
       saving = false
@@ -590,20 +607,24 @@ GET products/_search
       confirmDelete = true
       return
     }
-    saving = true
+    // Optimistic: gone from the list now; back, with the error, if the
+    // database refuses.
+    const before = docs
+    const beforeTotal = total
+    const id = adapter.idOf(d, info?.meta)
+    docs = docs.filter((x) => adapter.idOf(x, info?.meta) !== id)
+    if (total != null) total = Math.max(0, total - 1)
+    dataVersion += 1
+    closePanel()
+    confirmDelete = false
     try {
       await adapter.remove(coll, d, info?.meta)
-      const id = adapter.idOf(d, info?.meta)
-      docs = docs.filter((x) => adapter.idOf(x, info?.meta) !== id)
-      if (total != null) total = Math.max(0, total - 1)
-      dataVersion += 1
-      closePanel()
       toast.success(`${noun.item} deleted`)
     } catch (e) {
-      draftError = msg(e)
-    } finally {
-      saving = false
-      confirmDelete = false
+      docs = before
+      total = beforeTotal
+      dataVersion += 1
+      toast.error(`Couldn't delete the ${noun.item.toLowerCase()}`, { description: msg(e) })
     }
   }
 
@@ -619,6 +640,18 @@ GET products/_search
   }
   async function removeMany() {
     const list = pendingRemove.map((i) => docs[i]).filter(Boolean)
+    // Optimistic: every chosen one leaves the list now; any the database
+    // refuses comes back in its place.
+    const before = docs
+    const beforeTotal = total
+    const key = (/** @type {any} */ d) => JSON.stringify(adapter.idOf(d, info?.meta))
+    const chosen = new Set(list.map(key))
+    docs = docs.filter((x) => !chosen.has(key(x)))
+    if (total != null) total = Math.max(0, total - list.length)
+    selected = new Set()
+    dataVersion += 1
+    closePanel()
+    removeOpen = false
     removing = true
     /** @type {any[]} */
     const done = []
@@ -627,14 +660,13 @@ GET products/_search
     for (const d of list) {
       try { await adapter.remove(coll, d, info?.meta); done.push(adapter.idOf(d, info?.meta)) } catch (e) { errors.push(msg(e)) }
     }
-    const gone = new Set(done.map((x) => JSON.stringify(x)))
-    docs = docs.filter((x) => !gone.has(JSON.stringify(adapter.idOf(x, info?.meta))))
-    if (total != null) total = Math.max(0, total - done.length)
-    selected = new Set()
-    dataVersion += 1
-    closePanel()
+    if (errors.length) {
+      const gone = new Set(done.map((x) => JSON.stringify(x)))
+      docs = before.filter((x) => !gone.has(key(x)))
+      if (beforeTotal != null) total = Math.max(0, beforeTotal - done.length)
+      dataVersion += 1
+    }
     removing = false
-    removeOpen = false
     const ok = done.length
     if (ok) toast.success(`Deleted ${ok.toLocaleString()} ${ok === 1 ? noun.item.toLowerCase() : noun.items}`)
     if (errors.length) toast.error(`${errors.length} could not be deleted`, { description: errors[0] })
@@ -716,9 +748,10 @@ GET products/_search
       <PanelLeft class="size-6 shrink-0 text-muted-foreground/70" />
       <p class="text-ui-sm text-foreground">Pick {article(noun.collection)} {noun.collection.toLowerCase()} in the sidebar</p>
       {#if where}<p class="font-mono text-ui-2xs text-muted-foreground">{where}</p>{/if}
-      {#if isSearchEngine}
+      {#if isSearchEngine && collectionCount === 0}
         <!-- A new cluster has no indices, so the sidebar says Empty and there is
-             nothing to pick. The console makes the first one. -->
+             nothing to pick. The console makes the first one. Only then: with
+             indices listed beside it, "No indices yet?" read as wrong. -->
         <p class="mt-3 max-w-80 text-ui-xs leading-relaxed text-pretty text-muted-foreground">
           No indices yet? Create one and add a document in the console, then refresh the sidebar.
         </p>
@@ -742,7 +775,7 @@ GET products/_search
         {#if info && docs.length > 0}
           <span class="mr-1 hidden tabular-nums xl:inline">
             <span class="text-foreground">{from.toLocaleString()}-{to.toLocaleString()}</span>
-            {#if total != null} of {total.toLocaleString()}{:else if hasNext || capped} of many{/if}
+            {#if total != null} of {total.toLocaleString()}{:else if hasNext || capped}{' '}of many{/if}
           </span>
         {/if}
         <Select.Root type="single" value={String(size)} onValueChange={(v) => { if (v) setSize(v) }} disabled={loading}>
@@ -765,7 +798,7 @@ GET products/_search
            same select the rest of the app uses. -->
       <SelectMenu
         ariaLabel="View"
-        triggerClass="h-8 w-36"
+        triggerClass="h-8 w-auto min-w-36"
         contentClass="w-[var(--bits-popover-anchor-width)] min-w-[11rem]"
         align="end"
         value={view}
@@ -826,7 +859,7 @@ GET products/_search
          the collection's field names to insert. -->
     <form class={cn('flex shrink-0 flex-col gap-1.5 border-b border-border/30 px-3 py-2', (view === 'indexes' || view === 'aggregate') && 'hidden')} onsubmit={(e) => { e.preventDefault(); find() }}>
       <div class="flex items-center gap-2">
-        <div class="field-surface flex h-8 min-w-0 flex-1 items-center gap-2 pl-3 pr-1 shadow-none transition-[border-color] focus-within:border-ring">
+        <div class="search-shell flex h-8 min-w-0 flex-1 items-center gap-2 pl-3 pr-1">
           <Filter class="size-3.5 shrink-0 text-muted-foreground" />
           <input
             bind:this={filterEl}
@@ -841,7 +874,7 @@ GET products/_search
             disabled={!info}
             onfocus={() => (filterFocused = true)}
             onblur={() => setTimeout(() => (filterFocused = false), 120)}
-            class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/50"
+            class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground"
           />
           {#if queried}
             <button type="button" class={cn(iconBtn, 'size-6')} onclick={reset} title="Clear the query" aria-label="Clear the query"><X class="size-3.5 shrink-0" /></button>
@@ -872,9 +905,9 @@ GET products/_search
               <label class="field-surface flex h-8 min-w-56 flex-1 items-center gap-2 pl-3 pr-1 shadow-none transition-[border-color] focus-within:border-ring">
                 <span class="w-12 shrink-0 text-ui-2xs text-muted-foreground">{o.label}</span>
                 {#if o.key === 'sort'}
-                  <input bind:value={sort} placeholder={o.placeholder} spellcheck="false" autocomplete="off" aria-label={o.label} class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/40" />
+                  <input bind:value={sort} placeholder={o.placeholder} spellcheck="false" autocomplete="off" aria-label={o.label} class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground" />
                 {:else}
-                  <input bind:value={projection} placeholder={o.placeholder} spellcheck="false" autocomplete="off" aria-label={o.label} class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/40" />
+                  <input bind:value={projection} placeholder={o.placeholder} spellcheck="false" autocomplete="off" aria-label={o.label} class="no-field-frame no-focus-ring h-full min-w-0 flex-1 border-0 bg-transparent font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground" />
                 {/if}
                 <button type="button" class={cn(iconBtn, 'size-6')} onclick={() => hideOption(o.key)} aria-label={`Remove ${o.label.toLowerCase()}`} title={`Remove ${o.label.toLowerCase()}`}><X class="size-3 shrink-0" /></button>
               </label>
@@ -1041,7 +1074,7 @@ GET products/_search
             {/if}
             <span class="flex-1"></span>
             <Button variant="ghost" size="sm" onclick={closePanel}>Cancel</Button>
-            <Button size="sm" onclick={() => void save()} disabled={saving || readOnly} title={readOnly ? READ_ONLY_HINT : 'Save (⌘S)'}>
+            <Button size="sm" onclick={() => void save()} disabled={saving || readOnly} title={readOnly ? READ_ONLY_HINT : `Save (${comboTitle('Mod+S')})`}>
               {#if saving}<LoaderCircle class="animate-spin" />{:else}<Check />{/if}
               {creating ? 'Add' : 'Save'}
             </Button>

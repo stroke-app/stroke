@@ -19,7 +19,7 @@ function literalSql(v) {
     // Column reference - use qualified name for column-to-column comparisons
     if ('col' in /** @type {any} */ (v)) {
       const r = /** @type {any} */ (v)
-      return r.table ? `${r.table}.${r.col}` : r.col
+      return r.table ? `${quoteIdent(r.table)}.${quoteIdent(r.col)}` : quoteIdent(r.col)
     }
   }
   return `'${String(v).replace(/'/g, "''")}'`
@@ -31,14 +31,20 @@ function literalSql(v) {
  */
 function whereClauseFromObject(where) {
   const parts = []
-  for (const [k, v] of Object.entries(where)) {
-    if (k === 'AND' && Array.isArray(v)) {
+  /** A LIKE pattern's text as a string literal: the value's own quotes doubled.
+   *  It was spliced in raw, so contains: "O'Neil" ended the string early. */
+  const likeLit = (/** @type {string} */ pattern) => `'${pattern.replace(/'/g, "''")}'`
+  for (const [key, v] of Object.entries(where)) {
+    // Quoted like the table is: a camelCase field (createdAt) folded to
+    // createdat on Postgres and the column was not found.
+    const k = key === 'AND' || key === 'OR' || key === 'NOT' ? key : quoteIdent(key)
+    if (key === 'AND' && Array.isArray(v)) {
       const inner = v.map(w => `(${whereClauseFromObject(w)})`).join(' AND ')
       if (inner) parts.push(inner)
-    } else if (k === 'OR' && Array.isArray(v)) {
+    } else if (key === 'OR' && Array.isArray(v)) {
       const inner = v.map(w => `(${whereClauseFromObject(w)})`).join(' OR ')
       if (inner) parts.push(`(${inner})`)
-    } else if (k === 'NOT' && v && typeof v === 'object') {
+    } else if (key === 'NOT' && v && typeof v === 'object') {
       parts.push(`NOT (${whereClauseFromObject(/** @type {any} */ (v))})`)
     } else if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
       const ops = /** @type {Record<string, unknown>} */ (v)
@@ -48,9 +54,9 @@ function whereClauseFromObject(where) {
       else if ('gte' in ops)    parts.push(`${k} >= ${literalSql(ops.gte)}`)
       else if ('lt' in ops)     parts.push(`${k} < ${literalSql(ops.lt)}`)
       else if ('lte' in ops)    parts.push(`${k} <= ${literalSql(ops.lte)}`)
-      else if ('contains' in ops) parts.push(`${k} LIKE '%${ops.contains}%'`)
-      else if ('startsWith' in ops) parts.push(`${k} LIKE '${ops.startsWith}%'`)
-      else if ('endsWith' in ops) parts.push(`${k} LIKE '%${ops.endsWith}'`)
+      else if ('contains' in ops) parts.push(`${k} LIKE ${likeLit(`%${ops.contains}%`)}`)
+      else if ('startsWith' in ops) parts.push(`${k} LIKE ${likeLit(`${ops.startsWith}%`)}`)
+      else if ('endsWith' in ops) parts.push(`${k} LIKE ${likeLit(`%${ops.endsWith}`)}`)
       else if ('in' in ops && Array.isArray(ops.in)) parts.push(`${k} IN (${ops.in.map(literalSql).join(', ')})`)
       else if ('notIn' in ops && Array.isArray(ops.notIn)) parts.push(`${k} NOT IN (${ops.notIn.map(literalSql).join(', ')})`)
     } else {
@@ -249,7 +255,8 @@ function buildDrizzleContext(tableNames) {
   /** @param {any} col */
   function colExpr(col) {
     if (col && typeof col === 'object' && '__sql' in col) return col.__sql
-    if (col && typeof col === 'object' && 'col' in col) return col.table ? `${col.table}.${col.col}` : col.col
+    // Quoted, as the Prisma side is: users.createdAt folded to createdat.
+    if (col && typeof col === 'object' && 'col' in col) return col.table ? `${quoteIdent(col.table)}.${quoteIdent(col.col)}` : quoteIdent(col.col)
     return col ? String(col) : '*'
   }
 
@@ -344,7 +351,7 @@ function buildPrismaContext(tableNames) {
       if (opts.select && typeof opts.select === 'object') {
         const cols = Object.entries(opts.select)
           .filter(([, v]) => v === true)
-          .map(([k]) => k)
+          .map(([k]) => quoteIdent(k))
         if (cols.length) return cols.join(', ')
       }
       return '*'
@@ -360,7 +367,7 @@ function buildPrismaContext(tableNames) {
     function applyOrderBy(sql, orderBy) {
       if (orderBy) {
         const ob = Array.isArray(orderBy) ? orderBy : [orderBy]
-        const parts = ob.flatMap(o => Object.entries(o).map(([col, dir]) => `${col} ${String(dir).toUpperCase()}`))
+        const parts = ob.flatMap(o => Object.entries(o).map(([col, dir]) => `${quoteIdent(col)} ${String(dir).toUpperCase() === 'DESC' ? 'DESC' : 'ASC'}`))
         if (parts.length) sql += ` ORDER BY ${parts.join(', ')}`
       }
       return sql
@@ -398,7 +405,7 @@ function buildPrismaContext(tableNames) {
       create(opts = {}) {
         const data = opts.data ?? {}
         const keys = Object.keys(data)
-        const cols = keys.join(', ')
+        const cols = keys.map(quoteIdent).join(', ')
         const vals = keys.map(k => literalSql(data[k])).join(', ')
         let sql = `INSERT INTO ${qt} (${cols}) VALUES (${vals})`
         if (opts.select) sql += ` RETURNING ${selectClause(opts)}`
@@ -407,14 +414,14 @@ function buildPrismaContext(tableNames) {
       createMany(opts = {}) {
         const data = Array.isArray(opts.data) ? opts.data : [opts.data ?? {}]
         const keys = Object.keys(data[0] ?? {})
-        const cols = keys.join(', ')
+        const cols = keys.map(quoteIdent).join(', ')
         const valSets = data.map(r => `(${keys.map(k => literalSql(r[k])).join(', ')})`).join(', ')
         const sql = `INSERT INTO ${qt} (${cols}) VALUES ${valSets}${opts.skipDuplicates ? ' ON CONFLICT DO NOTHING' : ''}`
         return { sql, params: [] }
       },
       update(opts = {}) {
         const data = opts.data ?? {}
-        const setCols = Object.entries(data).map(([k, v]) => `${k} = ${literalSql(v)}`).join(', ')
+        const setCols = Object.entries(data).map(([k, v]) => `${quoteIdent(k)} = ${literalSql(v)}`).join(', ')
         let sql = `UPDATE ${qt} SET ${setCols}`
         sql = applyWhere(sql, opts.where ?? {})
         if (opts.select) sql += ` RETURNING ${selectClause(opts)}`
@@ -422,7 +429,7 @@ function buildPrismaContext(tableNames) {
       },
       updateMany(opts = {}) {
         const data = opts.data ?? {}
-        const setCols = Object.entries(data).map(([k, v]) => `${k} = ${literalSql(v)}`).join(', ')
+        const setCols = Object.entries(data).map(([k, v]) => `${quoteIdent(k)} = ${literalSql(v)}`).join(', ')
         let sql = `UPDATE ${qt} SET ${setCols}`
         sql = applyWhere(sql, opts.where ?? {})
         return { sql, params: [] }

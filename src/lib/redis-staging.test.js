@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { createOps, ordered, stage, toOps, toPattern, ttlLabel, ttlOps, unstage } from './redis-staging.js'
+import { createOps, ordered, stage, toOps, toPattern, ttlLabel, ttlOps, unstage, withPendingCreates } from './redis-staging.js'
 
 /** @param {string} key @param {string} cell @param {string[][]} ops */
 const item = (key, cell, ops = [['X', key]]) => ({ key, binary: false, cell, label: cell, ops })
@@ -77,5 +77,15 @@ describe('toPattern / ttlLabel', () => {
     expect(ttlLabel(-1, 0, 5000)).toBe('')
     expect(ttlLabel(90_000, 0, 30_000)).toBe('1m')
     expect(ttlLabel(1000, 0, 2000)).toBe('expired')
+  })
+})
+
+describe('withPendingCreates', () => {
+  it('puts staged keys first and lets a loaded row replace its staged twin', () => {
+    const rows = [{ key: 'greeting' }, { key: 'night:test' }]
+    const out = withPendingCreates(rows, [{ key: 'night:test', isNew: true }, { key: 'fresh', isNew: true }])
+    expect(out.map((r) => r.key)).toEqual(['fresh', 'greeting', 'night:test'])
+    expect(new Set(out.map((r) => r.key)).size).toBe(out.length)
+    expect(withPendingCreates(rows, [])).toBe(rows)
   })
 })

@@ -1,4 +1,5 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   /**
    * The window's menu bar: File, Edit, View, Tools, Help.
    *
@@ -40,7 +41,7 @@
 
   const contentCls =
     "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 duration-75 " +
-    "border border-border/60 bg-popover text-popover-foreground min-w-60 max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim z-[60] outline-none";
+    "chrome-font border border-border/60 bg-popover text-popover-foreground min-w-60 max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim z-[60] outline-none";
 
   // A fixed h-7 row (the compact control height) instead of py-1: padding-based
   // rows grew with the font and zoom, and every menu came out a different
@@ -61,9 +62,9 @@
 {#snippet item(/** @type {string} */ icon, /** @type {string} */ label, /** @type {string} */ action, /** @type {string} */ combo = "", /** @type {boolean} */ disabled = false)}
   <Menubar.Item class={itemCls} {disabled} onSelect={() => run(action)}>
     <Icon name={icon} class="size-3.5 shrink-0 text-muted-foreground" />
-    <span data-slot="menu-label" class="min-w-0 truncate">{label}</span>
-    {#if COMMAND_BY_ID.has(combo)}<Kbd command={combo} class="ml-auto shrink-0 ps-6 text-muted-foreground/80" />
-    {:else if combo}<Kbd {combo} class="ml-auto shrink-0 ps-6 text-muted-foreground/80" />{/if}
+    <span data-slot="menu-label" class="min-w-0 truncate">{$tx('menubar.' + label, label)}</span>
+    {#if COMMAND_BY_ID.has(combo)}<Kbd command={combo} class="ml-auto shrink-0 ps-6 text-muted-foreground" />
+    {:else if combo}<Kbd {combo} class="ml-auto shrink-0 ps-6 text-muted-foreground" />{/if}
   </Menubar.Item>
 {/snippet}
 
@@ -71,7 +72,7 @@
 <Menubar.Root class="flex shrink-0 items-center gap-0.5" aria-label="Main menu">
   <!-- File -->
   <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>File</Menubar.Trigger>
+    <Menubar.Trigger class={triggerCls}>{$tx('menubar.File', 'File')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("file-text", "New tab", "newTab", "tab.new")}
@@ -91,7 +92,7 @@
 
   <!-- Edit -->
   <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>Edit</Menubar.Trigger>
+    <Menubar.Trigger class={triggerCls}>{$tx('menubar.Edit', 'Edit')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("search", "Search rows", "search", "table.search", !connected)}
@@ -108,7 +109,7 @@
 
   <!-- View -->
   <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>View</Menubar.Trigger>
+    <Menubar.Trigger class={triggerCls}>{$tx('menubar.View', 'View')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("layout-list", "Toggle sidebar", "toggleSidebar", "view.sidebar")}
@@ -127,7 +128,7 @@
 
   <!-- Tools -->
   <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>Tools</Menubar.Trigger>
+    <Menubar.Trigger class={triggerCls}>{$tx('menubar.Tools', 'Tools')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("box", "Database objects", "objects", "", !connected)}
@@ -149,7 +150,7 @@
 
   <!-- Help -->
   <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>Help</Menubar.Trigger>
+    <Menubar.Trigger class={triggerCls}>{$tx('menubar.Help', 'Help')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("command", "Keyboard shortcuts", "shortcuts", "help.shortcuts")}

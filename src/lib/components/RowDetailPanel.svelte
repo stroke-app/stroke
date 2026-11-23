@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import FieldSelect from './FieldSelect.svelte';
   import { getAppScale } from '$lib/app-zoom.js'
   import X from '@lucide/svelte/icons/x'
@@ -27,6 +28,7 @@
   import {
     isEditableType,
     isBooleanType,
+    asBooleanValue,
     getColumnEnumValues,
     valueToEditString,
     parseCellInput,
@@ -129,6 +131,10 @@
 
   // Field list for row details view
   const pkSet = $derived(new Set(primaryKey))
+  /** Past this a field shows its value cut (it is clamped on screen anyway). */
+  const DISPLAY_MAX = 4000
+  /** Past this a value is not edited in a field. */
+  const INLINE_EDIT_MAX = 64 * 1024
 
   const fields = $derived.by(() => {
     void dataVersion
@@ -136,22 +142,25 @@
     const row = rows[target.rowIdx] ?? []
     const canEdit = !!onsave && primaryKey.length > 0
     return columns.map((col, i) => {
-      const raw = normalizeCellValue(row[i])
       const dataType = col.dataType ?? col.data_type ?? ''
+      const raw = isBooleanType(dataType) ? asBooleanValue(normalizeCellValue(row[i])) : normalizeCellValue(row[i])
       const normalType = normalizeColumnType(dataType)
       const enumValues = getColumnEnumValues(col)
       const isBoolean = isBooleanType(dataType)
       const isPk = pkSet.has(col.name)
       // PK columns, non-editable types, and truncated oversize cells (only a
       // preview was loaded - saving would write it back) are read-only.
-      const editable = canEdit && !isPk && isEditableType(dataType) && !oversizeCellInfo(raw)
       const isNull = raw === null
       const isEmpty = typeof raw === 'string' && raw === ''
+      const full = isNull ? 'NULL' : (isEmpty ? 'EMPTY' : formatNormalValue(raw))
+      // Megabytes in a field's textarea do not paint; the cell panel (Space in
+      // the table) edits values of any size.
+      const editable = canEdit && !isPk && isEditableType(dataType) && !oversizeCellInfo(raw) && full.length <= INLINE_EDIT_MAX
       const isJsonType = normalType.startsWith('json')
       const isTextType = /^(text|varchar|char|character|string|citext|uuid|name)/.test(normalType)
       const isMultiline = typeof raw === 'object' && raw !== null
       const nullable = col.nullable !== false
-      const initialEditStr = valueToEditString(raw)
+      const initialEditStr = editable ? valueToEditString(raw) : ''
       return {
         colIdx: i,
         name: col.name,
@@ -159,7 +168,7 @@
         raw,
         isNull,
         isEmpty,
-        displayValue: isNull ? 'NULL' : (isEmpty ? 'EMPTY' : formatNormalValue(raw)),
+        displayValue: full.length > DISPLAY_MAX ? `${full.slice(0, DISPLAY_MAX)}…` : full,
         initialEditStr,
         editable,
         isPk,
@@ -281,7 +290,7 @@
     try {
       await onsave({ rowIdx: target.rowIdx, colIdx, value })
     } catch (e) {
-      toast.error(`Failed to save ${col.name}`, { description: String(e) })
+      toast.error(`Failed to save ${col.name}`, { description: errorText(e) })
     } finally {
       savingFields = { ...savingFields, [colIdx]: false }
     }
@@ -437,7 +446,7 @@
                     aria-label="Search fields"
                     bind:value={fieldSearch}
                     onkeydown={(e) => { if (e.key === 'Escape' && fieldSearch) { e.preventDefault(); e.stopPropagation(); fieldSearch = '' } }}
-                    class="field-surface h-8 w-full min-w-0 pl-8 pr-2.5 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+                    class="search-box no-field-frame h-8 w-full min-w-0 pl-8 pr-2.5 text-ui-sm"
                   />
                 </div>
               </div>
@@ -455,7 +464,7 @@
                         {#if field.isPk}
                           <KeyRound class="size-3 shrink-0 text-warning" aria-label="Primary key, cannot be changed" />
                         {/if}
-                        <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground/70" title={field.dataType}>{field.dataType}</span>
+                        <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground" title={field.dataType}>{field.dataType}</span>
 
                         {#if field.editable}
                           <DropdownMenu.Root>
@@ -527,7 +536,7 @@
                       {#if !field.editable}
                         <!-- Read-only -->
                         <div
-                          class="w-full px-1.5 font-mono text-ui-xs leading-5 {field.isNull || field.isEmpty ? 'text-muted-foreground/70' : 'text-foreground'} {field.isMultiline ? 'line-clamp-6 whitespace-pre-wrap break-all' : 'line-clamp-2 break-all'}"
+                          class="w-full px-1.5 font-mono text-ui-xs leading-5 {field.isNull || field.isEmpty ? 'text-muted-foreground' : 'text-foreground'} {field.isMultiline ? 'line-clamp-6 whitespace-pre-wrap break-all' : 'line-clamp-2 break-all'}"
                           title={field.displayValue}
                         >{#if field.isNull}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">NULL</span>{:else if field.isEmpty}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">empty</span>{:else}{field.displayValue}{/if}</div>
 
@@ -624,7 +633,7 @@
                 <img
                   src={cellPreviewHref}
                   alt=""
-                  class="max-w-full rounded border border-border object-contain shadow-sm"
+                  class="max-w-full rounded border border-border object-contain"
                   style="max-height: calc(100% - 2.5rem)"
                 />
               {:else if cellPreviewType === 'pdf'}

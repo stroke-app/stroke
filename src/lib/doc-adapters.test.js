@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
+import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
 
 /** A fake CouchDB that records calls and answers from a script. */
 function fake(/** @type {Record<string, any>} */ answers = {}) {
@@ -270,5 +270,73 @@ describe('elasticAdapter', async () => {
     calls.length = 0
     await a.save('logs', { _id: '', n: 1 }, null)
     expect(calls[0].slice(0, 2)).toEqual(['POST', 'logs/_doc?refresh=wait_for'])
+  })
+})
+
+describe('neo4j adapter', () => {
+  const api = {
+    labels: vi.fn(async () => [['Person', 2], ['My Label', 0]]),
+    describe: vi.fn(async () => ({ keys: ['name', 'born'], count: 2 })),
+    page: vi.fn(async () => ({ docs: [{ _id: '4:a:1', _labels: ['Person'], name: 'Ada' }], next: null })),
+    save: vi.fn(async (_l, doc) => ({ ...doc, _id: doc._id ?? '4:a:9' })),
+    remove: vi.fn(async () => {}),
+  }
+  const a = neo4jAdapter(api)
+
+  it('lists labels and pages nodes by skip', async () => {
+    expect(await a.listCollections()).toEqual(['Person', 'My Label'])
+    const p = await a.load('Person', { cursor: null, filter: 'n.born > 1900', size: 50 })
+    expect(api.page).toHaveBeenCalledWith('Person', 'n.born > 1900', 0, 50)
+    expect(p.docs[0].name).toBe('Ada')
+    expect(a.idOf(p.docs[0])).toBe('4:a:1')
+  })
+
+  it('saves to the node that was opened, and creates without an id', async () => {
+    await a.save('Person', { _id: 'edited', name: 'Ada L' }, { _id: '4:a:1', name: 'Ada' })
+    expect(api.save).toHaveBeenLastCalledWith('Person', { _id: '4:a:1', name: 'Ada L' })
+    await a.save('Person', { name: 'Grace' }, null)
+    expect(api.save).toHaveBeenLastCalledWith('Person', { _id: null, name: 'Grace' })
+    await a.remove('Person', { _id: '4:a:1' })
+    expect(api.remove).toHaveBeenCalledWith('4:a:1')
+  })
+
+  it('quotes unusual labels in the seed query', () => {
+    expect(a.querySeed('Person')).toBe('MATCH (n:Person) RETURN n LIMIT 100')
+    expect(a.querySeed('My Label')).toBe('MATCH (n:`My Label`) RETURN n LIMIT 100')
+  })
+})
+
+describe('influx adapter', () => {
+  const api = {
+    measurements: vi.fn(async () => ['cpu', 'mem']),
+    describe: vi.fn(async () => ({ tags: ['host'], fields: [{ name: 'usage', type: 'float' }] })),
+    page: vi.fn(async () => ({ docs: [{ time: 't', host: 'a', usage: 1 }], next: 1 })),
+  }
+
+  it('reads measurements and pages of points, and never writes', async () => {
+    const a = influxAdapter(api, '2')
+    expect(a.readOnly).toBe(true)
+    expect(await a.listCollections()).toEqual(['cpu', 'mem'])
+    expect((await a.describe('cpu')).summary).toEqual(['1 tags', '1 fields'])
+    const p = await a.load('cpu', { cursor: null, filter: "host = 'a'", size: 1 })
+    expect(api.page).toHaveBeenCalledWith('cpu', "host = 'a'", 0, 1)
+    expect(p.cursor).toBe(1)
+    await expect(a.save('cpu', {}, null)).rejects.toThrow(/read-only/)
+    await expect(a.remove('cpu', {})).rejects.toThrow(/read-only/)
+  })
+
+  it('seeds SQL or InfluxQL by version', () => {
+    expect(influxAdapter(api, '3').querySeed('my"m')).toBe('SELECT * FROM "my""m" ORDER BY time DESC LIMIT 100')
+    expect(influxAdapter(api, '1').querySeed('my"m')).toBe('SELECT * FROM "my\\"m" ORDER BY time DESC LIMIT 100')
+    expect(influxAdapter(api, '3').consoleLabel).toBe('SQL')
+  })
+})
+
+describe('docGrid time columns', () => {
+  it("types an engine's named time column as a timestamp, and only that", async () => {
+    const { docGrid } = await import('./doc-adapters.js')
+    const docs = [{ time: '2026-11-21T11:04:44Z', at: '2026-11-21T11:04:44Z', v: 1 }]
+    const g = docGrid(docs, [], ['time'])
+    expect(g.columns.map((c) => c.data_type)).toEqual(['timestamp', 'string', 'int'])
   })
 })

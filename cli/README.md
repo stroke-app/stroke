@@ -28,7 +28,9 @@ npx strokedb
 | `--port <port>` | Port for the local bridge (default: any free port) |
 | `--no-open` | Print the studio link instead of opening a browser |
 | `--share` | (Labs) Also print a link that opens this studio on any device. Read-only. Needs Node 22+ |
-| `--write` | With `--share`: let the link edit rows and run any SQL |
+| `--write` | With `--share` or `mcp`: allow edits and any SQL (read-only otherwise) |
+| `--table <table>` | Open on this table: `schema.table`, or just its name |
+| `--json` | Print the links as one JSON line (`studio`, `share`, `app`); everything else goes to stderr |
 
 ## How the web studio is kept private
 
@@ -55,3 +57,32 @@ SQLite in the web studio needs Node 22.5 or newer.
 - Stop it with Ctrl+C; the link stops working until you share again (a new run makes a new link).
 
 The desktop app can share an open connection the same way: turn on Settings → Labs → Share as a web studio, then pick **Share as web studio** in the command palette.
+
+Everyone on a shared link sees everyone else: the cell each person is on, their pointer, and what they type before saving. A saved change reloads the table for the rest.
+
+## AI agents
+
+An AI coding agent can show you the database, even when it runs on another machine (a cloud box, a dev container). Add the MCP server to it once, in the project folder:
+
+```sh
+claude mcp add strokedb -- npx -y strokedb mcp
+```
+
+It finds the database the same way as above (or pass one: `npx -y strokedb mcp postgres://...`) and offers four tools:
+
+| Tool | |
+| --- | --- |
+| `list_tables` | Tables and views, with row counts |
+| `describe_table` | A table's columns, types and keys |
+| `query` | One read-only statement, up to 100 rows back as JSON |
+| `show_table` | Opens a table for you: a web studio link and a `stroke://` link for the app, both starting on that table |
+
+After the first `show_table`, the agent's next ones switch your open studio to the table it names, with a note saying who opened it. The agent shows up in the studio as a participant.
+
+It's read-only unless the server runs with `--write`. The links are shares like the ones above: end-to-end encrypted, and alive while the MCP server runs.
+
+Without MCP, the same in one command:
+
+```sh
+npx strokedb --share --no-open --json --table users
+```

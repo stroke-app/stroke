@@ -20,7 +20,7 @@
   import Network from "@lucide/svelte/icons/network";
   import X from "@lucide/svelte/icons/x";
 
-  import { SHORTCUT_GROUPS, keycaps, comboText, IS_MAC, rowCommandIds } from "$lib/shortcuts.js";
+  import { SHORTCUT_GROUPS, keycaps, comboText, rowCommandIds } from "$lib/shortcuts.js";
   import ShortcutRecorder from "./ShortcutRecorder.svelte";
   import Kbd from "./Kbd.svelte";
   import { keybindings, effectiveShortcutGroups } from "$lib/stores/keybindings.js";
@@ -34,8 +34,6 @@
 
   // Platform flag comes from the index too, so this dialog and the bindings
   // agree on what machine they are running on.
-  const isMac = IS_MAC;
-  const mod = isMac ? "⌘" : "Ctrl";
 
   // The shortcut list lives in $lib/shortcuts.js. It used to be written out here
   // as per-platform keycap arrays, which meant this dialog could - and did -
@@ -159,13 +157,13 @@
             <Icon
               class={cn(
                 "size-3.5 shrink-0 transition-colors",
-                active ? "text-foreground/80" : "text-muted-foreground group-hover:text-muted-foreground",
+                active ? "text-foreground/80" : "text-muted-foreground",
               )}
             />
             {group.label}
             <span class={cn(
-              "ml-auto text-ui-2xs tabular-nums text-muted-foreground/70",
-              active ? "text-muted-foreground" : "text-muted-foreground group-hover:text-muted-foreground",
+              "ml-auto text-ui-2xs tabular-nums text-muted-foreground",
+              active ? "text-muted-foreground" : "text-muted-foreground",
             )}>
               {group.shortcuts.length}
             </span>

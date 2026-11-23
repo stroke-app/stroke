@@ -87,7 +87,52 @@
    */
   const PREVIEW_ROWS = 5000
   const truncated = $derived(rows.length > PREVIEW_ROWS)
-  const previewRows = $derived(truncated ? rows.slice(0, PREVIEW_ROWS) : rows)
+
+  /**
+   * Past this, a cell is cut in the preview (only there). One jsonb holding a
+   * file is a million-character value, which made a line the editor could not
+   * paint (blank once scrolled) or, wrapped, laid out all at once. Copy and
+   * Download serialise the uncut rows whenever anything was cut.
+   */
+  const CELL_PREVIEW_MAX = 4000
+
+  /** @param {number} n */
+  function sizeLabel(n) {
+    return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.round(n / 1024)} KB`
+  }
+
+  /** @param {unknown} v @returns {[unknown, boolean]} */
+  function clampCell(v) {
+    if (v === null || v === undefined || typeof v === 'number' || typeof v === 'boolean') return [v, false]
+    /** @type {string} */
+    let s
+    if (typeof v === 'string') {
+      if (v.length <= CELL_PREVIEW_MAX) return [v, false]
+      s = v
+    } else {
+      try { s = JSON.stringify(v) ?? '' } catch { return [v, false] }
+      if (s.length <= CELL_PREVIEW_MAX) return [v, false]
+    }
+    return [`${s.slice(0, CELL_PREVIEW_MAX)}… (${sizeLabel(s.length)}, cut in this preview)`, true]
+  }
+
+  const preview = $derived.by(() => {
+    const src = truncated ? rows.slice(0, PREVIEW_ROWS) : rows
+    let cut = false
+    const out = src.map((row) => {
+      if (!Array.isArray(row)) return row
+      let next = null
+      for (let i = 0; i < row.length; i++) {
+        const [v, c] = clampCell(row[i])
+        if (c) { next ??= row.slice(); next[i] = v; cut = true }
+      }
+      return next ?? row
+    })
+    return { rows: out, cut }
+  })
+  const previewRows = $derived(preview.rows)
+  /** Copy and Download need the rows serialised again: the preview is not all of them. */
+  const previewPartial = $derived(truncated || preview.cut)
 
   // ── Options: which columns, header row, wrap ──────────────────────────────
   const OPTS_KEY = 'stroke:text-view-opts'
@@ -184,7 +229,7 @@
 
   function handleCopy() {
     // The full page, not the capped preview: copying is the point of this view.
-    navigator.clipboard.writeText(truncated ? serialise(rows) : text).then(() => {
+    navigator.clipboard.writeText(previewPartial ? serialise(rows) : text).then(() => {
       copied = true
       if (copiedTimer) clearTimeout(copiedTimer)
       copiedTimer = setTimeout(() => {
@@ -195,7 +240,7 @@
 
   function handleDownload() {
     void saveExportFile(
-      truncated ? serialise(rows) : text,
+      previewPartial ? serialise(rows) : text,
       buildExportFilename(tableName, format),
       format,
     )
@@ -247,7 +292,7 @@
         {/if}
       </PopoverTrigger>
       <PopoverContent align="start" sideOffset={4} class="w-64 p-1">
-        <div data-slot="menu-search" class="flex items-center gap-1.5 px-2 pb-1.5 pt-1">
+        <div data-slot="menu-search" class="search-shell mb-1 flex h-7 items-center gap-1.5 px-2">
           <Icon name="search" class="size-3.5 shrink-0 text-muted-foreground" />
           <input
             type="text"
@@ -316,7 +361,7 @@
       {#if rows.length > 0}
         <span class="select-none px-1 text-ui-2xs tabular-nums text-muted-foreground">
           {rows.length.toLocaleString('en-US')}
-          {rows.length === 1 ? 'row' : 'rows'}{#if hidden.size} · {shownColumns.length} of {columns.length} columns{/if}
+          {rows.length === 1 ? 'row' : 'rows'}{#if hidden.size}{' '}· {shownColumns.length} of {columns.length} columns{/if}
         </span>
         <div class="mx-0.5 h-4 w-px bg-border"></div>
       {/if}
@@ -365,6 +410,14 @@
         <Icon name="alert-triangle" class="size-3.5 shrink-0 text-warning" />
         Previewing the first {PREVIEW_ROWS.toLocaleString()} of
         {rows.length.toLocaleString()} rows. Copy and Download use all of them.
+      </p>
+    {:else if preview.cut}
+      <p
+        class="flex shrink-0 items-center gap-2 border-b border-border/40 bg-warning/[0.06] px-3 py-1.5 text-ui-2xs text-muted-foreground"
+        role="status"
+      >
+        <Icon name="alert-triangle" class="size-3.5 shrink-0 text-warning" />
+        Values over {CELL_PREVIEW_MAX.toLocaleString()} characters are cut in this preview. Copy and Download keep them whole.
       </p>
     {/if}
     {#if shownColumns.length === 0}

@@ -96,12 +96,32 @@ export function normalizePlan(plan, driver) {
 
 // ── Annotating ───────────────────────────────────────────────────────────────
 
-/** Time a node spent in total, across all its loops (Postgres reports per loop). @param {RawNode} n */
-function totalTimeOf(n) {
+/**
+ * Time a node spent in total, across all its loops (Postgres reports per loop).
+ *
+ * Under a Gather the loops are not one after another: each worker process and
+ * the leader run the node at the same time, and each counts as a loop. So
+ * `procs` (the processes the Gather started) divides them back out. Without
+ * it a Parallel Seq Scan with two workers read as three times slower than it
+ * ran, Gather's own time went to zero, and the "slowest step" could point at
+ * the wrong node.
+ * @param {RawNode} n @param {number} procs
+ */
+function totalTimeOf(n, procs = 1) {
   const t = num(n['Actual Total Time'])
   if (t == null) return null
-  return t * (num(n['Actual Loops']) ?? 1)
+  return (t * (num(n['Actual Loops']) ?? 1)) / procs
 }
+
+/** Processes a Gather runs its subtree in: the workers it got, plus the leader. @param {RawNode} n */
+function gatherProcs(n) {
+  if (!/^Gather( Merge)?$/i.test(String(n['Node Type'] ?? ''))) return null
+  const workers = num(n['Workers Launched']) ?? num(n['Workers Planned']) ?? 0
+  return Math.max(1, workers + 1)
+}
+
+/** A WITH query's own plan, which the CTE Scans that read it already time. @param {RawNode} n */
+const cteName = (n) => (n['Parent Relationship'] === 'InitPlan' && /^CTE /.test(String(n['Subplan Name'] ?? '')) ? String(n['Subplan Name']).slice(4) : null)
 
 /**
  * Walk the plan into a flat list with each node's own time and cost.
@@ -113,8 +133,12 @@ export function annotatePlan(plan) {
   const nodes = []
   if (!plan) return { root: null, nodes, analyzed: false, totalTime: 0, totalCost: 0 }
 
-  /** @param {RawNode} raw @param {number} depth @param {string | null} parentId @param {string} id */
-  function walk(raw, depth, parentId, id) {
+  /** CTE name → total time of its plan, and how many CTE Scans read it. */
+  /** @type {Map<string, { time: number, scans: number }>} */
+  const ctes = new Map()
+
+  /** @param {RawNode} raw @param {number} depth @param {string | null} parentId @param {string} id @param {number} procs */
+  function walk(raw, depth, parentId, id, procs = 1) {
     const loops = num(raw['Actual Loops']) ?? 1
     const actualRows = num(raw['Actual Rows'])
     const planRows = num(raw['Plan Rows'])
@@ -131,7 +155,7 @@ export function annotatePlan(plan) {
       loops,
       actualRows: actualRows != null ? actualRows * loops : null,
       planRows: planRows != null ? planRows * (raw['Actual Loops'] != null ? loops : 1) : null,
-      totalTime: totalTimeOf(raw),
+      totalTime: totalTimeOf(raw, procs),
       selfTime: null,
       totalCost: num(raw['Total Cost']),
       selfCost: num(raw['Self Cost']),
@@ -142,11 +166,16 @@ export function annotatePlan(plan) {
     }
     nodes.push(node)
     const kids = Array.isArray(raw.Plans) ? raw.Plans : []
-    node.children = kids.map((k, i) => walk(k, depth + 1, id, `${id}.${i}`))
+    const childProcs = gatherProcs(raw) ?? procs
+    node.children = kids.map((k, i) => walk(k, depth + 1, id, `${id}.${i}`, childProcs))
     if (node.totalTime != null) {
-      const childTime = node.children.reduce((a, c) => a + (c.totalTime ?? 0), 0)
+      // A CTE's plan is a child here, but its time is already inside the CTE
+      // Scans that read it: subtracting both counted it twice.
+      const childTime = node.children.reduce((a, c) => a + (cteName(c.raw) ? 0 : (c.totalTime ?? 0)), 0)
       node.selfTime = Math.max(0, node.totalTime - childTime)
     }
+    const cte = cteName(raw)
+    if (cte && node.totalTime != null) ctes.set(cte, { time: node.totalTime, scans: ctes.get(cte)?.scans ?? 0 })
     if (node.selfCost == null && node.totalCost != null) {
       const childCost = node.children.reduce((a, c) => a + (c.totalCost ?? 0), 0)
       node.selfCost = Math.max(0, node.totalCost - childCost)
@@ -160,6 +189,17 @@ export function annotatePlan(plan) {
   }
 
   const root = walk(plan, 0, null, '0')
+  // A CTE Scan's own time is what is left after the CTE's plan, which is shown
+  // (and timed) as its own subtree. Shared evenly when several scans read it.
+  const scans = nodes.filter((n) => n.type === 'CTE Scan' && ctes.has(String(n.raw['CTE Name'])))
+  for (const n of scans) {
+    const c = ctes.get(String(n.raw['CTE Name']))
+    if (c) c.scans++
+  }
+  for (const n of scans) {
+    const c = ctes.get(String(n.raw['CTE Name']))
+    if (c && n.selfTime != null) n.selfTime = Math.max(0, n.selfTime - c.time / Math.max(1, c.scans))
+  }
   const analyzed = nodes.some((n) => n.totalTime != null)
   const totalTime = analyzed ? nodes.reduce((a, n) => a + (n.selfTime ?? 0), 0) : 0
   const totalCost = nodes.reduce((a, n) => a + (n.selfCost ?? 0), 0)
@@ -169,10 +209,89 @@ export function annotatePlan(plan) {
   return { root, nodes, analyzed, totalTime, totalCost }
 }
 
+// ── Folding wide steps ───────────────────────────────────────────────────────
+
+/**
+ * @typedef {{ kind: 'fold', id: string, parentId: string, depth: number, hidden: number, hiddenRan: number, expanded: boolean }} PlanFold
+ *   A stand-in for the children of a wide step that are not drawn.
+ * @typedef {{ kind: 'node', node: PlanNode, depth: number } | PlanFold} OutlineEntry
+ */
+
+/** Steps that ran: Postgres marks the rest "never executed" with no loops. @param {PlanNode} n */
+const ran = (n) => n.raw['Actual Loops'] == null || n.loops > 0
+
+/**
+ * What to draw of a plan. A step with more children than `limit` (an Append
+ * over 847 partitions) shows the ones that ran, busiest first, up to `limit`,
+ * in plan order; one fold stands for the rest and says how many of them ran.
+ * Drawing every partition made a plan unreadable and the canvas unusable.
+ * `expanded` holds the ids of steps opened in full.
+ * @param {PlanNode | null} root @param {Set<string>} expanded @param {number} [limit]
+ * @returns {{ entries: OutlineEntry[], childrenOf: Map<string, (PlanNode | PlanFold)[]> }}
+ */
+export function planOutline(root, expanded, limit = 12) {
+  /** @type {OutlineEntry[]} */
+  const entries = []
+  /** @type {Map<string, (PlanNode | PlanFold)[]>} */
+  const childrenOf = new Map()
+  /** @param {PlanNode} n @param {number} depth */
+  const visit = (n, depth) => {
+    entries.push({ kind: 'node', node: n, depth })
+    const kids = n.children
+    if (!kids.length) return
+    const wide = kids.length > limit
+    const open = !wide || expanded.has(n.id)
+    let shown = kids
+    if (!open) {
+      const keep = new Set(
+        kids
+          .filter(ran)
+          .slice()
+          .sort((a, b) => b.share - a.share)
+          .slice(0, limit)
+          .map((k) => k.id),
+      )
+      shown = kids.filter((k) => keep.has(k.id))
+    }
+    /** @type {(PlanNode | PlanFold)[]} */
+    const list = [...shown]
+    for (const k of shown) visit(k, depth + 1)
+    if (wide) {
+      const hiddenKids = open ? [] : kids.filter((k) => !shown.includes(k))
+      /** @type {PlanFold} */
+      const fold = {
+        kind: 'fold',
+        id: `${n.id}~fold`,
+        parentId: n.id,
+        depth: depth + 1,
+        hidden: open ? kids.length - limit : hiddenKids.length,
+        hiddenRan: hiddenKids.filter(ran).length,
+        expanded: open,
+      }
+      if (open || fold.hidden > 0) {
+        list.push(fold)
+        entries.push(fold)
+      }
+    }
+    childrenOf.set(n.id, list)
+  }
+  if (root) visit(root, 0)
+  return { entries, childrenOf }
+}
+
+/** "844 more, none ran" / "Show fewer". @param {PlanFold} f */
+export function foldLabel(f) {
+  if (f.expanded) return 'Show fewer'
+  const what = `${fmt(f.hidden)} more`
+  if (f.hiddenRan === 0) return `${what}, none ran`
+  return `${what}, ${fmt(f.hiddenRan)} ran`
+}
+
 // ── Findings ─────────────────────────────────────────────────────────────────
 
 const fmt = (/** @type {number} */ n) => (n >= 1e6 ? `${(n / 1e6).toFixed(1)}M` : n >= 1e4 ? `${Math.round(n / 1e3)}k` : n.toLocaleString('en-US'))
-const isFullScan = (/** @type {string} */ t) => /^(Seq Scan|Full Table Scan|Parallel Seq Scan)$/i.test(t) || /^SCAN \w+$/i.test(t)
+// MongoDB's COLLSCAN and CouchDB's all-documents scan read everything too.
+const isFullScan = (/** @type {string} */ t) => /^(Seq Scan|Full Table Scan|Parallel Seq Scan|COLLSCAN|All documents scan)$/i.test(t) || /^SCAN \w+$/i.test(t)
 
 /**
  * What is worth fixing, worst first. Every node also gets its own warnings,
@@ -197,8 +316,8 @@ export function planInsights(a) {
       const filter = r.Filter ? ` filtered by ${String(r.Filter)}` : ''
       if (n.removed && n.removed > Math.max(1000, rows * 4)) {
         add(n, 'high', `Full scan${where} throws away most rows`, `Read every row and kept ${fmt(rows)}, discarding ${fmt(n.removed)}${filter}. An index on the filtered columns would let it read only the matches.`)
-      } else if (rows > 10000 || (num(r['Rows Examined']) ?? 0) > 10000) {
-        add(n, 'medium', `Full scan${where}`, `Reads all ${fmt(Math.max(rows, num(r['Rows Examined']) ?? 0))} rows${filter}. Fine for small tables or when most rows are needed; otherwise look at an index.`)
+      } else if (rows > 10000 || (num(r['Rows Examined'] ?? r['Docs Examined']) ?? 0) > 10000) {
+        add(n, 'medium', `Full scan${where}`, `Reads all ${fmt(Math.max(rows, num(r['Rows Examined'] ?? r['Docs Examined']) ?? 0))} rows${filter}. Fine for small tables or when most rows are needed; otherwise look at an index.`)
       }
     }
     if (n.misestimate != null && Math.abs(n.misestimate) >= 10 && Math.max(n.actualRows ?? 0, n.planRows ?? 0) >= 100) {

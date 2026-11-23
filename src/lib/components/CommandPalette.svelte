@@ -1,7 +1,11 @@
 <script>
+  import { tx } from '$lib/i18n.js'
+  import { openTransfer } from '$lib/stores/transfer-ui.js'
+  import { EXPORT_FORMATS } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
+  import { engineId, engineLabel } from '$lib/connection-provider.js'
   import * as Command from '$lib/components/ui/command/index.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
@@ -16,6 +20,17 @@
   import ThemeSwatchStrip from './ThemeSwatchStrip.svelte'
 
   let {
+    /** Export the open table in a format, or null when no table tab is open.
+     *  @type {((format: string) => void) | null} */
+    onexporttable = null,
+    /** The open table's name, for the export rows' labels. */
+    exportTableName = '',
+    /** Explain the open editor's query, or null when no editor tab is in front.
+     *  @type {(() => void) | null} */
+    onexplainquery = null,
+    /** Open Import data for the open table, or null when there is none or it is read-only.
+     *  @type {(() => void) | null} */
+    onimporttable = null,
     open = $bindable(false),
     /** @type {'root' | 'docker' | 'connections' | 'tables' | 'pages' | 'ask' | 'theme'} */
     page = $bindable('root'),
@@ -64,6 +79,8 @@
     geoAvailable = false,
     onopenredis = () => {},
     onopenlogs = () => {},
+    /** The Queries page: history, saved queries and charts. */
+    onopenqueries = () => {},
     onopenterminal = () => {},
     onnewterminal = () => {},
     /** What's new in this version, any time. */
@@ -71,6 +88,8 @@
     onopeninsights = () => {},
     /** Labs: share the open database as a web studio (shown when the Labs switch is on). */
     onsharestudio = /** @type {(() => void) | null} */ (null),
+    /** While sharing: the SQL console everyone on the link edits together. */
+    onsharedconsole = /** @type {(() => void) | null} */ (null),
     onopenadvisor = () => {},
     onopenobjects = () => {},
     onopenormschema = () => {},
@@ -82,11 +101,15 @@
     onopenextensions = () => {},
     onopenmap = () => {},
     onopenJsonViewer = () => {},
+    /** A database file in one step: a new SQLite file, or an existing one. @type {(how: 'new' | 'open') => void} */
+    onfiledb = () => {},
     onopenshortcuts = () => {},
     /** My shares: share links made on this account. */
     onopenmyshares = () => {},
     /** Settings ▸ Keybindings, where shortcuts are remapped. */
     onopenkeybindings = () => {},
+    /** Settings, on Appearance (where the theme builder is). */
+    onopenappearance = () => {},
     onopenabout = () => {},
     onopenreport = () => {},
     oncheckupdate = () => {},
@@ -259,24 +282,30 @@
     { icon: 'sparkles',        label: "What's new",       keys: '',    action: onopenwhatsnew,   show: true,      value: 'whats new changelog release notes updates features version' },
     { icon: 'square-terminal', label: 'New terminal tab', keys: '⌃⇧`', action: onnewterminal,    show: connected, value: 'new terminal tab another second shell psql mysql session' },
     { icon: 'code-2',          label: 'ORM runner',       keys: '⌘⇧O', action: onopenorm,        show: connected && !isKeyValue, value: 'open orm runner drizzle prisma query builder' },
-    { icon: 'network',         label: 'Schema diagram',                action: onopenerd,        show: connected && !isKeyValue, value: 'open schema diagram data model er diagram erd entity relationship foreign key pk fk graph hierarchy roadmap mermaid tree dictionary ddl schema map' },
+    { icon: 'network',         label: 'Schema diagram',                action: onopenerd,        show: connected && !isKeyValue, value: 'open schema diagram data model er diagram erd entity relationship relationships relations foreign key foreign keys pk fk graph hierarchy roadmap mermaid tree dictionary ddl schema map' },
     { icon: 'layout-template', label: 'Schema explorer',               action: onopenSchema,     show: connected && hasSchemaExplorer, value: 'open schema explorer indexes enums views materialized' },
-    { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level' },
-    { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && hasAdvisor, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat' },
-    { icon: 'database',        label: 'Instance insights',             action: onopeninsights,   show: connected && hasInsights, value: 'open instance insights monitoring sessions locks replication config pg_settings' },
+    { icon: 'shield-check',    label: 'Security',                      action: onopensecurity,   show: connected && hasSecurity, value: 'open security roles users policies rls row level permissions privileges grants access' },
+    { icon: 'shield-check',    label: 'Advisor',                       action: onopenadvisor,    show: connected && hasAdvisor, value: 'open advisor lint audit checks security performance schema rls unused index foreign key bloat vacuum' },
+    { icon: 'database',        label: 'Instance insights',             action: onopeninsights,   show: connected && hasInsights, value: 'open instance insights monitoring sessions processes activity locks replication config pg_settings slow queries' },
+    { icon: 'users',           label: 'Open shared console',           action: () => onsharedconsole?.(), show: connected && !!onsharedconsole, value: 'shared console collaborate live cursors sql together web studio' },
     { icon: 'globe',           label: 'Share as web studio',           action: () => onsharestudio?.(), show: connected && !!onsharestudio, value: 'share as web studio link remote relay browser device labs collaborate' },
     { icon: 'layout-dashboard',label: 'Dashboard',                     action: onopendashboard,  show: connected && !isKeyValue, value: 'open dashboard saved metrics overview widgets' },
     { icon: 'bar-chart-2',     label: 'Charts',                        action: onopencharts,     show: connected && !isKeyValue, value: 'open charts visualize query results graphs plots' },
     { icon: 'git-branch',      label: 'Diagrams',                      action: onopendiagrams,   show: connected && !isKeyValue, value: 'open diagrams draw erd relationship map' },
     { icon: 'table-2',         label: 'Database objects',              action: onopenobjects,    show: connected && !isKeyValue, value: 'open database objects overview tables views functions routines triggers sizes rows stats' },
     { icon: 'code-2',          label: 'Codegen',                       action: onopenormschema,  show: connected && !isKeyValue, value: 'codegen open schema as code prisma drizzle orm model relations types generate dml psl' },
-    { icon: 'history',         label: 'Activity log',                  action: onopenlogs,       show: connected, value: 'open activity log events history operations' },
+    { icon: 'history',         label: 'Activity log',                  action: onopenlogs,       show: connected, value: 'open activity log logs events history operations audit' },
+    { icon: 'history',         label: 'Query history',                 action: onopenqueries,    show: connected, value: 'queries query history saved queries past runs charts' },
     { icon: 'terminal',        label: 'Query log console', keys: '⌘⇧K', action: ontogglequerylog, show: connected && !isKeyValue, value: 'toggle query log console sql executed statements bottom panel' },
-    { icon: 'globe',           label: 'Map',                           action: onopenmap, show: connected && geoAvailable, value: 'open map geo postgis spatial geometry geography world plot points' },
+    { icon: 'globe',           label: 'Map',                           action: onopenmap, show: connected && geoAvailable, value: 'open map geo postgis spatial geometry geography geojson world plot points' },
     { icon: 'blocks',          label: 'Extensions',                    action: onopenextensions, show: connected && !isKeyValue, value: 'open extensions plugins formatters generators transforms better time uuid' },
-    { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data' },
-    { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool' },
-    { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline drift detection history changes diff' },
+    { icon: 'archive',         label: 'Backup & restore',              action: onopenbackup,     show: connected && !isKeyValue, value: 'backup restore export import dump data schedule scheduled cron' },
+    { icon: 'braces',          label: 'JSON viewer',                   action: onopenJsonViewer, show: connected, value: 'open json viewer explorer jsonpath tool format pretty print' },
+    { icon: 'plus',            label: 'New SQLite database',           action: () => onfiledb('new'), show: true, value: 'new sqlite database file create db local empty' },
+    { icon: 'folder-open',     label: 'Open a database file',          action: () => onfiledb('open'), show: true, value: 'open database file sqlite duckdb db local path browse' },
+    { icon: 'download',        label: 'Export connections and settings', action: () => openTransfer('export'), show: true, value: 'export connections settings snippets saved queries file backup transfer move another computer' },
+    { icon: 'file-up',         label: 'Import connections and settings', action: () => openTransfer('import'), show: true, value: 'import connections settings snippets saved queries file restore transfer move another computer' },
+    { icon: 'git-branch',      label: 'Schema timeline',               action: openschematimeline, show: connected && !isKeyValue, value: 'schema timeline snapshots snapshot drift detection history changes diff version compare' },
     { icon: 'database',        label: 'Local servers',                 action: openlocalservers, show: true, value: 'local servers database postgres mysql mariadb redis mongodb docker native homebrew dbngin start stop version' },
     { icon: 'git-merge',       label: 'Migrations',                    action: openmigrations,   show: connected && !isKeyValue, value: 'migrations prisma drizzle applied pending failed migrate schema history' },
     { icon: 'git-compare',     label: 'Data diff',                     action: opendatadiff,     show: connected && !isKeyValue, value: 'data diff compare tables rows changes' },
@@ -628,9 +657,11 @@
   })
 
   // Derived table groups - used in both the root page and the dedicated tables page
-  const regularTables = $derived(tables.filter((t) => !t.tableKind || t.tableKind === 'table' || t.tableKind === 'foreign_table'))
-  const viewTables = $derived(tables.filter((t) => t.tableKind === 'view'))
-  const matViewTables = $derived(tables.filter((t) => t.tableKind === 'materialized_view'))
+  // The schema list sends `kind`; older callers passed `tableKind`.
+  const kindOf = (/** @type {any} */ t) => t.kind ?? t.tableKind ?? 'table'
+  const regularTables = $derived(tables.filter((t) => kindOf(t) === 'table' || kindOf(t) === 'foreign_table'))
+  const viewTables = $derived(tables.filter((t) => kindOf(t) === 'view'))
+  const matViewTables = $derived(tables.filter((t) => kindOf(t) === 'materialized_view'))
 
   // Search text bound from Command.Input. We filter + cap the Tables page
   // ourselves (instead of mounting every table and letting bits-ui score them
@@ -729,13 +760,42 @@
   // On root page: bits-ui filters with a plain substring check against item value strings.
   const shouldFilter = $derived(page !== 'tables' && page !== 'ask')
 
-  /** @type {(value: string, search: string) => number} */
-  const commandFilter = (value, search) => {
-    if (!search) return 1
-    const v = value.toLowerCase(), s = search.toLowerCase()
-    if (v.includes(s)) return 1
-    // Separator-insensitive fallback so "newtable"/"new-table" match "new table".
-    return stripSep(v).includes(stripSep(s)) ? 1 : 0
+  /**
+   * Ranks root-page matches; bits-ui sorts by the score. The visible label
+   * (passed as the first keyword) outranks the hidden search words, so "Map"
+   * puts Map above Schema diagram, whose keywords also mention maps. It used
+   * to return 1 for every match, which left results in declaration order.
+   * @type {(value: string, search: string, keywords?: string[]) => number}
+   */
+  const commandFilter = (value, search, keywords = []) => {
+    const s = search.trim().toLowerCase()
+    if (!s) return 1
+    const label = (keywords[0] ?? '').toLowerCase()
+    const v = value.toLowerCase()
+    const wordStart = (/** @type {string} */ text) => text.split(/[^a-z0-9]+/).some((w) => w.startsWith(s))
+    if (label) {
+      if (label === s) return 1
+      if (label.startsWith(s)) return 0.95
+      if (wordStart(label)) return 0.9
+    }
+    if (wordStart(v)) return 0.7
+    if (v.includes(s) || label.includes(s)) return 0.5
+    // Several words in any order, each the start of a word: "ai chat" finds
+    // Ask AI ("ask ai assistant chat query"), which as one phrase it never did.
+    const tokens = s.split(/\s+/).filter(Boolean)
+    if (tokens.length > 1) {
+      const all = `${label} ${v}`.split(/[^a-z0-9]+/).filter(Boolean)
+      if (tokens.every((t) => all.some((w) => w.startsWith(t)))) return 0.4
+    }
+    // Separator-insensitive fallback so "newtable"/"new-table" match "new table",
+    // anchored at a word start: unanchored, "map" matched "schema public"
+    // through "sche(ma p)ublic".
+    const words = `${label} ${v}`.split(/[^a-z0-9]+/).filter(Boolean)
+    const q = stripSep(s)
+    for (let i = 0; i < words.length; i++) {
+      if (words.slice(i).join('').startsWith(q)) return 0.3
+    }
+    return 0
   }
 
   /** @param {() => void} action */
@@ -755,6 +815,13 @@
   function connSubtitle(conn) {
     if (conn.type === 'sqlite') return conn.filePath ?? ''
     if (conn.type === 'd1')     return `${conn.accountId?.slice(0, 8) ?? ''}… / ${conn.databaseId?.slice(0, 8) ?? ''}…`
+    // Engines without a host (Spanner, BigQuery, Snowflake, a DSN, ...): the
+    // parts they do have, never a URI (it can hold a password).
+    if (!conn.host) {
+      const c = /** @type {any} */ (conn)
+      const parts = [c.account, c.projectId, c.instanceId, c.databaseId ?? c.dataset, c.dsn && `DSN ${c.dsn}`, c.database]
+      return [...new Set(parts.filter(Boolean))].join(' · ') || engineLabel(engineId(conn))
+    }
     return `${conn.user ?? ''}@${conn.host ?? ''}:${conn.port ?? ''}/${conn.database ?? ''}`
   }
 
@@ -789,11 +856,11 @@
         bind:value={paletteSearch}
         oninput={(/** @type {Event} */ e) => { paletteSearch = /** @type {HTMLInputElement} */ (e.currentTarget).value }}
         placeholder={
-          page === 'root' ? 'Search tables, schemas, commands…'
-          : page === 'tables' ? 'Search tables and views…'
-          : page === 'ask' ? 'Ask a follow-up…'
-          : page === 'pages' ? 'Go to page…'
-          : page === 'theme' ? 'Select a theme…'
+          page === 'root' ? $tx('cmd.ph.root', 'Search tables, schemas, commands…')
+          : page === 'tables' ? $tx('cmd.ph.tables', 'Search tables and views…')
+          : page === 'ask' ? $tx('cmd.ph.ask', 'Ask a follow-up…')
+          : page === 'pages' ? $tx('cmd.ph.pages', 'Go to page…')
+          : page === 'theme' ? $tx('cmd.ph.theme', 'Select a theme…')
           : `Search ${pageLabel[page]}…`
         }
       />
@@ -823,14 +890,17 @@
           : 'show-scrollbar max-h-[min(420px,56vh)] pb-2 [mask-image:linear-gradient(to_bottom,black_calc(100%-16px),transparent)]'}
       >
         {#if page !== 'ask'}
-          <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">No results.</Command.Empty>
+          <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</Command.Empty>
         {/if}
 
         <!-- Shared page-destination row (root "Views" + "Go to page" navigator) -->
         {#snippet pageRow(/** @type {typeof pageItems[number]} */ it)}
-          <Command.Item value={it.value} onSelect={() => run(it.action)}>
+          {@const shown = $tx('cmd.' + it.label, it.label)}
+          <!-- Translated name shown and searchable; the English words stay in
+               the value so either language finds it. -->
+          <Command.Item value={shown === it.label ? it.value : `${it.value} ${shown}`} keywords={[shown]} onSelect={() => run(it.action)}>
             <Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
-            <span data-slot="command-label" class="truncate">{it.label}</span>
+            <span data-slot="command-label" class="truncate">{shown}</span>
             {#if it.keys}<Command.Shortcut keys={it.keys} />{/if}
           </Command.Item>
         {/snippet}
@@ -865,7 +935,7 @@
                             {#each turn.result.rows as row}
                               <tr class="border-t border-border/30">
                                 {#each row.slice(0, 5) as cell}
-                                  <td class={['max-w-[220px] truncate px-3 py-1.5 font-mono text-ui-2xs', cell === null ? 'text-muted-foreground' : 'text-foreground/85']}>{cell === null ? 'NULL' : String(cell)}</td>
+                                  <td class={['max-w-[13.75rem] truncate px-3 py-1.5 font-mono text-ui-2xs', cell === null ? 'text-muted-foreground' : 'text-foreground/85']}>{cell === null ? 'NULL' : String(cell)}</td>
                                 {/each}
                               </tr>
                             {/each}
@@ -920,7 +990,7 @@
         <!-- ── ROOT PAGE ─────────────────────────────────────────────── -->
         {#if page === 'root'}
           {#if paletteSearch.trim() && $appCmdkAi}
-            <Command.Group heading="Ask">
+            <Command.Group heading={$tx('group.Ask', 'Ask')}>
               <Command.Item value={"ask ai " + paletteSearch} onSelect={() => startAsk(paletteSearch)}>
                 <Icon name="sparkles" class="size-4 shrink-0 text-primary" />
                 <span data-slot="command-label" class="truncate">Ask AI: <span class="text-muted-foreground">"{paletteSearch}"</span></span>
@@ -930,14 +1000,14 @@
           {/if}
 
           {#if connected}
-            <Command.Group heading="Views">
+            <Command.Group heading={$tx('group.Views', 'Views')}>
               {#each pageItems as it (it.label)}
                 {@render pageRow(it)}
               {/each}
             </Command.Group>
 
             {#if schemas.length > 0}
-              <Command.Group heading="Schemas">
+              <Command.Group heading={$tx('group.Schemas', 'Schemas')}>
                 {#each schemas as schema (schema)}
                   <Command.Item value="schema {schema}" onSelect={() => run(() => onschemachange(schema))}>
                     <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -951,7 +1021,7 @@
             {/if}
 
             {#if tables.length > 0}
-              <Command.Group heading="Tables">
+              <Command.Group heading={$tx('group.Tables', 'Tables')}>
                 {#each regularTables.slice(0, 8) as table (table.name)}
                   <Command.Item value="table {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
                     <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -966,6 +1036,13 @@
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">view</span>
                   </Command.Item>
                 {/each}
+                {#each matViewTables.slice(0, 4) as table (table.name)}
+                  <Command.Item value="materialized view {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
+                    <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
+                    <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">mat. view</span>
+                  </Command.Item>
+                {/each}
                 {#if tables.length > 12}
                   <Command.Item value="browse all tables views search" onSelect={() => navigate('tables')}>
                     <Icon name="table-2" class="size-4 shrink-0 opacity-40" />
@@ -976,7 +1053,7 @@
               </Command.Group>
             {/if}
 
-            <Command.Group heading="AI">
+            <Command.Group heading={$tx('group.AI', 'AI')}>
               <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)}>
                 <Icon name="bot" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Ask AI</span>
@@ -996,7 +1073,7 @@
               </Command.Item>
             </Command.Group>
 
-            <Command.Group heading="Queries">
+            <Command.Group heading={$tx('group.Queries', 'Queries')}>
               <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)}>
                 <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Query history</span>
@@ -1004,7 +1081,7 @@
             </Command.Group>
 
             {#if savedQueries.length > 0}
-              <Command.Group heading="Saved queries">
+              <Command.Group heading={$tx('group.Saved queries', 'Saved queries')}>
                 {#each savedQueries as entry (entry.id)}
                   <Command.Item value="saved query {entry.name} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1015,7 +1092,7 @@
             {/if}
 
             {#if queryHistory.length > 0}
-              <Command.Group heading="Recent queries">
+              <Command.Group heading={$tx('group.Recent queries', 'Recent queries')}>
                 {#each queryHistory.slice(0, 20) as entry (entry.id)}
                   <Command.Item value="recent query {entry.title} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1025,7 +1102,34 @@
               </Command.Group>
             {/if}
 
-            <Command.Group heading="Actions">
+            {#if (onexporttable || onimporttable) && paletteSearch.trim()}
+              <!-- Export was only in the table toolbar's menu: "export" here
+                   found Backup & restore and nothing else. Only while searching,
+                   so eight format rows don't sit in the root list. -->
+              <Command.Group heading={$tx('group.Export and import', 'Export and import')}>
+                {#each onexporttable ? EXPORT_FORMATS : [] as fmt (fmt.id)}
+                  <Command.Item value={`export download save table rows ${fmt.label} ${fmt.id} ${fmt.hint}`} keywords={[`Export as ${fmt.label}`]} onSelect={() => run(() => onexporttable?.(fmt.id))}>
+                    <Icon name="file-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Export {exportTableName || 'table'} as {fmt.label}</span>
+                    <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">{fmt.hint}</span>
+                  </Command.Item>
+                {/each}
+                {#if onimporttable}
+                  <Command.Item value="import load upload rows file csv json excel into table" keywords={['Import data']} onSelect={() => run(onimporttable)}>
+                    <Icon name="file-up" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Import data into {exportTableName || 'table'}…</span>
+                  </Command.Item>
+                {/if}
+              </Command.Group>
+            {/if}
+            <Command.Group heading={$tx('group.Actions', 'Actions')}>
+              {#if onexplainquery}
+                <!-- Explain was only a button in the results bar. -->
+                <Command.Item value="explain query plan analyze cost why slow performance" keywords={['Explain query']} onSelect={() => run(onexplainquery)}>
+                  <Icon name="scan-search" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Explain query</span>
+                </Command.Item>
+              {/if}
               <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)}>
                 <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Refresh tables</span>
@@ -1084,7 +1188,7 @@
           <!-- ── Switch database, other saved connections, right at root ── -->
           {@const otherConns = savedConnections.filter((c) => c.id !== activeConnectionId)}
           {#if otherConns.length > 0}
-            <Command.Group heading="Switch database">
+            <Command.Group heading={$tx('group.Switch database', 'Switch database')}>
               {#each otherConns.slice(0, 8) as conn (conn.id)}
                 <Command.Item
                   value="switch database connection {conn.name} {connSubtitle(conn)} {conn.type}"
@@ -1104,7 +1208,7 @@
           {/if}
 
           <!-- ── Drill-in: Connections ───────────────────────────────── -->
-          <Command.Group heading="Database">
+          <Command.Group heading={$tx('group.Database', 'Database')}>
             <Command.Item
               value="connections switch database connect postgres mysql sqlite saved {savedConnections.map(c => c.name).join(' ')}"
               onSelect={() => navigate('connections')}
@@ -1116,10 +1220,16 @@
               {/if}
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
             </Command.Item>
+            <!-- Also at the top level: "new connection" found nothing here
+                 because the item lived only inside Connections. -->
+            <Command.Item value="new connection add database server" keywords={['New connection']} onSelect={() => run(onopenconnection)}>
+              <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+              <span data-slot="command-label" class="truncate">New connection…</span>
+            </Command.Item>
           </Command.Group>
 
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
-          <Command.Group heading="Launch">
+          <Command.Group heading={$tx('group.Launch', 'Launch')}>
             <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')}>
               <DbIcon id="docker" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
@@ -1128,7 +1238,7 @@
           </Command.Group>
 
           <!-- ── Drill-in: Theme ────────────────────────────────────── -->
-          <Command.Group heading="Appearance">
+          <Command.Group heading={$tx('group.Appearance', 'Appearance')}>
             <Command.Item value="theme appearance colour color scheme palette dark light mode switch change" onSelect={openThemePage}>
               <Icon name={getThemeDefinition($appThemeId)?.isDark ? 'moon' : 'sun'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Theme…</span>
@@ -1139,12 +1249,17 @@
                 <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
               </span>
             </Command.Item>
+            <!-- The builder lives in Settings; "theme builder" found nothing here. -->
+            <Command.Item value="theme builder custom make your own colours colors grain intensity" onSelect={() => run(onopenappearance)}>
+              <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+              <span data-slot="command-label" class="truncate">Theme builder</span>
+            </Command.Item>
           </Command.Group>
 
         <!-- ── TABLES PAGE ───────────────────────────────────────────── -->
         {:else if page === 'tables'}
           {#if tablesPageRegular.total > 0}
-            <Command.Group heading="Tables">
+            <Command.Group heading={$tx('group.Tables', 'Tables')}>
               {#each tablesPageRegular.items as table (table.name)}
                 <Command.Item value="table {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
                   <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1164,7 +1279,7 @@
             </Command.Group>
           {/if}
           {#if tablesPageViews.total > 0}
-            <Command.Group heading="Views">
+            <Command.Group heading={$tx('group.Views', 'Views')}>
               {#each tablesPageViews.items as table (table.name)}
                 <Command.Item value="view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
                   <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1179,10 +1294,10 @@
             </Command.Group>
           {/if}
           {#if tablesPageMatViews.total > 0}
-            <Command.Group heading="Materialized views">
+            <Command.Group heading={$tx('group.Materialized views', 'Materialized views')}>
               {#each tablesPageMatViews.items as table (table.name)}
                 <Command.Item value="materialized view {activeSchema} {table.name} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
-                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                   <span
                     data-slot="command-trailing"
@@ -1201,7 +1316,7 @@
         <!-- ── DOCKER PAGE ────────────────────────────────────────────── -->
         {:else if page === 'docker'}
           {#if dockerRunning.length}
-            <Command.Group heading="Running">
+            <Command.Group heading={$tx('group.Running', 'Running')}>
               {#each dockerRunning as d (d.containerId)}
                 <Command.Item
                   value="running open {d.name} {d.engine} {d.image} {d.port}"
@@ -1235,7 +1350,7 @@
         <!-- ── CONNECTIONS PAGE ───────────────────────────────────────── -->
         {:else if page === 'connections'}
           {#if savedConnections.length > 0}
-            <Command.Group heading="Saved connections">
+            <Command.Group heading={$tx('group.Saved connections', 'Saved connections')}>
               {#each savedConnections as conn (conn.id)}
                 {@const driverIconName = driverIcon(conn.type ?? 'postgres')}
                 {@const isActive = conn.id === activeConnectionId}
@@ -1256,7 +1371,7 @@
               {/each}
             </Command.Group>
           {/if}
-          <Command.Group heading="Add">
+          <Command.Group heading={$tx('group.Add', 'Add')}>
             <Command.Item value="new connection add connect database" onSelect={() => run(onopenconnection)}>
               <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">New connection…</span>
@@ -1265,7 +1380,7 @@
 
         {:else if page === 'pages'}
           <!-- Go to page, VSCode-style focused navigator (Ctrl/⌘+P) -->
-          <Command.Group heading="Go to page">
+          <Command.Group heading={$tx('group.Go to page', 'Go to page')}>
             {#each pageItems as it (it.label)}
               {@render pageRow(it)}
             {/each}
@@ -1299,7 +1414,7 @@
         <div class="flex h-10 shrink-0 items-center gap-2 border-t border-border/50 bg-muted/20 ps-4 pe-2 text-ui-2xs text-muted-foreground">
           <Icon name="sparkles" class="size-3.5 shrink-0 text-primary" />
           <span class="min-w-0 truncate">{askModel}</span>
-          {#if askStreaming}<span class="shrink-0 text-muted-foreground/70">· answering</span>{/if}
+          {#if askStreaming}<span class="shrink-0 text-muted-foreground">· answering</span>{/if}
           <span class="flex-1"></span>
           {#if askStreaming}
             <button type="button" class={askBar} onclick={stopAsk}><Icon name="square" class="size-3 shrink-0" />Stop</button>
@@ -1321,9 +1436,9 @@
         </div>
       {:else if page !== 'ask'}
         <div class="flex h-10 shrink-0 items-center gap-4 border-t border-border/50 bg-muted/25 px-3.5 text-ui-2xs text-muted-foreground">
-          <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> Navigate</span>
-          <span class="flex items-center gap-1.5"><Kbd keys={['↵']} /> Select</span>
-          <span class="flex items-center gap-1.5"><Kbd keys={['esc']} /> Close</span>
+          <span class="flex items-center gap-1.5"><Kbd keys={['↑']} /><Kbd keys={['↓']} /> {$tx('cmd.foot.navigate', 'Navigate')}</span>
+          <span class="flex items-center gap-1.5"><Kbd keys={['↵']} /> {$tx('cmd.foot.select', 'Select')}</span>
+          <span class="flex items-center gap-1.5"><Kbd keys={['esc']} /> {$tx('common.close', 'Close')}</span>
         </div>
       {/if}
     </div>

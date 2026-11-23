@@ -276,7 +276,7 @@
     {/if}
 
     {#if mode === 'tree'}
-      <div class="flex h-7 w-48 shrink-0 items-center gap-1.5 rounded-md bg-muted/40 px-2.5 focus-within:bg-muted/70">
+      <div class="search-shell flex h-7 w-48 shrink-0 items-center gap-1.5 px-2.5">
         <Icon name="search" class="size-3 shrink-0 text-muted-foreground" />
         <input
           type="text"

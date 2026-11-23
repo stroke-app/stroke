@@ -9,7 +9,7 @@
  * cleanup that must run after the entry edits (list deletes).
  * @typedef {{ id: number, key: string, binary: boolean, cell: string, label: string,
  *   display?: string, deleted?: boolean, ops: string[][], error?: string,
- *   create?: { type: string, preview: string } }} Staged
+ *   create?: { type: string, preview: string, ttlSeconds?: number | null } }} Staged
  */
 
 /** Placeholder a deleted list element is set to before one LREM removes them all. */
@@ -188,4 +188,21 @@ export function quoteArg(s) {
 /** A staged op as a readable command line, for the review list. @param {string[]} args */
 export function commandLine(args) {
   return args.map((a, i) => (i === 0 ? a : quoteArg(a))).join(' ')
+}
+
+/**
+ * The key list with staged new keys on top. Apply reads new keys back into the
+ * list before it clears them from the staged changes, so for a moment a key is
+ * in both; the keyed list then stopped the view with each_key_duplicate. A
+ * loaded row wins over the staged one with the same key.
+ * @template {{ key: string }} R
+ * @param {R[]} rows loaded keys, in display order
+ * @param {R[]} creates staged new keys
+ * @returns {R[]}
+ */
+export function withPendingCreates(rows, creates) {
+  if (!creates.length) return rows
+  const present = new Set(rows.map((r) => r.key))
+  const pending = creates.filter((c) => !present.has(c.key))
+  return pending.length ? [...pending, ...rows] : rows
 }

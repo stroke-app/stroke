@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   // DynamoDB tables: a table list, a grid of items loaded a page at a time by
   // Scan or Query (on the table or an index), and a side panel to edit, add or
   // delete one item as JSON. A PartiQL panel docks underneath for anything the
@@ -20,7 +21,7 @@
   import { readOnlyMode, guardWrite, READ_ONLY_HINT } from '$lib/stores/read-only.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { getAppScale } from '$lib/app-zoom.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import {
     unmarshallItem, marshallItem, cellText, attrType, columnsFor, keyShapes, keyOf, keyId,
     queryBody, scanBody, saveRequest, newItemTemplate, SORT_OPS, dynamoGrid,
@@ -262,8 +263,26 @@
       const prev = creating ? null : selectedItem
       const req = saveRequest(table, tableKey, next, prev)
       if (req.op === 'TransactWriteItems' && !confirm('The key changed. This creates a new item and deletes the old one. Continue?')) return
+      // Optimistic for an existing item with the same key: the list shows the
+      // edit now and gets the original back if DynamoDB refuses. A new item,
+      // or a key change, waits for the write.
+      const before = items
+      const sameKey = !!prev && keyId(prev, tableKey) === keyId(next, tableKey)
+      if (sameKey && prev) {
+        const pid = keyId(prev, tableKey)
+        items = items.map((it) => (keyId(it, tableKey) === pid ? next : it))
+        dataVersion++
+      }
       saving = true
-      await dynamoRequest(req.op, req.body)
+      try {
+        await dynamoRequest(req.op, req.body)
+      } catch (e) {
+        if (sameKey) {
+          items = before
+          dataVersion++
+        }
+        throw e
+      }
       const id = keyId(next, tableKey)
       const oldId = prev ? keyId(prev, tableKey) : null
       const kept = items.filter((it) => {
@@ -298,6 +317,15 @@
   async function removeMany() {
     if (!tableKey) return
     const list = pendingRemove.map((i) => items[i]).filter(Boolean)
+    // Optimistic: the chosen items leave the list now; any DynamoDB refuses
+    // come back in their places.
+    const before = items
+    const chosen = new Set(list.map((it) => keyId(it, tableKey)))
+    items = items.filter((x) => !chosen.has(keyId(x, tableKey)))
+    gridSelected = new Set()
+    selectedId = null
+    dataVersion++
+    removeOpen = false
     removing = true
     /** @type {Set<string>} */
     const gone = new Set()
@@ -306,12 +334,11 @@
     for (const it of list) {
       try { await dynamoRequest('DeleteItem', { TableName: table, Key: keyOf(it, tableKey) }); gone.add(keyId(it, tableKey)) } catch (e) { errors.push(msg(e)) }
     }
-    items = items.filter((x) => !gone.has(keyId(x, tableKey)))
-    gridSelected = new Set()
-    selectedId = null
-    dataVersion++
+    if (errors.length) {
+      items = before.filter((x) => !gone.has(keyId(x, tableKey)))
+      dataVersion++
+    }
     removing = false
-    removeOpen = false
     if (gone.size) toast.success(`Deleted ${gone.size.toLocaleString()} ${gone.size === 1 ? 'item' : 'items'}`)
     if (errors.length) toast.error(`${errors.length} could not be deleted`, { description: errors[0] })
   }
@@ -323,19 +350,20 @@
       confirmDelete = true
       return
     }
-    saving = true
+    // Optimistic: gone now, back with the error if DynamoDB refuses.
+    const before = items
+    const id = keyId(it, tableKey)
+    items = items.filter((x) => keyId(x, tableKey) !== id)
+    dataVersion++
+    selectedId = null
+    confirmDelete = false
     try {
       await dynamoRequest('DeleteItem', { TableName: table, Key: keyOf(it, tableKey) })
-      const id = keyId(it, tableKey)
-      items = items.filter((x) => keyId(x, tableKey) !== id)
-      dataVersion++
-      selectedId = null
       toast.success('Item deleted')
     } catch (e) {
-      draftError = msg(e)
-    } finally {
-      saving = false
-      confirmDelete = false
+      items = before
+      dataVersion++
+      toast.error("Couldn't delete the item", { description: msg(e) })
     }
   }
 
@@ -440,7 +468,7 @@
     try {
       if (await saveExportFile(content, buildExportFilename(table, fmt), fmt)) toast.success(`Exported ${rows.length.toLocaleString()} ${rows.length === 1 ? 'item' : 'items'}`)
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
   async function copyJson() {
@@ -449,7 +477,7 @@
       await navigator.clipboard.writeText(JSON.stringify(objs.length === 1 ? objs[0] : objs, null, 2))
       toast.success(`Copied ${objs.length.toLocaleString()} as JSON`)
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
 
@@ -457,7 +485,7 @@
   /** A quiet text toggle: the on state is foreground, the rest muted. No pill, no frame. */
   const textToggle = 'inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors hover:text-foreground'
   /** A frameless field inside the command bar. */
-  const barInput = 'field-surface h-8 min-w-0 px-3 font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground/60'
+  const barInput = 'field-surface h-8 min-w-0 px-3 font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground'
 
   const from = $derived(items.length ? (size === -1 ? 1 : page * size + 1) : 0)
 </script>
@@ -482,7 +510,7 @@
         {#if loading && items.length > 0}<LoaderCircle class="size-3 shrink-0 animate-spin" />{/if}
         {#if desc && items.length > 0}
           <span class="mr-1 tabular-nums" title={mode === 'scan' && scanned > items.length ? `${scanned.toLocaleString()} scanned` : undefined}>
-            <span class="text-foreground">{size === -1 ? 1 : from.toLocaleString()}-{(size === -1 ? items.length : page * size + items.length).toLocaleString()}</span>{#if lastKey || capped} of many{/if}
+            <span class="text-foreground">{size === -1 ? 1 : from.toLocaleString()}-{(size === -1 ? items.length : page * size + items.length).toLocaleString()}</span>{#if lastKey || capped}{' '}of many{/if}
           </span>
         {/if}
         <Select.Root type="single" value={String(size)} onValueChange={(v) => { if (v) { size = Number(v); void load(true) } }} disabled={loading}>
@@ -675,7 +703,7 @@
             {/if}
             <span class="flex-1"></span>
             <Button variant="ghost" size="sm" onclick={closePanel}>Cancel</Button>
-            <Button size="sm" onclick={() => void save()} disabled={saving || readOnly} title={readOnly ? READ_ONLY_HINT : 'Save (⌘S)'}>
+            <Button size="sm" onclick={() => void save()} disabled={saving || readOnly} title={readOnly ? READ_ONLY_HINT : `Save (${comboTitle('Mod+S')})`}>
               {#if saving}<LoaderCircle class="animate-spin" />{:else}<Check />{/if}
               {creating ? 'Add' : 'Save'}
             </Button>

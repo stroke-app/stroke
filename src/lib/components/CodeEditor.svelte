@@ -214,8 +214,11 @@
       backgroundColor: 'color-mix(in oklch, var(--foreground) 17%, transparent) !important',
     },
     '.cm-activeLine': { backgroundColor: 'color-mix(in oklch, var(--muted) 30%, transparent)' },
+    // Opaque, in the colour behind the editor (`--cm-surface`, measured on
+    // mount): the gutter stays put while long lines scroll sideways under it,
+    // and transparent it let the text show through the line numbers.
     '.cm-gutters': {
-      backgroundColor: 'transparent',
+      backgroundColor: 'var(--cm-surface, transparent)',
       color: 'color-mix(in oklch, var(--muted-foreground) 50%, transparent)',
       border: 'none',
       borderRight: '1px solid color-mix(in oklch, var(--border) 40%, transparent)',
@@ -1031,6 +1034,31 @@
     view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: text }, selection: { anchor: 0 } })
     view.focus()
   }
+
+  /**
+   * The first opaque background behind the editor, as `--cm-surface` on it,
+   * for the gutter. Measured again when the theme changes (a class or
+   * data-theme on the root), since the editor's surface changes colour with it.
+   * @param {HTMLElement} node
+   */
+  function trackSurface(node) {
+    const measure = () => {
+      let el = node.parentElement
+      while (el) {
+        const bg = getComputedStyle(el).backgroundColor
+        if (bg && bg !== 'transparent' && !/rgba\([^)]*,\s*0\)$/.test(bg)) {
+          node.style.setProperty('--cm-surface', bg)
+          return
+        }
+        el = el.parentElement
+      }
+      node.style.removeProperty('--cm-surface')
+    }
+    measure()
+    const mo = new MutationObserver(() => requestAnimationFrame(measure))
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+    return { destroy: () => mo.disconnect() }
+  }
 </script>
 
-<div bind:this={host} class="relative min-h-0 min-w-0 flex-1 overflow-hidden"></div>
+<div bind:this={host} use:trackSurface class="relative min-h-0 min-w-0 flex-1 overflow-hidden"></div>

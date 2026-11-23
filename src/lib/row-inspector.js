@@ -1,4 +1,5 @@
 import { oversizeCellInfo, oversizeCellText } from './cell-value.js'
+import { layoutJson } from './json-layout.js'
 
 /**
  * @param {unknown} value
@@ -10,14 +11,28 @@ export function normalizeCellValue(value) {
 }
 
 /**
- * JSON.stringify replacer that renders backend oversize sentinels as their
- * marker text, so copied rows / detail views show the truncation instead of
- * the raw sentinel wrapper.
- * @param {string} _key @param {unknown} value
+ * `v` with oversize sentinels swapped for their marker text, so copied rows and
+ * detail views show the cut instead of the wrapper. Sentinels only ever sit at
+ * a cell (or a record's cell), so only the top two levels are looked at.
+ * @param {unknown} v @param {number} [depth]
  */
-function oversizeReplacer(_key, value) {
-  const over = oversizeCellInfo(value)
-  return over ? oversizeCellText(over) : value
+function withoutOversize(v, depth = 0) {
+  const over = oversizeCellInfo(v)
+  if (over) return oversizeCellText(over)
+  if (depth >= 1 || v === null || typeof v !== 'object' || Array.isArray(v)) return v
+  /** @type {Record<string, unknown>} */
+  const out = {}
+  for (const [k, x] of Object.entries(/** @type {Record<string, unknown>} */ (v))) out[k] = withoutOversize(x, depth + 1)
+  return out
+}
+
+/**
+ * JSON for reading: short lines at any size (see json-layout.js). Indented
+ * stringify put a 263,000-integer byte array on 263,000 lines.
+ * @param {unknown} v
+ */
+function readableJson(v) {
+  return layoutJson(withoutOversize(v))
 }
 
 /**
@@ -32,7 +47,7 @@ export function formatNormalValue(value) {
     const over = oversizeCellInfo(v)
     if (over) return oversizeCellText(over)
     try {
-      return JSON.stringify(v, oversizeReplacer, 2)
+      return readableJson(v)
     } catch {
       return String(v)
     }
@@ -45,7 +60,7 @@ export function formatNormalValue(value) {
  */
 export function formatJsonValue(value) {
   try {
-    return JSON.stringify(normalizeCellValue(value), oversizeReplacer, 2)
+    return readableJson(normalizeCellValue(value))
   } catch {
     return 'null'
   }

@@ -1,3 +1,6 @@
+// Boot timing (app-reveal.js). Imports are hoisted: this runs once every
+// statically imported module has loaded and evaluated.
+performance.mark('stroke:main')
 import { mount } from 'svelte'
 import './app.css'
 import App from './App.svelte'
@@ -24,8 +27,19 @@ if (import.meta.env.VITE_FRESH_START === '1') {
 // used to leave the failsafe unarmed and the window black.
 armRevealFailsafe()
 applySettings(loadSettings())
-// Frame timing for profiling: dev builds only, opt-in (perf-probe.js).
-if (import.meta.env.DEV && import.meta.env.VITE_STROKE_PERF === '1') {
+// Frame timing for profiling: dev builds, or a release build made for
+// benchmarking with VITE_STROKE_BENCH=1. Opt-in (perf-probe.js); both are
+// build-time constants, so a normal release drops this whole branch.
+if ((import.meta.env.DEV || import.meta.env.VITE_STROKE_BENCH === '1') && import.meta.env.VITE_STROKE_PERF === '1') {
+  // Room for every module a session loads (the default 250 fills at startup),
+  // so the perf log can say which code a connect pulled in.
+  try { performance.setResourceTimingBufferSize(20000) } catch { /* not supported */ }
+  // The stall heartbeat (every 10 ms) costs startup time itself, so it runs
+  // only when asked for: localStorage 'stroke:perf-stalls' = '1'.
+  void import('$lib/perf.js').then((m) => {
+    m.traceMark('main')
+    try { if (localStorage.getItem('stroke:perf-stalls') === '1') m.traceStartupStalls() } catch { /* storage blocked */ }
+  })
   void import('$lib/perf-probe.js').then((m) => m.installPerfProbe())
 }
 installZoomShortcuts()
@@ -99,12 +113,17 @@ document.addEventListener('click', async (e) => {
 // Saved connections are loaded from their on-disk copy before the app reads
 // them (see hydrateConnectionsFromDisk). A fresh-start run skips it, or the
 // file would put back everything it just cleared.
-if (import.meta.env.VITE_FRESH_START !== '1') await hydrateConnectionsFromDisk()
+performance.mark('stroke:settings')
+// The keychain read carries on in the background (secretsReady): only a
+// connect needs passwords, and every connect waits for them (withSecrets).
+if (import.meta.env.VITE_FRESH_START !== '1') await hydrateConnectionsFromDisk({ waitForSecrets: false })
+performance.mark('stroke:connections')
 
 installSelectAll()
 
 const app = mount(App, {
   target: document.getElementById('app'),
 })
+performance.mark('stroke:mount')
 
 export default app

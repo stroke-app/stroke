@@ -1,4 +1,5 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   import { EXPORT_FORMATS as ALL_EXPORT_FORMATS } from '$lib/export.js';
   import { Button } from '$lib/components/ui/button/index.js'
   import Icon from "./Icon.svelte";
@@ -277,6 +278,9 @@
     /** @param {KeyboardEvent} e */
     function handler(e) {
       if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+        // The table area stays mounted (hidden) behind other tabs; the key is
+        // theirs then.
+        if (!structureSearchEl?.getClientRects().length) return;
         e.preventDefault();
         structureSearchEl?.focus();
         structureSearchEl?.select();
@@ -308,6 +312,12 @@
     counting
       ? offset + (isAll ? Math.max(1, loaded) : _effectivePageSize)
       : Math.min(offset + _effectivePageSize, total),
+  );
+  // Infinite scroll appends pages to one list, so the readout counts what has
+  // arrived. It used the page arithmetic above and stayed at "50 of 100,000"
+  // with rows 93-113 on screen.
+  const loadedTo = $derived(
+    loaded > 0 ? (counting ? loaded : Math.min(loaded, total)) : to,
   );
   const pageCount = $derived(Math.max(1, Math.ceil(total / _effectivePageSize) || 1));
   const canPrev = $derived(page > 1);
@@ -449,7 +459,7 @@
   $effect(() => { if (sizeMenuOpen) sizeCustom = PAGE_SIZE_OPTIONS.includes(pageSize) ? "" : String(pageSize); });
   /** 25 · 1K · 5M · All */
   const sizeShort = (/** @type {number} */ n) =>
-    n === -1 ? "All" : n >= 1_000_000 && n % 1_000_000 === 0 ? `${n / 1_000_000}M` : n >= 1000 && n % 1000 === 0 ? `${n / 1000}K` : n.toLocaleString("en-US");
+    n === -1 ? $tx("tb.all", "All") : n >= 1_000_000 && n % 1_000_000 === 0 ? `${n / 1_000_000}M` : n >= 1000 && n % 1000 === 0 ? `${n / 1000}K` : n.toLocaleString("en-US");
   let pageJump = $state("");
   $effect(() => { if (pageMenuOpen) pageJump = String(page); });
   /** Focus + select the page field when the popover opens. @param {HTMLInputElement} el */
@@ -651,14 +661,26 @@
   $effect(() => {
     const el = toolbarEl;
     if (!el) return;
-    const ro = new ResizeObserver(() => void fitToolbar());
+    const ro = new ResizeObserver(scheduleFit);
     ro.observe(el);
     return () => ro.disconnect();
   });
+  // One fit per frame. A table load changes total, counting, from, to and the
+  // page within a few ms of each other, and each used to start its own
+  // reset-and-collapse pass: a render and a forced layout per step, several
+  // times over, in the middle of the load.
+  let _fitFrame = 0;
+  function scheduleFit() {
+    if (_fitFrame) return;
+    _fitFrame = requestAnimationFrame(() => { _fitFrame = 0; void fitToolbar(); });
+  }
+  onDestroy(() => cancelAnimationFrame(_fitFrame));
   // Content that changes the row's natural width without resizing it.
   $effect(() => {
-    void [total, counting, from, to, page, pageSize, savedViews.length, filterCount, hiddenCount, previewColumns.length, tableViewMode, readonly, searchExpanded, showSearchOpts];
-    untrack(() => void fitToolbar());
+    void [total, counting, from, to, page, pageSize, savedViews.length, filterCount, hiddenCount, previewColumns.length, tableViewMode, readonly, searchExpanded, showSearchOpts,
+      // Switching to Record or Chart, or a view that can be reset, adds a button.
+      dataViewMode, canResetView];
+    untrack(scheduleFit);
   });
 
   /** Compact shadcn select trigger for pagination */
@@ -899,8 +921,8 @@
           bind:this={structureSearchEl}
           type="text"
           aria-label="Search column"
-          class="field-surface h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm shadow-none outline-none"
-          placeholder="Search column…"
+          class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm"
+          placeholder={$tx('tb.searchColumn', 'Search column…')}
           value={structureSearch}
           oninput={(e) =>
             onstructuresearchchange(
@@ -926,7 +948,7 @@
             // frame rule in app.css; the radius no longer has anything to beat.
             // The shared field frame (fill + hairline, accent edge on focus, no
             // shadow), same as every NoSQL field.
-            "h-8 w-full min-w-0 pl-8 text-ui-sm shadow-none outline-none placeholder:text-muted-foreground",
+            "search-box no-field-frame h-8 w-full min-w-0 pl-8 text-ui-sm",
             // Right padding is whatever the cluster in that corner occupies:
             // options trigger, keycaps, both, or neither.
             // hint (⌘F) and the toggles never coexist: the hint is for an empty
@@ -937,7 +959,7 @@
             searchHint ? "pr-7 @[11rem]/search:pr-12" : showSearchOpts ? "pr-[7.5rem]" : "pr-7",
             localSearch.trim() && "border-ring!",
           )}
-          placeholder="Search…"
+          placeholder={$tx('common.search', 'Search…')}
           data-slash-focus="20"
           aria-keyshortcuts="/"
           value={localSearch}
@@ -975,7 +997,7 @@
                   "inline-flex h-5 min-w-5 items-center justify-center rounded-md px-1 font-mono text-ui-3xs",
                   active
                     ? "bg-primary/15 text-primary"
-                    : "text-muted-foreground/70 hover:bg-accent hover:text-foreground",
+                    : "text-muted-foreground hover:bg-accent hover:text-foreground",
                 )}
                 onclick={() => onsearchoptionschange({ ...searchOptions, [opt.key]: !active })}
               >{opt.cap}</button>
@@ -1025,14 +1047,14 @@
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="start" class="min-w-64 p-0 text-ui-sm">
             <div class="flex items-center border-b border-border/50 px-3 py-1.5">
-              <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Saved views</span>
+              <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.savedViews', 'Saved views')}</span>
               <button
                 type="button"
                 class="ml-auto rounded px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-[background-color,color] hover:bg-accent hover:text-foreground"
                 title="Back to the unfiltered default"
                 onclick={() => { onresetview(); viewsMenuOpen = false; }}
               >
-                Reset
+                {$tx('tb.reset', 'Reset')}
               </button>
             </div>
             {#if savedViews.length === 0}
@@ -1081,7 +1103,7 @@
             <div class="flex items-center gap-1.5 border-t border-border/50 p-1.5">
               <input
                 type="text"
-                placeholder="Save current as…"
+                placeholder={$tx('tb.saveCurrentAs', 'Save current as…')}
                 bind:value={viewNameDraft}
                 class= "field-surface h-7 w-full min-w-0 flex-1 bg-transparent px-2 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
                 onkeydown={(e) => { if (e.key === 'Enter') { e.preventDefault(); commitSaveView(); } }}
@@ -1091,7 +1113,7 @@
                 disabled={!viewNameDraft.trim()}
                 onclick={commitSaveView}
 >
-                Save
+                {$tx('common.save', 'Save')}
               </Button>
             </div>
           </DropdownMenu.Content>
@@ -1126,7 +1148,7 @@
       <SearchableMenu
         bind:open={sortMenuOpen}
         items={sortItems}
-        placeholder="Sort by column…"
+        placeholder={$tx('tb.sortBy', 'Sort by column…')}
         contentClass="w-60"
         onselect={(it) => applySort(it.col, it.dir)}
       >
@@ -1163,7 +1185,7 @@
       <SearchableMenu
         bind:open={columnsMenuOpen}
         items={columnItems}
-        placeholder="Search columns…"
+        placeholder={$tx('tb.searchColumns', 'Search columns…')}
         contentClass="w-56"
         closeOnSelect={false}
         onselect={toggleColumnItem}
@@ -1184,7 +1206,7 @@
         {/snippet}
         {#snippet header()}
           <div class="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Columns</span>
+            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.columns', 'Columns')}</span>
             <!-- Both actions, whenever both mean something. One toggle that
                  flipped on "anything hidden" made "Hide all" unreachable as
                  soon as a single column was hidden. -->
@@ -1195,7 +1217,7 @@
                   class="text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
                   onclick={hideAllColumns}
                 >
-                  Hide all
+                  {$tx('tb.hideAll', 'Hide all')}
                 </button>
               {/if}
               {#if hiddenCount > 0}
@@ -1204,7 +1226,7 @@
                   class="text-ui-2xs text-muted-foreground transition-colors hover:text-foreground"
                   onclick={showAllColumns}
                 >
-                  Show all
+                  {$tx('tb.showAll', 'Show all')}
                 </button>
               {/if}
             </div>
@@ -1230,7 +1252,7 @@
       <SearchableMenu
         bind:open={focusMenuOpen}
         items={focusColumnItems}
-        placeholder="Jump to column…"
+        placeholder={$tx('tb.jumpTo', 'Jump to column…')}
         contentClass="w-56"
         onselect={(it) => onfocuscolumn(it.value)}
       >
@@ -1238,7 +1260,7 @@
           <button
             {...props}
             class={cn(iconBtn, "shrink-0 @max-[31.25rem]/tb:hidden", hideAt(4), focusMenuOpen && "bg-accent text-foreground")}
-            title="Jump to column"
+            title={$tx('tb.jumpToHead', 'Jump to column')}
             disabled={loading || columns.length === 0}
           >
             <Icon name="crosshair" class="size-3.5 shrink-0" />
@@ -1246,7 +1268,7 @@
         {/snippet}
         {#snippet header()}
           <div class="border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Jump to column</span>
+            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.jumpToHead', 'Jump to column')}</span>
           </div>
         {/snippet}
         {#snippet item(it)}
@@ -1262,7 +1284,7 @@
         type="button"
         class={cn(iconBtn, "shrink-0 @max-[33.75rem]/tb:hidden", hideAt(3))}
         title="Open in SQL editor ({IS_MAC ? '⌘' : 'Ctrl'}+click to run it)"
-        aria-label="Open in SQL editor"
+        aria-label={$tx('tb.openInSql', 'Open in SQL editor')}
         disabled={loading || columns.length === 0}
         onclick={(e) => onopeninsql({ run: e.ctrlKey || e.metaKey })}
       >
@@ -1293,7 +1315,7 @@
         onclick={onaddrow}
       >
         <Icon name="plus" class="size-3.5 shrink-0" />
-        <span class={cn("@max-[27.5rem]/tb:hidden", hideAt(11))}>Add</span>
+        <span class={cn("@max-[27.5rem]/tb:hidden", hideAt(11))}>{$tx('common.add', 'Add')}</span>
       </button>
     {/if}
 
@@ -1324,9 +1346,9 @@
         {#if total > 0 || counting || loading}
           <span
             class={cn("flex shrink-0 items-center gap-1 font-mono text-ui-2xs tabular-nums @max-[37.5rem]/tb:hidden", hideAt(2))}
-            title="{to.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'} loaded{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
+            title="{loadedTo.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'} loaded{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
           >
-            <span class="text-foreground">{total > 0 || counting ? to.toLocaleString("en-US") : "–"}</span>
+            <span class="text-foreground">{total > 0 || counting ? loadedTo.toLocaleString("en-US") : "–"}</span>
             <span class="text-muted-foreground">of {#if counting || (loading && total === 0)}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Counting rows" />{:else}{total.toLocaleString("en-US")}{/if} loaded</span>
           </span>
         {/if}
@@ -1340,7 +1362,7 @@
             class={cn("mr-1 flex min-w-[18ch] shrink-0 items-center justify-end gap-1 font-mono text-ui-2xs tabular-nums @max-[37.5rem]/tb:hidden", hideAt(2))}
             title="{from.toLocaleString('en-US')}-{to.toLocaleString('en-US')} of {counting ? 'counting…' : total.toLocaleString('en-US') + ' rows'}{queryMs > 0 ? ` · ${queryMs}ms` : ''}"
           >
-            <span class="text-foreground">{total > 0 || counting ? `${from.toLocaleString("en-US")}-${to.toLocaleString("en-US")}` : "–"}</span>
+            <span class="text-foreground">{(total > 0 || counting) && !(counting && loading && loaded === 0) ? `${from.toLocaleString("en-US")}-${to.toLocaleString("en-US")}` : "–"}</span>
             {#if loading && total === 0 && !counting}
               <span class="text-muted-foreground">of <Icon name="loader-2" class="inline size-3 shrink-0 animate-spin align-[-2px]" aria-label="Loading rows" /></span>
             {:else if live && !counting}
@@ -1355,19 +1377,21 @@
 
         <div class="flex shrink-0 items-center gap-1.5">
         <!-- Rows per page: presets as a grid plus a custom size, titled so the
-             number in the toolbar is not a bare "1000". -->
+             number in the toolbar is not a bare "1000". It and the pager stay
+             usable while rows load: picking another size starts a new load,
+             which cancels the one in flight on the server. Disabled, a slow
+             table left no way out but waiting. -->
         <Popover bind:open={sizeMenuOpen}>
           <PopoverTrigger
             class={cn(pageSelectTrigger, "inline-flex items-center", "@max-[30rem]/tb:hidden", hideAt(9))}
-            title="Rows per page"
+            title={$tx('tb.rowsPerPage', 'Rows per page')}
             aria-label="Rows per page: {pageSizeLabel(pageSize)}"
-            disabled={loading}
           >
-            {sizeShort(pageSize)}<span class="text-muted-foreground">rows</span>
+            {sizeShort(pageSize)}<span class="text-muted-foreground">{$tx('table.rows', 'rows')}</span>
             <Icon name="chevron-down" class="size-3.5 shrink-0 opacity-60" />
           </PopoverTrigger>
           <PopoverContent align="end" sideOffset={6} class="w-56 p-2">
-            <p class="px-1 pb-1.5 text-ui-2xs font-medium text-muted-foreground">Rows per page</p>
+            <p class="px-1 pb-1.5 text-ui-2xs font-medium text-muted-foreground">{$tx('tb.rowsPerPage', 'Rows per page')}</p>
             <div class="grid grid-cols-4 gap-1">
               {#each PAGE_SIZE_OPTIONS as size (size)}
                 <button
@@ -1395,7 +1419,7 @@
               <input
                 bind:value={sizeCustom}
                 inputmode="numeric"
-                placeholder="Custom"
+                placeholder={$tx('tb.custom', 'Custom')}
                 aria-label="Custom rows per page"
                 class="field-surface h-7 min-w-0 flex-1 px-2 font-mono text-ui-sm tabular-nums shadow-none outline-none placeholder:font-sans placeholder:text-muted-foreground"
               />
@@ -1417,7 +1441,7 @@
           <button
             type="button"
             class={iconBtn}
-            disabled={!canPrev || loading}
+            disabled={!canPrev}
             onclick={onprev}
             aria-label="Previous page"
           >
@@ -1426,7 +1450,7 @@
           <button
             type="button"
             class={iconBtn}
-            disabled={!canNext || loading}
+            disabled={!canNext}
             onclick={onnext}
             aria-label="Next page"
           >
@@ -1445,7 +1469,7 @@
             <button
               type="button"
               class={iconBtn}
-              disabled={!canPrev || loading}
+              disabled={!canPrev}
               onclick={onprev}
               aria-label="Previous page"
             >
@@ -1456,7 +1480,7 @@
                 class="inline-flex h-7 min-w-[4.5ch] items-center justify-center rounded-md px-1.5 text-ui-xs tabular-nums text-foreground transition-colors hover:bg-accent disabled:text-muted-foreground disabled:hover:bg-transparent data-[state=open]:bg-accent"
                 title="Go to page"
                 aria-label="Page {page}{counting ? '' : ` of ${pageCount}`}, go to page"
-                disabled={loading || total === 0 || (!counting && pageCount <= 1)}
+                disabled={total === 0 || (!counting && pageCount <= 1)}
               >
                 {page.toLocaleString()}<span class="px-0.5 text-muted-foreground">/</span>{#if counting}<Icon name="loader-2" class="inline size-3 shrink-0 animate-spin text-muted-foreground" aria-label="Counting rows" />{:else}<span class="text-muted-foreground">{formatCompactCount(pageCount)}</span>{/if}
               </PopoverTrigger>
@@ -1473,7 +1497,7 @@
                   }}
                 >
                   <label class="flex h-8 min-w-0 flex-1 items-center gap-1.5 rounded-lg bg-muted/60 px-2.5 text-ui-xs text-muted-foreground focus-within:ring-1 focus-within:ring-ring/60">
-                    Page
+                    {$tx('tb.page', 'Page')}
                     <input
                       bind:value={pageJump}
                       inputmode="numeric"
@@ -1499,9 +1523,9 @@
                 </div>
                 {#if !counting && pageCount > pageGrid.length}
                   <div class="mt-1 flex items-center justify-between gap-1 border-t border-border/50 px-0.5 pt-1.5">
-                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(1); pageMenuOpen = false; }}>First</button>
-                    <span class="text-ui-3xs text-muted-foreground">Enter to go</span>
-                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(pageCount); pageMenuOpen = false; }}>Last</button>
+                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(1); pageMenuOpen = false; }}>{$tx('tb.first', 'First')}</button>
+                    <span class="text-ui-3xs text-muted-foreground">{$tx('tb.enterToGo', 'Enter to go')}</span>
+                    <button type="button" class="h-6 rounded-md px-2 text-ui-2xs text-muted-foreground hover:bg-accent hover:text-foreground" onclick={() => { onpagechange(pageCount); pageMenuOpen = false; }}>{$tx('tb.last', 'Last')}</button>
                   </div>
                 {/if}
               </PopoverContent>
@@ -1509,7 +1533,7 @@
             <button
               type="button"
               class={iconBtn}
-              disabled={!canNext || loading}
+              disabled={!canNext}
               onclick={onnext}
               aria-label="Next page"
             >
@@ -1534,7 +1558,7 @@
         class={cn(iconBtn, "w-6 rounded-r-none")}
         disabled={loading}
         onclick={onrefresh}
-        title={autoRefreshMs > 0 ? `Refresh data (⌘R) · auto every ${autoRefreshLabel}` : "Refresh data (⌘R)"}
+        title={autoRefreshMs > 0 ? `Refresh data (${comboTitle('Mod+R')}) · auto every ${autoRefreshLabel}` : `Refresh data (${comboTitle('Mod+R')})`}
         aria-label="Refresh data"
       >
         <Icon name="refresh-cw" class={cn("size-3.5", loading && "animate-spin")} />
@@ -1596,11 +1620,11 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="end" class="min-w-52 p-0 text-ui-sm">
         <div class="border-b border-border px-3 py-2.5">
-          <p class="font-medium text-foreground">Pagination</p>
+          <p class="font-medium text-foreground">{$tx('settings.pagination', 'Pagination')}</p>
         </div>
         <div class="flex flex-col gap-3 p-3">
           <label class="flex flex-col gap-1">
-            <span class="text-ui-xs text-muted-foreground">Limit</span>
+            <span class="text-ui-xs text-muted-foreground">{$tx('tb.limit', 'Limit')}</span>
             <Input
               class={cn(
                 "h-7 font-mono text-ui-sm",
@@ -1625,7 +1649,7 @@
             {/if}
           </label>
           <label class="flex flex-col gap-1">
-            <span class="text-ui-xs text-muted-foreground">Offset (skip rows)</span>
+            <span class="text-ui-xs text-muted-foreground">{$tx('tb.offset', 'Offset (skip rows)')}</span>
             <Input
               class="h-7 font-mono text-ui-sm"
               type="text"
@@ -1644,7 +1668,7 @@
               type="button"
               class= "field-surface inline-flex flex-1 h-7 items-center justify-center text-ui-sm text-muted-foreground hover:bg-accent hover:text-foreground"
               onclick={() => { limitOffsetOpen = false; limitError = ""; }}
-            >Cancel</button>
+            >{$tx('common.cancel', 'Cancel')}</button>
             <Button
               class="flex-1" size="sm"
               disabled={!!limitError || draftLimit < 1}
@@ -1659,7 +1683,7 @@
                 limitOffsetOpen = false;
                 limitError = "";
               }}
->Apply</Button>
+>{$tx('common.apply', 'Apply')}</Button>
           </div>
         </div>
       </DropdownMenu.Content>
@@ -1671,8 +1695,8 @@
       <button
         type="button"
         class={cn(iconBtn, "shrink-0 @max-[30rem]/tb:hidden")}
-        title={dataViewMode === "chart" ? "Share this chart as a link" : "Share these rows as a link"}
-        aria-label={dataViewMode === "chart" ? "Share chart" : "Share rows"}
+        title={dataViewMode === "chart" ? "Share this chart as a link" : dataViewMode === "json" ? "Share this JSON as a link" : "Share these rows as a link"}
+        aria-label={dataViewMode === "chart" ? "Share chart" : dataViewMode === "json" ? "Share JSON" : "Share rows"}
         disabled={loading || total === 0 || tableViewMode === "structure"}
         onclick={() => onshare(dataViewMode)}
       >
@@ -1697,7 +1721,7 @@
       </DropdownMenu.Trigger>
       <DropdownMenu.Content align="end" class="min-w-56 [&_[data-slot=dropdown-menu-item]]:whitespace-nowrap [&_[data-slot=dropdown-menu-radio-item]]:whitespace-nowrap">
         <DropdownMenu.Group>
-          <DropdownMenu.GroupHeading class={menuHeading}>View</DropdownMenu.GroupHeading>
+          <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.view', 'View')}</DropdownMenu.GroupHeading>
           {#if tableViewMode !== "structure"}
             <DropdownMenu.RadioGroup
               value={dataViewMode}
@@ -1721,44 +1745,44 @@
         {#if tableViewMode !== "structure"}
           <DropdownMenu.Separator />
           <DropdownMenu.Group>
-            <DropdownMenu.GroupHeading class={menuHeading}>Tools</DropdownMenu.GroupHeading>
+            <DropdownMenu.GroupHeading class={menuHeading}>{$tx('settings.sec.tools', 'Tools')}</DropdownMenu.GroupHeading>
             {#if findReplaceEnabled}
               <DropdownMenu.Item disabled={total === 0 || readonly || !hasPrimaryKey} onSelect={onfindreplace}>
                 <Icon name="replace" class="size-3.5 shrink-0" />
-                <span data-slot="menu-label">Find and replace…</span>
+                <span data-slot="menu-label">{$tx('tb.findReplace', 'Find and replace…')}</span>
                 <DropdownMenu.Shortcut command={IS_MAC ? "table.findReplaceAlt" : "table.findReplace"} />
               </DropdownMenu.Item>
             {/if}
             <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={onopenvirtualcols}>
               <Icon name="function-square" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">Virtual columns…</span>
+              <span data-slot="menu-label">{$tx('tb.virtualColumns', 'Virtual columns…')}</span>
               {#if virtualColCount > 0}
                 <span class="ml-auto rounded-full bg-muted px-1.5 font-mono text-ui-3xs tabular-nums text-muted-foreground">{virtualColCount}</span>
               {/if}
             </DropdownMenu.Item>
             <DropdownMenu.Item disabled={loading || columns.length === 0} onSelect={() => onopeninsql()}>
               <Icon name="terminal" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">Open in SQL editor</span>
+              <span data-slot="menu-label">{$tx('tb.openInSql', 'Open in SQL editor')}</span>
             </DropdownMenu.Item>
             <DropdownMenu.CheckboxItem checked={infiniteScroll} onCheckedChange={() => oninfinitescrolltoggle()}>
               <Icon name="infinity" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">Infinite scroll</span>
+              <span data-slot="menu-label">{$tx('tb.infiniteScroll', 'Infinite scroll')}</span>
             </DropdownMenu.CheckboxItem>
           </DropdownMenu.Group>
           <DropdownMenu.Separator />
           <DropdownMenu.Group>
-            <DropdownMenu.GroupHeading class={menuHeading}>Data</DropdownMenu.GroupHeading>
+            <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.data', 'Data')}</DropdownMenu.GroupHeading>
           <DropdownMenu.Sub>
             <DropdownMenu.SubTrigger disabled={total === 0 && dataViewMode !== 'erd' && dataViewMode !== 'chart'}>
               <Icon name="file-down" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">Export</span>
+              <span data-slot="menu-label">{$tx('common.export', 'Export')}</span>
             </DropdownMenu.SubTrigger>
             <DropdownMenu.SubContent class="min-w-44">
               <!-- GroupHeading needs a Group parent: bits-ui reads the group context
                    from it, and rendering one bare throws "Menu.Group not found". -->
               {#if dataViewMode === 'erd'}
                 <DropdownMenu.Group>
-                  <DropdownMenu.GroupHeading class={menuHeading}>Diagram</DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.diagram', 'Diagram')}</DropdownMenu.GroupHeading>
                   {#each DIAGRAM_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportdiagram(fmt.id)}>
                       <Icon name={fmt.icon} class="size-3.5 shrink-0" />
@@ -1770,7 +1794,7 @@
               {/if}
               {#if dataViewMode === 'chart'}
                 <DropdownMenu.Group>
-                  <DropdownMenu.GroupHeading class={menuHeading}>Chart</DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.chart', 'Chart')}</DropdownMenu.GroupHeading>
                   {#each CHART_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportchart(fmt.id)}>
                       <Icon name={fmt.icon} class="size-3.5 shrink-0" />
@@ -1782,7 +1806,7 @@
               {/if}
               <DropdownMenu.Group>
                 {#if dataViewMode === 'erd' || dataViewMode === 'chart'}
-                  <DropdownMenu.GroupHeading class={menuHeading}>Rows</DropdownMenu.GroupHeading>
+                  <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.rows', 'Rows')}</DropdownMenu.GroupHeading>
                 {/if}
                 {#each EXPORT_FORMATS as fmt (fmt.id)}
                   <DropdownMenu.Item disabled={total === 0} onSelect={() => onexport(fmt.id)}>
@@ -1796,12 +1820,12 @@
           {#if onshare}
             <DropdownMenu.Item disabled={total === 0} onSelect={() => onshare(dataViewMode)}>
               <Icon name="share-2" class="size-3.5 shrink-0" />
-              <span data-slot="menu-label">{dataViewMode === 'chart' ? 'Share chart…' : 'Share rows…'}</span>
+              <span data-slot="menu-label">{dataViewMode === 'chart' ? 'Share chart…' : dataViewMode === 'json' ? 'Share JSON…' : 'Share rows…'}</span>
             </DropdownMenu.Item>
           {/if}
           <DropdownMenu.Item disabled={readonly} onSelect={() => onimport()}>
             <Icon name="file-up" class="size-3.5 shrink-0" />
-            <span data-slot="menu-label">Import data…</span>
+            <span data-slot="menu-label">{$tx('tb.importData', 'Import data…')}</span>
           </DropdownMenu.Item>
           </DropdownMenu.Group>
           {#if selectedCount > 0}
@@ -1853,7 +1877,7 @@
             title="Add a filter condition ({KEY.filter} opens this bar)"
           >
             <Icon name="plus" class="size-3.5 shrink-0" />
-            Add filter
+            {$tx('tb.addFilter', 'Add filter')}
           </button>
           <button
             type="button"
@@ -1872,7 +1896,7 @@
             onclick={clearFilters}
             title="Remove every filter condition ({KEY.reset} also clears search, sort and hidden columns)"
           >
-            Clear filters
+            {$tx('tb.clearFilters', 'Clear filters')}
           </button>
         {/if}
       {/snippet}
@@ -1923,7 +1947,7 @@
           {:else}
           <SearchableMenu
             items={filterColumnItems}
-            placeholder="Search columns…"
+            placeholder={$tx('tb.searchColumns', 'Search columns…')}
             contentClass="w-52"
             onselect={(it) => pickFilterColumn(filter, it.value)}
           >

@@ -83,6 +83,17 @@ const NETWORK_ERROR_PATTERNS = [
 ]
 
 /**
+ * An error as a person reads it: the message alone. Backend errors arrive as
+ * strings, but anything that wrapped one in an Error printed "Error: ..."
+ * through String(e).
+ * @param {unknown} e
+ */
+export function errorText(e) {
+  const s = e instanceof Error ? e.message : typeof e === 'string' ? e : (/** @type {any} */ (e)?.message ?? String(e))
+  return String(s).replace(/^Error:\s*/, '')
+}
+
+/**
  * Returns true when the error message indicates a network / connectivity problem
  * rather than a SQL or application error.
  * @param {string} msg

@@ -8,7 +8,7 @@
  * `src-tauri/src/db/*` per engine family; the inlined literals are for display
  * only and are NOT what gets sent to the database.
  *
- * @typedef {'postgres' | 'mysql' | 'sqlite' | 'd1' | 'libsql' | 'duckdb' | 'clickhouse' | 'mssql' | 'oracle'} Dialect
+ * @typedef {'postgres' | 'mysql' | 'sqlite' | 'd1' | 'libsql' | 'duckdb' | 'clickhouse' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'odbc'} Dialect
  *
  * @typedef {{ name: string, [k: string]: unknown }} Column
  *
@@ -21,8 +21,13 @@
  * }} DmlContext
  */
 
+import { odbcQuote, odbcFlat, spannerIsPg } from './sql-ident.js'
+
 /** Engine families that don't qualify grid writes with a schema. */
 const NO_SCHEMA = new Set(['sqlite', 'd1', 'libsql', 'duckdb'])
+/** Spanner and BigQuery speak GoogleSQL: backticked names, backslash escapes.
+ *  A PostgreSQL-dialect Spanner database speaks PostgreSQL instead. */
+const isGoogleSql = (/** @type {string} */ dialect) => dialect === 'bigquery' || (dialect === 'spanner' && !spannerIsPg())
 
 /**
  * Quote an identifier for the given dialect.
@@ -31,6 +36,15 @@ const NO_SCHEMA = new Set(['sqlite', 'd1', 'libsql', 'duckdb'])
 export function quoteIdent(name, dialect) {
   const s = String(name)
   if (dialect === 'mysql') return '`' + s.replace(/`/g, '``') + '`'
+  // GoogleSQL: backticks, escaped with a backslash. A double-quoted name is a
+  // string there, so the review showed SQL that would not run if applied.
+  if (isGoogleSql(dialect)) return '`' + s.replace(/\\/g, '\\\\').replace(/`/g, '\\`') + '`'
+  // ODBC: the quote the driver reported on connect (a MySQL driver wants backticks).
+  if (dialect === 'odbc') {
+    const q = odbcQuote()
+    if (q === '[') return '[' + s.replace(/]/g, ']]') + ']'
+    return q + s.split(q).join(q + q) + q
+  }
   return '"' + s.replace(/"/g, '""') + '"'
 }
 
@@ -40,14 +54,28 @@ export function quoteIdent(name, dialect) {
  */
 export function qualifiedTable(ctx) {
   const t = quoteIdent(ctx.table, ctx.dialect)
+  // Spanner's default schema has no name: "default" is only the app's label for it.
+  if (ctx.dialect === 'spanner' && ctx.schema === 'default') return t
+  // PostgreSQL-dialect Spanner keeps its tables in "public", the default schema.
+  if (ctx.dialect === 'spanner' && spannerIsPg() && ctx.schema === 'public') return t
+  if (ctx.dialect === 'odbc' && odbcFlat()) return t
   if (ctx.schema && !NO_SCHEMA.has(ctx.dialect)) {
     return quoteIdent(ctx.schema, ctx.dialect) + '.' + t
   }
   return t
 }
 
-/** Single-quote a string literal, doubling embedded quotes. */
-function quoteString(/** @type {string} */ s) {
+/** Single-quote a string literal, doubling embedded quotes (backslash-escaping in GoogleSQL). */
+function quoteString(/** @type {string} */ s, /** @type {string} */ dialect = '') {
+  if (isGoogleSql(dialect)) return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "\\'").replace(/\n/g, '\\n') + "'"
+  // MySQL (under its default sql_mode) and ClickHouse read a backslash in a
+  // string as an escape: 'C:\new' arrived as "C:" and a newline. Doubled, it
+  // stays a backslash.
+  if (dialect === 'mysql' || dialect === 'clickhouse') return "'" + s.replace(/\\/g, '\\\\').replace(/'/g, "''") + "'"
+  // SQL Server converts a plain '...' to the database's code page, so Chinese or
+  // Cyrillic text in a generated INSERT came out as ????. N'...' keeps it as
+  // Unicode; plain ASCII stays unprefixed.
+  if (dialect === 'mssql' && /[^\x00-\x7f]/.test(s)) return "N'" + s.replace(/'/g, "''") + "'"
   return "'" + s.replace(/'/g, "''") + "'"
 }
 
@@ -60,16 +88,17 @@ export function sqlLiteral(value, dialect) {
   if (typeof value === 'number') return Number.isFinite(value) ? String(value) : 'NULL'
   if (typeof value === 'bigint') return String(value)
   if (typeof value === 'boolean') {
-    // SQLite/D1/libsql/MySQL have no boolean literal - they store 1/0.
-    if (dialect === 'sqlite' || dialect === 'd1' || dialect === 'libsql' || dialect === 'mysql') {
+    // SQLite/D1/libsql/MySQL have no boolean literal - they store 1/0. SQL
+    // Server's BIT takes 1/0 too, and Oracle before 23c has no BOOLEAN column.
+    if (dialect === 'sqlite' || dialect === 'd1' || dialect === 'libsql' || dialect === 'mysql' || dialect === 'mssql' || dialect === 'oracle') {
       return value ? '1' : '0'
     }
     return value ? 'TRUE' : 'FALSE'
   }
   if (typeof value === 'object') {
-    try { return quoteString(JSON.stringify(value)) } catch { return quoteString(String(value)) }
+    try { return quoteString(JSON.stringify(value), dialect) } catch { return quoteString(String(value), dialect) }
   }
-  return quoteString(String(value))
+  return quoteString(String(value), dialect)
 }
 
 /**
@@ -211,4 +240,27 @@ export function buildInsertStatements(values, ctx) {
   const cols = names.map((n) => quoteIdent(n, ctx.dialect)).join(', ')
   const vals = names.map((n) => sqlLiteral(values[n], ctx.dialect)).join(', ')
   return [`INSERT INTO ${tbl} (${cols}) VALUES (${vals});`]
+}
+
+/**
+ * Values as a SQL list to paste after `IN`: `('a', 'b')`, distinct, in the
+ * order given, each quoted for the dialect. NULLs are left out, because
+ * `x IN (NULL)` never matches, and counted so the caller can say so.
+ * @param {unknown[]} values
+ * @param {Dialect} dialect
+ * @returns {{ text: string, count: number, nulls: number }}
+ */
+export function sqlInList(values, dialect) {
+  const seen = new Set()
+  /** @type {string[]} */
+  const items = []
+  let nulls = 0
+  for (const v of values) {
+    if (v === null || v === undefined) { nulls++; continue }
+    const lit = sqlLiteral(v, dialect)
+    if (seen.has(lit)) continue
+    seen.add(lit)
+    items.push(lit)
+  }
+  return { text: items.length ? `(${items.join(', ')})` : '', count: items.length, nulls }
 }

@@ -491,7 +491,7 @@
           items={accounts.map((a) => ({ value: a.id, label: a.name }))}
           placeholder="Search accounts…"
           empty="No matching account"
-          contentClass="w-[var(--bits-popover-anchor-width)] min-w-[240px]"
+          contentClass="w-[var(--bits-popover-anchor-width)] min-w-[15rem]"
           onselect={(it) => selectAccount(it.value)}
         >
           {#snippet trigger(props)}
@@ -554,7 +554,7 @@
             items={dbItems}
             placeholder="Search databases…"
             empty="No matching database"
-            contentClass="w-[var(--bits-popover-anchor-width)] min-w-[240px]"
+            contentClass="w-[var(--bits-popover-anchor-width)] min-w-[15rem]"
             align="start"
             onselect={(it) => selectDatabase(it.value)}
           >

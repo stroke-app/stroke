@@ -1,5 +1,7 @@
 <script>
+  import { tx } from '$lib/i18n.js'
   import DbIcon from './DbIcon.svelte'
+  import { engineId, engineLabel } from '$lib/connection-provider.js'
   import { colorOf } from '$lib/stores/workspaces.js'
   import { comboTitle } from '$lib/shortcuts.js'
   import { withShortcut } from '$lib/stores/keybindings.js'
@@ -60,7 +62,7 @@
     onswitchproviderdb = /** @type {(db: { provider: string, dbRef: string, name: string }) => void} */ ((_db) => {}),
     onswitchconnection = /** @type {(conn: import('$lib/stores/connections.js').SavedConnection) => void} */ ((_c) => {}),
     /** Labs, several databases open: all of them, the one in front marked. Empty otherwise. */
-    openDatabases = /** @type {{ key: string, label: string, current: boolean }[]} */ ([]),
+    openDatabases = /** @type {{ key: string, label: string, current: boolean, engine?: string }[]} */ ([]),
     /** Bring an open database to the front. */
     onopendatabase = /** @type {(key: string) => void} */ ((_k) => {}),
     /** Labs: the database being opened while the one on screen stays up. */
@@ -232,7 +234,9 @@
   const currentDb = $derived(
     connection?.type === 'libsql'
       ? (connection?.url ?? '').replace(/^(libsql|https?):\/\//, '').split('/')[0]
-      : (connection?.database ?? connection?.filePath ?? '')
+      // A file database by its file name: the whole path cut off after its
+      // first folder ("/tmp/claude-100…"), the part that names nothing.
+      : (connection?.database ?? (connection?.filePath ? String(connection.filePath).split(/[\\/]/).pop() || connection.filePath : ''))
   )
   const isRedis = $derived(engineFamily(connection?.type) === 'redis')
   const isPostgres = $derived(!isRedis && (engineFamily(connection?.type) === 'postgres' || engineFamily(connection?.type) === 'mysql'))
@@ -277,7 +281,7 @@
   )
   // Document and key-value stores (other than Redis, which has numbered dbs)
   // have no "current database" to show or switch; the chip only said "No database".
-  const NO_DB_ENGINES = new Set(['dynamodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'valkey', 'mongodb'])
+  const NO_DB_ENGINES = new Set(['dynamodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'neo4j', 'influxdb', 'spanner', 'bigquery', 'odbc', 'valkey', 'mongodb'])
   const hideDbChip = $derived(NO_DB_ENGINES.has(connection?.type ?? '') && !currentDbLabel)
   /** Key of the active db, used to mark the current row. */
   const currentDbKey = $derived(currentDatabaseKey(connection))
@@ -321,6 +325,8 @@
       : connection?.type === 'mysql' ? 'MySQL'
       : connection?.type === 'mariadb' ? 'MariaDB'
       : connection?.type === 'cockroachdb' ? 'CockroachDB'
+      : connection?.type === 'yugabytedb' ? 'YugabyteDB'
+      : connection?.type === 'alloydb' ? 'AlloyDB'
       : connection?.type === 'clickhouse' ? 'ClickHouse'
       : connection?.type === 'posthog' ? 'PostHog'
       : connection?.type === 'duckdb' ? 'DuckDB'
@@ -333,8 +339,14 @@
       : connection?.type === 'couchdb' ? 'CouchDB'
       : connection?.type === 'elasticsearch' ? 'Elasticsearch'
       : connection?.type === 'opensearch' ? 'OpenSearch'
-      : connection?.type === 'cassandra' ? 'Cassandra'
+      : connection?.type === 'cassandra' ? (engineId(connection) === 'scylladb' ? 'ScyllaDB' : 'Cassandra')
       : connection?.type === 'firestore' ? 'Firestore'
+      : connection?.type === 'neo4j' ? 'Neo4j'
+      : connection?.type === 'influxdb' ? 'InfluxDB'
+      : connection?.type === 'spanner' ? 'Spanner'
+      : connection?.type === 'bigquery' ? 'BigQuery'
+      : connection?.type === 'snowflake' ? 'Snowflake'
+      : connection?.type === 'odbc' ? engineLabel(engineId(connection))
       : connection?.type === 'mongodb' ? 'MongoDB'
       : 'PostgreSQL',
   )
@@ -494,7 +506,7 @@
       <!-- Connection switcher -->
       {#snippet connTriggerInner(/** @type {boolean} */ showChevron)}
         <span class="relative flex shrink-0">
-          <DbIcon id={connection?.type ?? ''} class="size-3.5 shrink-0" />
+          <DbIcon id={engineId(connection)} class="size-3.5 shrink-0" />
           <span class={cn('absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-2 ring-background', connectionLost ? 'bg-destructive' : 'bg-success')} aria-hidden="true"></span>
         </span>
         <span class={cn('max-w-[12rem] truncate', connectionLost ? 'text-destructive' : 'text-foreground/80')} title={connType}>{connLabel || connType}</span>
@@ -510,7 +522,7 @@
           side="top"
           align="start"
           contentClass="w-72"
-          placeholder="Search connections…"
+          placeholder={$tx('sb.searchConnections', 'Search connections…')}
           items={connItems}
           onselect={(it) => { const c = savedConnections.find((x) => x.id === it.value); if (c && c.id !== activeConnectionId) onswitchconnection(c) }}
         >
@@ -557,7 +569,7 @@
                 onclick={() => { connOpen = false; onconnect() }}
               >
                 <Icon name="wifi-off" class="size-3.5 shrink-0 text-muted-foreground" />
-                Manage connections…
+                {$tx('sb.manageConnections', 'Manage connections…')}
               </button>
               <button
                 type="button"
@@ -565,7 +577,7 @@
                 onclick={() => { connOpen = false; ondisconnect() }}
               >
                 <Icon name="unplug" class="size-3.5 shrink-0" />
-                Disconnect
+                {$tx('connection.disconnect', 'Disconnect')}
               </button>
             </div>
           {/snippet}
@@ -587,8 +599,8 @@
             type="button"
             class="{iconBtn} hover:text-destructive!"
             onclick={ondisconnect}
-            title="Disconnect"
-            aria-label="Disconnect"
+            title={$tx('connection.disconnect', 'Disconnect')}
+            aria-label={$tx('connection.disconnect', 'Disconnect')}
           >
             <Icon name="unplug" class="size-3.5 shrink-0" />
           </button>
@@ -609,7 +621,7 @@
             disabled={!canSwitchDb}
             title={oracleInRoot
               ? 'Connected to the root container, which holds only Oracle\'s own schemas. Set the service name to a pluggable database such as FREEPDB1.'
-              : canSwitchDb ? withShortcut('Switch database', 'database.switch') : currentDbLabel}
+              : canSwitchDb ? withShortcut('Switch database', 'database.switch') : (connection?.filePath || currentDbLabel)}
           >
             {#if connection?.type === 'sqlite'}
               <Icon name="hard-drive" class="size-3.5 shrink-0" />
@@ -634,7 +646,7 @@
                  for any number of databases. -->
             <!-- The palette's header: a borderless search row over a hairline,
                  not a framed field inside a framed panel. -->
-            <div data-slot="menu-search" class="flex h-9 items-center gap-2 px-3">
+            <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
               <Icon name="search" class="size-3.5 shrink-0 text-muted-foreground" />
               <input
                 bind:this={dbInputEl}
@@ -651,7 +663,7 @@
               {#if dbLoading}
                 <div class="loading-reveal flex items-center justify-center gap-2 py-4 text-muted-foreground">
                   <Icon name="refresh-cw" class="size-3 shrink-0 animate-spin" />
-                  <span class="text-ui-2xs">Loading…</span>
+                  <span class="text-ui-2xs">{$tx('common.loading', 'Loading…')}</span>
                 </div>
               {:else if dbFiltered.length === 0}
                 <div class="py-3 text-center text-ui-2xs text-muted-foreground">
@@ -735,14 +747,18 @@
           <span class="max-w-[8rem] truncate">{switchingTo}</span>
         </span>
       {:else if openDatabases.length > 1}
+        <!-- Each with its engine icon and set apart: a bare "127.0.0.1:18080"
+             right after this connection's database chip read as its host. -->
         <div role="group" aria-label="Other open databases" class="flex min-w-0 items-center @max-[48rem]/sb:hidden">
+          {@render sep()}
           {#each openDatabases.filter((d) => !d.current) as db (db.key)}
             <button
               type="button"
-              class="flex h-7 min-w-0 max-w-[9rem] items-center rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
+              class="flex h-7 min-w-0 max-w-[10rem] items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground"
               title={`Switch to ${db.label}`}
               onclick={() => onopendatabase(db.key)}
             >
+              {#if db.engine}<DbIcon id={db.engine} class="size-3.5 shrink-0 opacity-70" />{/if}
               <span class="truncate">{db.label}</span>
             </button>
           {/each}
@@ -804,7 +820,7 @@
               <span class="inline-flex size-1.5 rounded-full border border-current"></span>
             {/if}
           </span>
-          Live
+          {$tx('sb.live', 'Live')}
         </button>
       {/if}
 
@@ -841,7 +857,7 @@
         title="No connection, click to connect"
       >
         <Icon name="wifi-off" class="size-3.5 shrink-0" />
-        <span>Not connected</span>
+        <span>{$tx('sb.notConnected', 'Not connected')}</span>
       </button>
     {/if}
   </div>
@@ -877,7 +893,7 @@
           title={withShortcut(`Discard ${pendingEditCount} unsaved change${pendingEditCount === 1 ? '' : 's'}`, 'table.discard')}
         >
           <Icon name="undo-2" class="size-3 shrink-0" />
-          <span class="@max-[48.75rem]/sb:hidden">Reset</span>
+          <span class="@max-[48.75rem]/sb:hidden">{$tx('tb.reset', 'Reset')}</span>
         </button>
         <div class="inline-flex h-6 items-stretch overflow-hidden rounded-md bg-primary text-primary-foreground">
           <button
@@ -889,10 +905,10 @@
           >
             {#if applying}
               <span class="size-3 shrink-0 animate-spin rounded-full border border-current/40 border-t-current"></span>
-              Applying…
+              {$tx('sb.applying', 'Applying…')}
             {:else}
               <Icon name="check" class="size-3 shrink-0" />
-              Apply
+              {$tx('common.apply', 'Apply')}
               <span class="tabular-nums opacity-80">{pendingEditCount}</span>
             {/if}
           </button>
@@ -908,7 +924,7 @@
             <DropdownMenu.Content align="end" side="top" class="min-w-52">
               <DropdownMenu.Item onSelect={onapplyedits}>
                 <Icon name="check" class="size-3.5 shrink-0" />
-                Apply changes
+                {$tx('sb.applyChanges', 'Apply changes')}
                 <DropdownMenu.Shortcut command="table.apply" />
               </DropdownMenu.Item>
               <DropdownMenu.Item onSelect={oncopyeditssql}>
@@ -919,7 +935,7 @@
               <DropdownMenu.Separator />
               <DropdownMenu.Item onSelect={onresetedits} variant="destructive">
                 <Icon name="undo-2" class="size-3.5 shrink-0" />
-                Discard changes
+                {$tx('sb.discardChanges', 'Discard changes')}
                 <DropdownMenu.Shortcut command="table.discard" />
               </DropdownMenu.Item>
             </DropdownMenu.Content>
@@ -1007,7 +1023,7 @@
       side="top"
       align="end"
       contentClass="w-64"
-      placeholder="Search models…"
+      placeholder={$tx('sb.searchModels', 'Search models…')}
       items={$aiProfiles.map((p) => ({ value: p.id, label: p.name, keywords: [p.model] }))}
       onselect={(it) => setActiveProfile(it.value)}
     >
@@ -1035,7 +1051,7 @@
             onclick={() => { aiModelMenuOpen = false; onopenmodelsettings() }}
           >
             <Icon name="settings-2" class="size-3.5 shrink-0 text-muted-foreground" />
-            Manage models…
+            {$tx('sb.manageModels', 'Manage models…')}
           </button>
         </div>
       {/snippet}

@@ -338,7 +338,7 @@
                   />
                 {:else}
                   <h2 class="text-ui-xs font-medium text-muted-foreground">{grpData.group}</h2>
-                  <span class="text-ui-2xs tabular-nums text-muted-foreground/70">{grpData.charts.length}</span>
+                  <span class="text-ui-2xs tabular-nums text-muted-foreground">{grpData.charts.length}</span>
                   {#if grpData.group !== "Default"}
                     <DropdownMenu.DropdownMenu>
                       <DropdownMenu.DropdownMenuTrigger class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Group actions">

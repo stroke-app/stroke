@@ -1,13 +1,16 @@
 <script>
   import { formatApiCall } from '$lib/dynamo-json.js'
+  import { sqlFamily, SQL_SNIPPETS } from '$lib/sql-complete-data.js'
+  import { spannerIsPg } from '$lib/sql-ident.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
   import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
-  import { traceInteraction } from '$lib/perf.js'
-  import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, uriHost } from '$lib/doc-adapters.js'
+  import { traceInteraction, tracePoint, traceMark } from '$lib/perf.js'
+  import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost } from '$lib/doc-adapters.js'
   import { queryLanguageFor } from '$lib/ai-query-languages.js'
-  import { setQueryEngine } from '$lib/ai.js'
+  import { setQueryEngine } from '$lib/ai-query-engine.js'
+  import { isSystemSchema } from '$lib/system-schemas.js'
   import { revealApp, isRevealed } from '$lib/app-reveal.js'
   import { setReadOnly, readOnlyMode } from '$lib/stores/read-only.js'
   import { isWriteSql, sqlRunEffects, stripSqlComments } from '$lib/sql-write.js'
@@ -18,10 +21,8 @@
   import Boxes from '@lucide/svelte/icons/boxes'
   import FileCode2 from '@lucide/svelte/icons/file-code-2'
   import Terminal from '@lucide/svelte/icons/terminal'
-  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
-  import Sparkles from '@lucide/svelte/icons/sparkles'
   import LayoutTemplate from '@lucide/svelte/icons/layout-template'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import Command from '@lucide/svelte/icons/command'
   import Keyboard from '@lucide/svelte/icons/keyboard'
   import Code2 from '@lucide/svelte/icons/code-2'
@@ -30,13 +31,10 @@
   import BarChart2 from '@lucide/svelte/icons/bar-chart-2'
   import LayoutDashboard from '@lucide/svelte/icons/layout-dashboard'
   import GitBranch from '@lucide/svelte/icons/git-branch'
-  import Blocks from '@lucide/svelte/icons/blocks'
   import GitCompare from '@lucide/svelte/icons/git-compare'
   import History from '@lucide/svelte/icons/history'
-  import Plus from '@lucide/svelte/icons/plus'
   import Search from '@lucide/svelte/icons/search'
   import { bindingFor } from '$lib/stores/keybindings.js'
-  import { ago } from '$lib/plugins/extensions/id-decoder.js'
   import Gauge from '@lucide/svelte/icons/gauge'
   import Network from '@lucide/svelte/icons/network'
   import { createHotkey } from '@tanstack/svelte-hotkeys'
@@ -45,7 +43,7 @@
   import { isTypingTarget } from '$lib/focus-search.js'
   import { slashFocusTarget } from '$lib/slash-focus.js'
   import QuitHint from './QuitHint.svelte'
-  import { appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
+  import { appRelationColumns, appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -57,13 +55,11 @@
   import { selectAllInFocus } from '$lib/select-all.js'
   import { startTelemetry, track } from '$lib/telemetry.js'
   import Sidebar from './Sidebar.svelte'
-  import SidebarQueries from './SidebarQueries.svelte'
   import TabBar from './TabBar.svelte'
   import PaneLayout from './PaneLayout.svelte'
   import * as PaneTree from '$lib/pane-layout.js'
   import TabLoading from './TabLoading.svelte'
   import TableToolbar from './TableToolbar.svelte'
-  import RowDetailPanel from './RowDetailPanel.svelte'
   // TableJsonView / TableTextView are NOT imported here: both reach the CodeMirror
   // editor and its languages statically, which would drag them into the boot
   // chunk even though neither view is on screen until the user picks that data
@@ -72,44 +68,41 @@
   import TableRecordView from './TableRecordView.svelte'
   // AiChat / AiSidebar (large, pull in marked + shiki) are loaded lazily the first time
   // the AI panel is opened - see the {#await import()} blocks below.
-  import ConnectionModal from './ConnectionModal.svelte'
   import { terminalDockOpen as terminalDockStore } from '$lib/stores/redis-nav.js'
-  import DbIcon from './DbIcon.svelte'
-  import { requestShare, sharesPageRequest, chartTitle, shareRequest } from '$lib/share-flow.js'
+  import NewTabPage from './NewTabPage.svelte'
+  import LauncherScreen from './LauncherScreen.svelte'
+  import TableLoadError from './TableLoadError.svelte'
+  import { requestShare, sharesPageRequest, chartTitle, shareRequest, rowsToJson as rowsToJsonValue } from '$lib/share-flow.js'
   import MySharesDialog from './MySharesDialog.svelte'
   import Icon from './Icon.svelte'
   import CreateSchemaDialog from './CreateSchemaDialog.svelte'
-  import GenerateSqlDialog from './GenerateSqlDialog.svelte'
   import { genSelectStar } from '$lib/sql-generate.js'
   import { qualifiedTable } from '$lib/dml-preview.js'
   import { pluginState, pluginEnabledIn } from '$lib/stores/plugins.js'
   import { loadTableViews, saveTableViews } from '$lib/stores/table-views.js'
   import { loadSqlDraft, saveSqlDraft, loadSqlTabs, saveSqlTabs } from '$lib/stores/sql-draft.js'
+  import { tabsToStore, loadOpenTabs, saveOpenTabs, PAGE_KINDS } from '$lib/stores/open-tabs.js'
   import { planSave, savedQueryFor, sqlTabsToStore } from '$lib/sql-saving.js'
   import { nextUntitledName } from '$lib/query-folders.js'
   import { buildBatchUpdateSql } from '$lib/sql-batch-update.js'
   import { buildSearchQuery, searchOptionsSupported, supportedSearchOptions } from '$lib/search-options.js'
-  import Onboarding from './Onboarding.svelte'
   import KeyboardShortcutsDialog from './KeyboardShortcutsDialog.svelte'
   import LeaderPanel from './LeaderPanel.svelte'
   import { requestChat } from '$lib/stores/ai-chat-bridge.js'
   import { aiChatKey, chatBelongsTo } from '$lib/ai-chat-key.js'
-  import InsiderDialog from './InsiderDialog.svelte'
-  import AboutDialog from './AboutDialog.svelte'
-  import ReportIssueDialog from './ReportIssueDialog.svelte'
   import { crashReportFields } from '$lib/crash-report.js'
   import UpdateDialog from './UpdateDialog.svelte'
+  import TransferDialog from './TransferDialog.svelte'
   import StatusBar from './StatusBar.svelte'
-  import QueryLogConsole from './QueryLogConsole.svelte'
   import DisconnectDialog from './DisconnectDialog.svelte'
   import SwitchDatabaseDialog from './SwitchDatabaseDialog.svelte'
-  import CreateDatabaseDialog from './CreateDatabaseDialog.svelte'
-  import DatabaseNameDialog from './DatabaseNameDialog.svelte'
   import DropDatabaseDialog from './DropDatabaseDialog.svelte'
   import DatabaseInfoDialog from './DatabaseInfoDialog.svelte'
   import { CatalogCache, catalogKey, connectionPrefix } from '$lib/catalog-cache.js'
   import { whenIdle } from '$lib/idle.js'
   import { studioEngine as studioEngineFor } from '$lib/studio-share.js'
+  import { rowKey as shareRowKeyOf } from '$lib/share-presence.js'
+  import { account } from '$lib/stores/account.js'
   import { refreshExternalPlugins, stopAllExternalPlugins } from '$lib/plugins/external/host.js'
   import {
     dbAdminKind,
@@ -121,7 +114,6 @@
     databaseInfoSql,
     databaseInfoRows,
   } from '$lib/database-admin.js'
-  import McpPanel from './McpPanel.svelte'
   // NotebookEditor (pulls Monaco via SqlCell + marked via MarkdownCell) is lazy-loaded
   // at its render site so notebooks don't drag those into the startup bundle.
   //
@@ -137,12 +129,8 @@
   // Heavy feature pages (echarts / mermaid / swapy / xyflow+dagre) are loaded lazily
   // the first time their tab is opened - see the {#await import()} blocks below.
   // This keeps those large libraries out of the startup bundle and idle memory.
-  import { Button } from '$lib/components/ui/button/index.js'
   import AlertTriangle from '@lucide/svelte/icons/triangle-alert'
   import Lock from '@lucide/svelte/icons/lock'
-  import WifiOff from '@lucide/svelte/icons/wifi-off'
-  import Unplug from '@lucide/svelte/icons/unplug'
-  import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import { setConnRoute,
     disconnectPostgres,
     prewarmDns,
@@ -150,6 +138,9 @@
     listTables,
     getTableRowCounts,
     getTableRows,
+    startTableMirror,
+    resultWindow,
+    resultDrop,
     countTableRows,
     searchIndexStatus,
     createSearchIndex,
@@ -165,6 +156,7 @@
     txBegin,
     txExecute,
     txStatus,
+    txOpenSessions,
     txCommit,
     txRollback,
     inspectSql,
@@ -184,6 +176,7 @@
   import { StoredResultView } from '$lib/stored-result-view.js'
   import {
     createTableTab,
+    createKindTab,
     createSqlTab,
     createDdlTab,
     createWelcomeTab,
@@ -239,6 +232,8 @@
     findShortcutsTab,
     createSharesTab,
     findSharesTab,
+    createQueriesTab,
+    findQueriesTab,
     findTableTab,
     findSchemaTab,
     findOrmTab,
@@ -263,7 +258,7 @@
   import { createNotebook, deserializeNotebook } from '$lib/notebook.js'
   import { openNotebookFile } from '$lib/api.js'
   import { formatCompactCount, normalizeTableRowCount } from '$lib/table-list.js'
-  import { humanizeDbError } from '$lib/ai.js'
+  import { humanizeDbError } from '$lib/db-error-text.js'
   import { focusTrap } from '$lib/actions/focus-trap.js'
   import {
     MAX_PAGE_SIZE,
@@ -286,6 +281,8 @@
     WINDOW_THRESHOLD,
     measureRowBytes,
     pickWindowRows,
+    pickMirrorPage,
+    SCREENFUL_FIRST_BYTES,
     seekKeyFor,
     shouldWindow,
     stableWindowOrder,
@@ -301,6 +298,7 @@
   import { loadLayout, saveLayout, sidebarSideStore, setSidebarSide } from '$lib/stores/layout.js'
   import {
     getLastConnection,
+    withSecrets,
     getLastSchema,
     loadSavedConnections,
     newConnectionId,
@@ -313,8 +311,10 @@
     upsertConnection,
     engineFamily,
   } from '$lib/stores/connections.js'
+  import { workspaces, activeWorkspaceId, setActiveWorkspace, workspaceOf } from '$lib/stores/workspaces.js'
   import { hasPro, FREE_CONNECTION_LIMIT } from '$lib/stores/license.js'
   import { engineSupports, engineLabel, isKeyValue } from '$lib/db-capabilities.js'
+  import { engineId } from '$lib/connection-provider.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import KeyRound from '@lucide/svelte/icons/key-round'
   import {
@@ -337,7 +337,21 @@
     elasticImport,
     couchRequest,
     connectCassandra,
+    connectNeo4j,
+    connectInflux,
+    influxMeasurements,
+    influxDescribe,
+    influxPage,
+    neo4jLabels,
+    neo4jDescribe,
+    neo4jPage,
+    neo4jSave,
+    neo4jDelete,
     connectFirestore,
+    connectSpanner,
+    connectBigquery,
+    connectOdbc,
+    connectSnowflake,
     connectMongo,
     mongoCollections,
     mongoCount,
@@ -466,6 +480,15 @@
       void silentReconnect()
     }
   }
+  /**
+   * The connect has painted its first screen (catalog, sidebar, restored tabs).
+   * Warm-ups wait for it: the chunk warmer and the hidden terminal dock used to
+   * start the moment `connection` was set and compete with that first render,
+   * holding a 10 ms database answer behind ~300 ms of parsing.
+   */
+  let connectSettled = $state(true)
+  /** Last session's tabs are being put back (see onConnected). */
+  let restoringTabs = $state(false)
   let autoConnecting = $state(false)
   /** Name of the connection the overlay is waiting on. */
   let autoConnectName = $state('')
@@ -486,6 +509,22 @@
   let revealOnTables = $state(false)
   $effect(() => {
     if (revealOnTables && connection && !loadingTables) revealApp()
+  })
+
+  // The launch overlay used to drop the moment `connection` was set, which is
+  // also the moment the whole studio mounts: one long render that froze the
+  // overlay's fade half way. It now stays opaque until the studio has painted
+  // (two frames after the connection lands), then fades over a ready screen.
+  const overlayWanted = $derived(autoConnecting && !connection)
+  let overlayHeld = $state(false)
+  $effect(() => {
+    if (overlayWanted) {
+      overlayHeld = true
+      return
+    }
+    if (!untrack(() => overlayHeld)) return
+    let raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => { overlayHeld = false }) })
+    return () => cancelAnimationFrame(raf)
   })
 
   function beginConnectOverlay(name, verb = 'Connecting') {
@@ -511,8 +550,127 @@
   async function cancelAutoConnect() {
     autoConnectCancelled = true
     autoConnecting = false
+    autoConnectOffline = false
+    reconnectGen++
     showConnectionModal = true
     try { await disconnectPostgres() } catch { /* nothing to tear down */ }
+  }
+
+  // ── The startup reconnect, and the network going away under it ──────────
+  /** Bumped per attempt: an attempt overtaken by a retry drops its outcome. */
+  let reconnectGen = 0
+  /** The connection the startup reconnect is for, so a retry can redo it. */
+  let reconnectTarget = /** @type {any} */ (null)
+  /** No network, and the reconnect is waiting for it (the overlay says so). */
+  let autoConnectOffline = $state(false)
+  /** Whether this machine has no network and the connection needs one. @param {any} c */
+  function offlineFor(c) {
+    return typeof navigator !== 'undefined' && navigator.onLine === false && !isLocalConnection(c)
+  }
+  /** A database on this machine: a file, or a server on localhost. @param {any} c */
+  function isLocalConnection(c) {
+    if (!c) return true
+    if (c.type === 'sqlite' || c.type === 'duckdb' || c.filePath) return true
+    return /^(localhost|127\.\d+\.\d+\.\d+|::1|\[::1\])$/i.test(String(c.host ?? '').trim()) && !c.ssh
+  }
+  // The network left mid-reconnect: stop dialling and wait. It came back: try
+  // again at once, without anyone pressing anything.
+  $effect(() => {
+    if (!autoConnecting || autoConnectVerb !== 'Reconnecting') return
+    const offline = () => {
+      if (!reconnectTarget || isLocalConnection(reconnectTarget)) return
+      reconnectGen++
+      autoConnectOffline = true
+      void disconnectPostgres().catch(() => {})
+    }
+    const online = () => {
+      if (autoConnectOffline && reconnectTarget && !autoConnectCancelled) void reconnectLast(reconnectTarget)
+    }
+    window.addEventListener('offline', offline)
+    window.addEventListener('online', online)
+    return () => {
+      window.removeEventListener('offline', offline)
+      window.removeEventListener('online', online)
+    }
+  })
+
+  /** Reconnect to the last connection, on launch. @param {any} last */
+  async function reconnectLast(last) {
+    const gen = ++reconnectGen
+    reconnectTarget = last
+    autoConnectOffline = false
+    beginConnectOverlay(last.name ?? '', 'Reconnecting')
+    // No network and a database across it: say so and wait for the network,
+    // instead of dialling into nothing for 20s and opening the dialog on a
+    // "Nothing answered" that only meant the Wi-Fi was off.
+    if (offlineFor(last)) { autoConnectOffline = true; revealApp(); return }
+    // Its password comes from the keychain, which startup did not wait for.
+    Object.assign(last, await withSecrets(last))
+    // A warm reconnect and its table list land in a few hundred ms. Revealing
+    // on the overlay meant three screens in that time - "Reconnecting", an empty
+    // shell with a skeleton sidebar, then the tables - which is the startup
+    // flicker. Stay hidden until the tables are in (the effect watching
+    // `revealOnTables`) and only fall back to the overlay when it runs long.
+    revealOnTables = true
+    setTimeout(revealApp, RECONNECT_REVEAL_MS)
+    // The backend already enforces its own per-engine deadlines (DNS + TCP preflight,
+    // a 20s connect deadline for Postgres, HTTP timeouts for the REST engines) and
+    // fails with a message the user can act on. This race is only a last-resort guard
+    // for a command that never returns AT ALL, so it has to sit above those deadlines.
+    // At 5s it fired first and turned every slow-but-healthy wake-up into "not
+    // connected" - serverless Postgres (Neon, and Prisma/Supabase pooler cold starts)
+    // autosuspends and takes 3-15s to come back, which is why resuming one meant
+    // reconnecting by hand on nearly every launch.
+    /** @param {Promise<unknown>} p */
+    const withTimeout = (p) => Promise.race([
+      p,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timed out')), 45_000)),
+    ])
+    try {
+      if (last.type === 'sqlite') await withTimeout(connectSqlite(last))
+      else if (last.type === 'd1') await withTimeout(connectD1(last))
+      else if (last.type === 'libsql') await withTimeout(connectLibSql(last))
+      else if (last.type === 'mysql' || last.type === 'mariadb') await withTimeout(connectMysql(last))
+      else if (last.type === 'clickhouse') await withTimeout(connectClickhouse(last))
+      else if (last.type === 'posthog') await withTimeout(connectPosthog(last))
+      else if (last.type === 'duckdb') await withTimeout(connectDuckdb(last))
+      else if (last.type === 'mssql') await withTimeout(connectMssql(last))
+      else if (last.type === 'oracle') await withTimeout(connectOracle(last))
+      else if (engineFamily(last.type) === 'redis') await withTimeout(connectRedis(last))
+      else if (last.type === 'dynamodb') await withTimeout(connectDynamo(last))
+      else if (last.type === 'couchdb') await withTimeout(connectCouch(last))
+      else if (last.type === 'elasticsearch' || last.type === 'opensearch') await withTimeout(connectElastic(last))
+      else if (last.type === 'cassandra') await withTimeout(connectCassandra(last))
+      else if (last.type === 'neo4j') await withTimeout(connectNeo4j(last))
+      else if (last.type === 'influxdb') await withTimeout(connectInflux(last))
+      else if (last.type === 'firestore') await withTimeout(connectFirestore(last))
+      else if (last.type === 'spanner') await withTimeout(connectSpanner(last))
+      else if (last.type === 'bigquery') await withTimeout(connectBigquery(last))
+      else if (last.type === 'odbc') await withTimeout(connectOdbc(last))
+      else if (last.type === 'snowflake') await withTimeout(connectSnowflake(last))
+      else if (last.type === 'mongodb') await withTimeout(connectMongo(last))
+      else await withTimeout(connectPostgres(last))
+      // onConnected already refreshes the query stores (concurrently with the
+      // catalog load) - no second fetch needed here.
+      if (autoConnectCancelled || gen !== reconnectGen) { if (autoConnectCancelled) { try { await disconnectPostgres() } catch { /* ignore */ } } return }
+      await onConnected(last, last.id)
+    } catch {
+      // Cancelled, or given up on when the network went (a retry owns it now).
+      if (autoConnectCancelled || gen !== reconnectGen) return
+      // Racing the timeout abandons the promise but not the backend: a connect that
+      // lands after we gave up would leave a live pool behind a UI that says
+      // "Not connected", and the next attempt would stack a second one on top.
+      try { await disconnectPostgres() } catch { /* nothing to tear down */ }
+      // The network dropped while dialling: wait for it rather than fail.
+      if (offlineFor(last)) { autoConnectOffline = true; return }
+      showConnectionModal = true
+    } finally {
+      // A retry, or the wait for the network, keeps the overlay up.
+      if (gen !== reconnectGen || autoConnectOffline) { revealApp(); return }
+      autoConnecting = false
+      // Failed, cancelled or timed out: whatever screen is up now is final.
+      revealApp()
+    }
   }
   /** Assigned by ObjectsPage so ⌘F can reach its search box. */
   let objectsFocusSearch = $state(/** @type {() => void} */ (() => {}))
@@ -520,6 +678,8 @@
   let showConnectionModal = $state(false)
   /** Engine chosen on the welcome screen - the modal opens straight into its form. */
   let connectionModalEngine = $state('')
+  /** A saved connection the dialog opens into its form (sidebar Edit…). */
+  let connectionModalEditId = $state('')
   /** A connection handed over by a stroke:// link or the command line (launch.rs). */
   let connectionModalUri = $state('')
   let connectionModalName = $state('')
@@ -552,17 +712,6 @@
       .catch(() => {})
     return () => { gone = true; off?.() }
   })
-  /** @type {HTMLElement | null} */
-  let welcomeConnectBtn = $state(null)
-
-  // The welcome screen has exactly one thing to do, so its button starts with
-  // focus: Enter opens the dialog, Tab walks the engine chips, and nobody has to
-  // reach for the mouse to get in. Skipped while a dialog owns the window.
-  $effect(() => {
-    if (connection || showConnectionModal || !welcomeConnectBtn) return
-    welcomeConnectBtn.focus({ preventScroll: true })
-  })
-
   /**
    * Open a link in the user's browser. In a Tauri window a plain anchor
    * navigates the webview itself - away from the app - so every outbound link
@@ -585,7 +734,7 @@
       const { openLocalServersWindow } = await import('$lib/local-servers.js')
       await openLocalServersWindow(getCurrentWindow().label)
     } catch (e) {
-      toast.error('Could not open Local servers', { description: String(e) })
+      toast.error('Could not open Local servers', { description: errorText(e) })
     }
   }
   $effect(() => {
@@ -617,18 +766,6 @@
   let showCreateTableDialog = $state(false)
   let showCreateSchemaDialog = $state(false)
   let savedConnections = $state(loadSavedConnections())
-  /** The welcome screen's Recent list: the last four connections actually opened. */
-  const recentConnections = $derived(
-    savedConnections.filter((c) => c.lastConnectedAt).sort((a, b) => (b.lastConnectedAt ?? 0) - (a.lastConnectedAt ?? 0)).slice(0, 4),
-  )
-  /** "Redis · 127.0.0.1:6379", or the file name for local files. @param {import('$lib/stores/connections.js').SavedConnection} c */
-  function welcomeTarget(c) {
-    const x = /** @type {any} */ (c)
-    if (x.filePath) return x.filePath === ':memory:' ? 'in memory' : String(x.filePath).split(/[\\/]/).pop() ?? ''
-    if (x.url) { try { return new URL(String(x.url).replace(/^libsql:/, 'https:')).host } catch { return '' } }
-    if (x.host) return `${x.host}${x.port ? `:${x.port}` : ''}`
-    return engineLabel(c.type)
-  }
   // Sync (src/lib/sync/runtime.js) changed the saved list from another device.
   $effect(() => {
     const reload = () => { savedConnections = loadSavedConnections() }
@@ -703,8 +840,19 @@
     importData: () => import('./ImportDataDialog.svelte'),
     share: () => import('./ShareDialog.svelte'),
     docker: () => import('./DockerLaunchModal.svelte'),
+    // Boot: these were imported and mounted, closed, on every launch. The
+    // connection dialog alone is 5,700 lines, and none of them does anything
+    // until it opens (each one's effects wait on `open`).
+    connection: () => import('./ConnectionModal.svelte'),
+    onboarding: () => import('./Onboarding.svelte'),
+    createDb: () => import('./CreateDatabaseDialog.svelte'),
+    generateSql: () => import('./GenerateSqlDialog.svelte'),
+    mcp: () => import('./McpPanel.svelte'),
+    insider: () => import('./InsiderDialog.svelte'),
+    about: () => import('./AboutDialog.svelte'),
+    report: () => import('./ReportIssueDialog.svelte'),
   }
-  let dialogMounted = $state({ settings: false, aiSettings: false, palette: false, createTable: false, importData: false, share: false, docker: false })
+  let dialogMounted = $state({ settings: false, aiSettings: false, palette: false, createTable: false, importData: false, share: false, docker: false, connection: false, onboarding: false, createDb: false, generateSql: false, mcp: false, insider: false, about: false, report: false })
   // Mount on first open; never unmount (closing keeps its animation).
   $effect(() => {
     if (showSettingsModal) dialogMounted.settings = true
@@ -714,10 +862,18 @@
     if (importDataOpen) dialogMounted.importData = true
     if ($shareRequest) dialogMounted.share = true
     if (showDockerModal) dialogMounted.docker = true
+    if (showConnectionModal) dialogMounted.connection = true
+    if (showOnboarding) dialogMounted.onboarding = true
+    if (showCreateDbDialog) dialogMounted.createDb = true
+    if (generateSqlOpen) dialogMounted.generateSql = true
+    if (showMcpPanel) dialogMounted.mcp = true
+    if (showInsiderModal) dialogMounted.insider = true
+    if (showAboutModal) dialogMounted.about = true
+    if (showReportIssueDialog) dialogMounted.report = true
   })
   onMount(() => {
     // The palette and Settings first: they are the ones a shortcut opens.
-    const order = [loadDataTable, lazyDialogs.palette, lazyDialogs.settings, lazyDialogs.aiSettings, lazyDialogs.share, lazyDialogs.createTable, lazyDialogs.importData, lazyDialogs.docker]
+    const order = [loadDataTable, lazyDialogs.palette, lazyDialogs.connection, lazyDialogs.settings, lazyDialogs.aiSettings, lazyDialogs.share, lazyDialogs.createTable, lazyDialogs.importData, lazyDialogs.docker, lazyDialogs.createDb, lazyDialogs.generateSql, lazyDialogs.mcp, lazyDialogs.about, lazyDialogs.report]
     let i = 0
     let cancel = () => {}
     const pump = () => {
@@ -731,13 +887,13 @@
 
   // ── Labs: share as a web studio ─────────────────────────────────────────
   let showStudioShare = $state(false)
-  /** @type {{ link: string, write: boolean, stop: () => void } | null} */
+  /** @type {{ link: string, write: boolean, stop: () => void, presence: ReturnType<typeof import('$lib/share-presence.js').joinPresence> } | null} */
   let studioShare = $state(null)
   let studioShareStatus = $state(/** @type {'connecting' | 'online' | 'offline'} */ ('offline'))
   /** The connection the share answers for; a switch away pauses it (isLive). */
   let studioShareConnId = ''
   const studioShareUnsupported = $derived(
-    connection && !studioEngineOf(connection) ? 'The web studio speaks PostgreSQL, MySQL and SQLite. Share a connection to one of those.' : '',
+    connection && !studioEngineOf(connection) ? 'The web studio shares SQL databases. Share a connection to one of those.' : '',
   )
   /** @param {any} c */
   function studioEngineOf(c) {
@@ -751,17 +907,149 @@
     if (!c || !engine) return
     studioShareConnId = activeConnectionId ?? ''
     const { startShare } = await import('$lib/studio-share.js')
+    const { engineLabel: shareLabel } = await import('$lib/connection-provider.js')
     studioShare = await startShare({
       engine,
+      label: shareLabel(engineId(c)),
       name: c.name || c.database || 'Database',
-      database: c.database || c.filePath?.split(/[\\/]/).pop() || c.name || '',
-      host: c.host || (engine === 'sqlite' ? 'local file' : ''),
+      database: c.database || c.databaseId || c.dataset || c.filePath?.split(/[\\/]/).pop() || c.name || '',
+      host: c.host || c.account || c.projectId || (c.dsn ? `DSN ${c.dsn}` : '') || (engine === 'sqlite' ? 'local file' : ''),
       write,
       isLive: () => !!connection && (activeConnectionId ?? '') === studioShareConnId,
       onStatus: (st) => (studioShareStatus = st),
       // A local stroke-web for testing the relay; unset in every release build.
       origin: import.meta.env.VITE_STUDIO_ORIGIN || undefined,
+      // First name only: everyone with the link sees it on this side's cursor.
+      me: String(get(account)?.user?.name ?? '').trim().split(/\s+/)[0] || 'Host',
     })
+  }
+
+  // ── Shared studio presence: the others' cursors on this grid ─────────────
+  /** @type {import('$lib/share-presence.js').Peer[]} */
+  let sharePeers = $state([])
+  $effect(() => {
+    const store = studioShare?.presence?.peers
+    if (!store) { sharePeers = []; return }
+    return store.subscribe((ps) => (sharePeers = ps))
+  })
+  /** This table as the web studio names it: `schema.table`. */
+  const shareTableKey = $derived(studioShare && activeTable && activeTab?.kind === 'table' ? `${activeSchema || 'main'}.${activeTable}` : null)
+  const sharePeersHere = $derived(shareTableKey ? sharePeers.filter((p) => p.tab === shareTableKey) : [])
+  /** Primary key columns in table order, the order the web studio keys rows by. */
+  const sharePkIdx = $derived(primaryKey.length ? columns.map((c, i) => (primaryKey.includes(c.name) ? i : -1)).filter((i) => i >= 0) : [])
+  /** @param {number} rowIdx */
+  function shareRowKey(rowIdx) {
+    const row = rows[rowIdx]
+    if (!row) return null
+    return sharePkIdx.length ? shareRowKeyOf(sharePkIdx.map((i) => row[i])) : `#${(infiniteScroll ? 0 : currentOffset) + rowIdx}`
+  }
+  /** Row keys to indexes, built only while someone is on this table. */
+  const shareRowIndex = $derived.by(() => {
+    if (!sharePeersHere.length) return null
+    /** @type {Map<string, number>} */
+    const m = new Map()
+    for (let i = 0; i < rows.length; i++) {
+      const k = shareRowKey(i)
+      if (k !== null) m.set(k, i)
+    }
+    return m
+  })
+  const gridPeers = $derived.by(() => {
+    const idx = shareRowIndex
+    if (!idx) return []
+    const at = (/** @type {any} */ ref) => {
+      if (!ref || ref.table !== shareTableKey) return null
+      const rowIdx = idx.get(ref.row)
+      return rowIdx === undefined ? null : { rowIdx, col: String(ref.col) }
+    }
+    return sharePeersHere.map((p) => {
+      const pointer = at(p.pointer)
+      const editing = at(p.editing)
+      return {
+        id: p.id,
+        name: p.name,
+        color: p.color,
+        cell: at(p.cell),
+        pointer: pointer && p.pointer ? { ...pointer, fx: Number(p.pointer.fx) || 0, fy: Number(p.pointer.fy) || 0 } : null,
+        editing: editing && p.editing ? { ...editing, value: p.editing.value } : null,
+      }
+    })
+  })
+  /** This side's cell, pointer and typing, as the web studio addresses cells. @param {any} p */
+  function publishGridPresence(p) {
+    const presence = studioShare?.presence
+    const table = shareTableKey
+    if (!presence || !table) return
+    const ref = (/** @type {{ rowIdx: number, col: string } | null | undefined} */ at) => {
+      const row = at ? shareRowKey(at.rowIdx) : null
+      return at && row !== null ? { table, row, col: at.col } : null
+    }
+    /** @type {Record<string, unknown>} */
+    const patch = {}
+    if ('cell' in p) patch.cell = ref(p.cell)
+    if ('pointer' in p) { const r = ref(p.pointer); patch.pointer = r && p.pointer ? { ...r, fx: p.pointer.fx, fy: p.pointer.fy } : null }
+    if ('editing' in p) { const r = ref(p.editing); patch.editing = r && p.editing ? { ...r, value: String(p.editing.value).slice(0, 500) } : null }
+    presence.publish(patch)
+  }
+  // The others see which table this side has open. The cell, pointer and
+  // typing name their table, so a switch needs no clearing: the others ignore
+  // a cell on a table they aren't showing (and DataTable sends the new one).
+  $effect(() => {
+    const presence = studioShare?.presence
+    if (!presence) return
+    // The web studio names the shared console's tab `console`.
+    presence.publish({ tab: onSharedConsoleTab ? 'console' : shareTableKey })
+  })
+  // Someone saved a change to the table on screen: show it.
+  $effect(() => {
+    const presence = studioShare?.presence
+    if (!presence) return
+    return presence.onChanged((t) => {
+      if (t !== shareTableKey || editingCell || savingCell || !activeTabId || isTabBusy(activeTabId)) return
+      void loadRows({ keepScroll: true })
+    })
+  })
+  // ── The shared console: one SQL tab everyone on the link edits ──────────
+  /** The binding for the console, made once per share. */
+  const sharedConsoleExt = $derived(studioShare?.sharedConsole ? studioShare.sharedConsole.extension() : null)
+  const onSharedConsoleTab = $derived(activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).shared === true && !!studioShare?.sharedConsole)
+  /** On once the editor holds the shared text: the binding assumes it does. */
+  let sharedConsoleOn = $state(false)
+  $effect(() => {
+    if (!onSharedConsoleTab) { sharedConsoleOn = false; return }
+    const text = untrack(() => studioShare?.sharedConsole?.text)
+    if (!text) return
+    // The tab's snapshot is stale: what the others typed meanwhile is in the
+    // document. Load it, then bind on the next tick.
+    untrack(() => { sqlText = text.toString() })
+    const t = setTimeout(() => { sharedConsoleOn = true }, 0)
+    return () => clearTimeout(t)
+  })
+  /** Open (or go to) the shared console tab. */
+  function openSharedConsole() {
+    const sc = studioShare?.sharedConsole
+    if (!sc) return
+    const existing = tabs.find((t) => t.kind === 'sql' && /** @type {any} */ (t).shared)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = { ...createSqlTab(sc.text.toString(), 'Shared console'), draft: false, shared: true }
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+    applySqlSnapshot(cloneSqlTabState(/** @type {SqlTabState} */ (tab.state)))
+  }
+  // Sharing ended: the console tab has nothing to bind to.
+  $effect(() => {
+    if (studioShare) return
+    if (untrack(() => tabs.some((t) => /** @type {any} */ (t).shared))) {
+      untrack(() => { tabs = tabs.map((t) => (/** @type {any} */ (t).shared ? { ...t, shared: false, title: 'Shared console (ended)' } : t)) })
+    }
+  })
+
+  /** Tell the others this table's rows changed. */
+  function announceShareChange() {
+    if (shareTableKey) studioShare?.presence?.announceChanged(shareTableKey)
   }
   function stopStudioShare() {
     studioShare?.stop()
@@ -797,7 +1085,7 @@
   const isRedis = $derived(dbType === 'redis')
   const isDynamo = $derived(dbType === 'dynamodb')
   /** Document / wide-column engines browsed with DocBrowser. */
-  const isDoc = $derived(dbType === 'couchdb' || dbType === 'cassandra' || dbType === 'firestore' || dbType === 'mongodb' || dbType === 'elasticsearch' || dbType === 'opensearch')
+  const isDoc = $derived(dbType === 'couchdb' || dbType === 'cassandra' || dbType === 'firestore' || dbType === 'mongodb' || dbType === 'elasticsearch' || dbType === 'opensearch' || dbType === 'neo4j' || dbType === 'influxdb')
   /** Key-value and document engines have their own page and none of the relational UI. */
   const isKV = $derived(isRedis || isDynamo || isDoc)
   // AI replies on a NoSQL connection get Run buttons on blocks in its own language.
@@ -811,6 +1099,8 @@
     : dbType === 'mongodb' ? mongoAdapter({ collections: mongoCollections, describe: mongoDescribe, find: mongoFind, count: mongoCount, save: mongoSave, remove: mongoDelete, explain: mongoExplain, schema: mongoSchema, indexes: { list: mongoIndexes, create: mongoCreateIndex, drop: mongoDropIndex }, updateField: mongoUpdateField, aggregate: mongoAggregate, import: { pick: pickImportFile, preview: mongoImportPreview, run: mongoImport } })
     : dbType === 'firestore' ? firestoreAdapter(firestoreRequest, { projectId: connection?.projectId ?? '', database: connection?.database ?? '' })
     : dbType === 'cassandra' ? cassandraAdapter({ tables: cassandraTables, describe: cassandraDescribe, page: cassandraPage, save: cassandraSave, remove: cassandraDelete })
+    : dbType === 'influxdb' ? influxAdapter({ measurements: influxMeasurements, describe: influxDescribe, page: influxPage }, connection?.version ?? '2')
+    : dbType === 'neo4j' ? neo4jAdapter({ labels: neo4jLabels, describe: neo4jDescribe, page: neo4jPage, save: neo4jSave, remove: neo4jDelete })
     : null,
   )
   /** Where a document connection points, for the page footer. */
@@ -1132,6 +1422,10 @@
 
   // Keep Monaco-heavy tabs mounted once opened so the editor isn't destroyed on tab switch.
   let sqlEverOpened = $state(false)
+  // The data grid as well: building it costs about 85 ms, paid on every return
+  // from an editor or a page tab while the table area was torn down with it.
+  let tableEverOpened = $state(false)
+  const onTableTab = $derived(activeTab?.kind === 'table')
   let ormEverOpened = $state(false)
   let securityEverOpened = $state(false)
   let logsEverOpened = $state(false)
@@ -1146,16 +1440,6 @@
     warning: 'text-warning',
   }
   /** The welcome header: which database this tab is on, and where it lives. */
-  const welcomeTitle = $derived(connection ? String(connection.database || connection.name || 'Database') : '')
-  const welcomeWhere = $derived.by(() => {
-    if (!connection) return ''
-    const c = /** @type {any} */ (connection)
-    let where = ''
-    if (c.filePath) where = c.filePath === ':memory:' ? 'in memory' : String(c.filePath).split(/[\\/]/).pop() ?? ''
-    else if (c.url) { try { where = new URL(String(c.url).replace(/^libsql:/, 'https:')).host } catch { where = '' } }
-    else if (c.host) where = `${c.host}${c.port ? `:${c.port}` : ''}`
-    return [engineLabel(c.type), where].filter(Boolean).join(' · ')
-  })
   let insightsEverOpened = $state(false)
   let advisorEverOpened = $state(false)
   let golfEverOpened = $state(false)
@@ -1308,6 +1592,8 @@
    * @param {Array<{ rowIdx: number, colIdx: number, value: string }>} edits
    */
   async function handleFindReplaceApply(edits) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable || edits.length === 0) return
     if (dbType === 'clickhouse') {
       let done = 0
@@ -1318,7 +1604,7 @@
         }
         toast.success(`Replaced ${done.toLocaleString('en-US')} value${done === 1 ? '' : 's'} in ${activeTable}`)
       } catch (err) {
-        toast.error(`Stopped after ${done} of ${edits.length} replacements`, { description: String(err) })
+        toast.error(`Stopped after ${done} of ${edits.length} replacements`, { description: errorText(err) })
       }
       return
     }
@@ -1346,7 +1632,7 @@
       toast.success(`Replaced ${done.toLocaleString('en-US')} value${done === 1 ? '' : 's'} in ${activeTable}`)
     } catch (err) {
       recordActivity({ type: 'row_save', title: `Find & replace failed in ${activeTable}`, schema: activeSchema, table: activeTable, success: false, error: String(err) })
-      toast.error(done ? `Stopped after ${done.toLocaleString('en-US')} of ${edits.length}` : 'Find & replace failed', { description: String(err) })
+      toast.error(done ? `Stopped after ${done.toLocaleString('en-US')} of ${edits.length}` : 'Find & replace failed', { description: errorText(err) })
     }
     await loadRows({ keepScroll: true })
   }
@@ -1408,7 +1694,7 @@
       if (!Number.isFinite(n) || n < 0) throw new Error('Count not available on this connection')
       toast.success(tableName, { description: `${n.toLocaleString('en-US')} row${n === 1 ? '' : 's'}` })
     } catch (e) {
-      toast.error('Count failed', { description: String(e) })
+      toast.error('Count failed', { description: errorText(e) })
     }
   }
 
@@ -1419,7 +1705,7 @@
       await navigator.clipboard.writeText(cols.map((c) => c.name).join(', '))
       toast.success(`Copied ${cols.length} column name${cols.length === 1 ? '' : 's'}`)
     } catch (e) {
-      toast.error('Copy columns failed', { description: String(e) })
+      toast.error('Copy columns failed', { description: errorText(e) })
     }
   }
 
@@ -1463,6 +1749,7 @@
 
   $effect(() => {
     if (activeTab?.kind === 'sql') sqlEverOpened = true
+    if (activeTab?.kind === 'table') tableEverOpened = true
     if (activeTab?.kind === 'orm') ormEverOpened = true
     if (activeTab?.kind === 'security') securityEverOpened = true
     if (activeTab?.kind === 'logs') logsEverOpened = true
@@ -1595,7 +1882,7 @@
       setTxStatus(activeTabId, status)
       toast.info('Transaction open — nothing is saved until you commit')
     } catch (e) {
-      toast.error('Could not start a transaction', { description: String(e) })
+      toast.error('Could not start a transaction', { description: errorText(e) })
     } finally {
       sqlTxBusy = false
     }
@@ -1619,29 +1906,121 @@
         await txRollback(session)
         toast.info('Rolled back — the database is unchanged')
       }
-      // Only forget the session once the backend has actually closed it;
-      // dropping it on failure would strand the held connection with no way
-      // left in the UI to reach it.
-      const next = new Map(sqlTxSessions)
-      next.delete(tabId)
-      sqlTxSessions = next
-      _txSqlByTab.delete(tabId)
-      setTxStatus(tabId, null)
+      forgetTxSession(tabId)
     } catch (e) {
+      // The backend ends the session either way: a failed commit or rollback
+      // rolls back what is left, or closes the connection so the server does.
+      forgetTxSession(tabId)
       toast.error(how === 'commit' ? 'Could not commit' : 'Could not roll back', {
-        description: String(e),
+        description: errorText(e),
       })
     } finally {
       sqlTxBusy = false
     }
+  }
+
+  /** @param {string} tabId */
+  function forgetTxSession(tabId) {
+    if (!sqlTxSessions.has(tabId)) return
+    const next = new Map(sqlTxSessions)
+    next.delete(tabId)
+    sqlTxSessions = next
+    _txSqlByTab.delete(tabId)
+    setTxStatus(tabId, null)
+  }
+
+  // The backend ends a session on its own when it sits idle past 30 minutes or
+  // the connection under it changes. Say so, and drop the tab's indicator.
+  onMount(() => {
+    let off = () => {}
+    ;(async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        off = await listen('tx-ended', (e) => {
+          const { sessionId, reason, rolledBack } = /** @type {{ sessionId: string, reason: 'idle' | 'connectionChanged', rolledBack: boolean }} */ (e.payload)
+          const tabId = [...sqlTxSessions].find(([, sid]) => sid === sessionId)?.[0]
+          if (!tabId) return
+          forgetTxSession(tabId)
+          const why = reason === 'idle' ? 'It was idle for 30 minutes' : 'You switched to another connection'
+          toast.info('Transaction rolled back', {
+            description: `${why}, so it was rolled back${rolledBack ? '' : ' (the connection was closed)'}. Nothing it did was saved.`,
+          })
+        })
+      } catch { /* web preview: no backend events */ }
+    })()
+    return () => off()
+  })
+
+  // An SSH tunnel that drops is rebuilt by the backend on the same local port.
+  // One toast per tunnel says so and follows it: down, still retrying, back.
+  onMount(() => {
+    let off = () => {}
+    /** @type {Map<string, number>} */
+    const shown = new Map()
+    ;(async () => {
+      try {
+        const { listen } = await import('@tauri-apps/api/event')
+        off = await listen('tunnel-status', (e) => {
+          const { via, state, message } = /** @type {{ via: string, state: 'down' | 'retrying' | 'up' | 'closed', message: string | null }} */ (e.payload)
+          const id = shown.get(via)
+          // Left the connection while its tunnel was down: nothing to wait for.
+          if (state === 'closed') {
+            if (id != null) toast.dismiss(id)
+            shown.delete(via)
+            return
+          }
+          if (state === 'up') {
+            if (id != null) toast.update(id, { type: 'success', title: 'SSH tunnel reconnected', description: `Through ${via}. Queries can run again.`, duration: 4500 })
+            shown.delete(via)
+            return
+          }
+          const description = `${message ?? 'The SSH connection closed.'} Reconnecting through ${via}.`
+          if (id == null) shown.set(via, toast.loading('SSH tunnel lost', { description, duration: Infinity }))
+          else toast.update(id, { type: 'loading', title: 'SSH tunnel lost', description })
+        })
+      } catch { /* web preview: no backend events */ }
+    })()
+    return () => off()
+  })
+
+  // While a transaction is open, refresh its badge: how long it has been held
+  // and who is waiting on its locks change without any statement running.
+  $effect(() => {
+    if (sqlTxSessions.size === 0) return
+    const timer = setInterval(() => {
+      for (const [tabId, session] of sqlTxSessions) {
+        if (session.startsWith('undo-')) continue
+        txStatus(session).then((st) => {
+          if (st.open) setTxStatus(tabId, st)
+          else forgetTxSession(tabId)
+        }).catch(() => {})
+      }
+    }, 15_000)
+    return () => clearInterval(timer)
+  })
+
+  /**
+   * Quitting rolls back every open transaction (the backend closes their
+   * connections). Ask first when one has work in it. True: go ahead.
+   */
+  async function confirmQuitWithOpenTransactions() {
+    const open = await txOpenSessions().catch(() => /** @type {string[]} */ ([]))
+    const mine = open.filter((id) => !id.startsWith('undo-'))
+    if (!mine.length) return true
+    const label = mine.length === 1 ? 'A transaction is open' : `${mine.length} transactions are open`
+    return askConfirm(`${label}. Quitting rolls back everything in it that was not committed.`, 'Roll back & quit')
   }
   /** @type {ForeignKeyInfo[]} */
   let foreignKeys = $state([])
   /** Cache of incoming (reverse) FKs, keyed by "schema.table". Loaded once per table open. */
   let incomingFkCache = $state(/** @type {Map<string,any[]>} */ (new Map()))
   /** Incoming FKs for the active table, read from cache. */
+  // Turned back on in Settings with a table open: load its columns now.
+  $effect(() => {
+    if ($appRelationColumns && activeSchema && activeTable) void loadIncomingForeignKeys(activeSchema, activeTable)
+  })
   const incomingForeignKeys = $derived(
-    (activeSchema && activeTable) ? (incomingFkCache.get(`${activeSchema}.${activeTable}`) ?? []) : []
+    $appRelationColumns && activeSchema && activeTable ? (incomingFkCache.get(`${activeSchema}.${activeTable}`) ?? []) : []
   )
   /** Virtual rel column labels for the toolbar columns dropdown.
    *  Must enumerate ALL incoming FK tables - no cap - so every rel column
@@ -1753,6 +2132,7 @@
           const { flushSyncBeforeExit } = await import('$lib/sync/runtime.js')
           event.preventDefault()
           if (unsaved && !(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) return
+          if (!(await confirmQuitWithOpenTransactions())) return
           await flushSyncBeforeExit()
           await win.destroy()
         })
@@ -1760,9 +2140,18 @@
         const { listen } = await import('@tauri-apps/api/event')
         const { invoke } = await import('@tauri-apps/api/core')
         const offQuit = await listen('app-quit-requested', async () => {
-          if (hasAnyUnsavedChanges() && !(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) {
-            await invoke('cancel_quit').catch(() => {})
-            return
+          // The backend quits on its own if the page has not answered within a
+          // few seconds. A question waits on a person, so stop that timer
+          // first (cancel_quit only disarms it); quit_now still quits.
+          const hold = () => invoke('cancel_quit').catch(() => {})
+          if (hasAnyUnsavedChanges()) {
+            await hold()
+            if (!(await askConfirm('You have unsaved table changes. Discard them and quit?', 'Discard & quit'))) return
+          }
+          const openTx = (await txOpenSessions().catch(() => /** @type {string[]} */ ([]))).some((id) => !id.startsWith('undo-'))
+          if (openTx) {
+            await hold()
+            if (!(await confirmQuitWithOpenTransactions())) return
           }
           const { flushSyncBeforeExit } = await import('$lib/sync/runtime.js')
           await flushSyncBeforeExit()
@@ -1835,6 +2224,36 @@
     pageSize === PAGE_SIZE_ALL ? 0 : (rawOffset ?? (page - 1) * pageSize),
   )
 
+  // What the grid shows, parked while another tab is up. The grid stays mounted
+  // behind editor and page tabs, and leaving for an editor clears the table
+  // state; fed live, the hidden grid emptied itself (about 20 ms) and refilled
+  // on return. Parked, coming back to the same table changes none of its data
+  // props, and coming back to a different one is a plain table-to-table switch.
+  // Only one-way data is parked: the bound selection and cursor stay live.
+  /** @type {any} */
+  let _parkedGrid = null
+  const gridData = $derived.by(() => {
+    if (!onTableTab && _parkedGrid) return _parkedGrid
+    _parkedGrid = {
+      columns,
+      rows,
+      primaryKey,
+      foreignKeys,
+      incomingForeignKeys,
+      indexes: activeTableIndexes,
+      schema: activeSchema,
+      tableName: activeTable ?? '',
+      columnWidthsKey: activeTable ? `${persistConnectionId}\x00${activeSchema}.${activeTable}` : undefined,
+      rowNumberOffset: infiniteScroll ? 0 : currentOffset,
+      rowSort,
+      rowSortMore,
+      searchQuery: rowSearch,
+      filtered: rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0,
+      endOfResults: infiniteScroll && !windowed && total > 0 && rows.length >= total,
+    }
+    return _parkedGrid
+  })
+
   // ── Keyset / cursor / temporal pagination ────────────────────────────────
   // Cursor for the NEXT fetch (null = first page / offset-0). Set by next/prev.
   let _keysetCursor = $state(/** @type {{ value: unknown, after: boolean } | null} */ (null))
@@ -1890,6 +2309,27 @@
   /** @param {string | null} tabId */
   const loadSeqOf = (tabId) => (tabId ? _loadSeqByTab.get(tabId) ?? 0 : 0)
   /** @param {string | null} tabId */
+  /**
+   * Where this page's load numbers start. The backend keeps the highest one it
+   * has seen per tab and refuses lower ones as superseded, and it outlives the
+   * page: after a reload the counter began at 1 again for the same tab ids, so
+   * every load of a restored tab was refused ("Superseded by a newer load")
+   * until the app restarted. Starting from the clock puts each page above every
+   * earlier one (1000 loads per millisecond between reloads).
+   */
+  const FETCH_EPOCH = Date.now() * 1000
+  /**
+   * Tag for a row fetch of a tab's load `seq`: a newer load of the same tab
+   * cancels it on the server (see FetchTag in query.rs).
+   * @param {string | null} tabId @param {number} seq
+   */
+  function fetchTagFor(tabId, seq) {
+    return tabId ? { group: tabId, generation: FETCH_EPOCH + seq } : null
+  }
+  /** A window belongs to the active tab's newest load. */
+  function windowFetchTag() {
+    return fetchTagFor(activeTabId, loadSeqOf(activeTabId))
+  }
   function bumpLoadSeq(tabId) {
     if (!tabId) return 0
     const n = loadSeqOf(tabId) + 1
@@ -1967,7 +2407,7 @@
   /** What the window fetcher is doing, for the grid's loading pill. Plain state
    *  (not the hot-path sets, which stay non-reactive): assigned only when the
    *  answer actually changes. */
-  let windowStatus = $state({ slow: false, failed: false })
+  let windowStatus = $state(/** @type {{ slow: boolean, failed: boolean, cause?: string }} */ ({ slow: false, failed: false, cause: 'connection' }))
 let rowSearch = $state('')
   let rowSort = $state(/** @type {TableSort | null} */ (null))
   /** Secondary sort keys for multi-column sort (primary is rowSort). @type {TableSort[]} */
@@ -2095,11 +2535,6 @@ let rowSearch = $state('')
     return !!tabId && (_busyJobs.get(tabId)?.size ?? 0) > 0
   }
   let error = $state('')
-  /** Whether the error banner is showing the raw driver text. */
-  let showRawError = $state(false)
-  // A new failure starts collapsed; leaving it expanded from a previous
-  // error would dump raw driver text on someone who never asked for it.
-  $effect(() => { void error; showRawError = false })
   let selected = $state(new Set())
   /** @type {number | null} */
   let focusedRow = $state(null)
@@ -2159,6 +2594,29 @@ let rowSearch = $state('')
   /** Structure view only makes sense for real tables, not views/materialized views */
   const canShowStructure = $derived(activeTableKind === 'table' || activeTableKind === 'foreign_table')
 
+  // Table tabs remember their kind. Sessions saved before the snapshot carried
+  // it restored every view as a table, so the listing corrects them once it
+  // arrives for their schema.
+  $effect(() => {
+    const listed = tables
+    const schema = activeSchema
+    if (!listed.length) return
+    untrack(() => {
+      const kinds = new Map(listed.map((t) => [t.name, t.kind ?? 'table']))
+      let changed = false
+      const next = tabs.map((t) => {
+        if (t.kind !== 'table') return t
+        const st = /** @type {any} */ (t.state)
+        if (st?.schema !== schema) return t
+        const kind = kinds.get(st?.table)
+        if (!kind || kind === (st.tableKind ?? 'table')) return t
+        changed = true
+        return { ...t, state: { ...st, tableKind: kind } }
+      })
+      if (changed) tabs = next
+    })
+  })
+
   const activeView = $derived(activeTab?.kind === 'sql' ? 'sql' : 'table')
 
   // Stable name arrays derived separately so sqlSchemaHints doesn't rebuild
@@ -2166,6 +2624,8 @@ let rowSearch = $state('')
   const _activeColsTyped = $derived(columns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type ?? '' })))
   const _sqlColNames = $derived(sqlColumns.map((c) => c.name))
   const _tableNames = $derived(tables.map((t) => t.name))
+  /** Views among them, for labels that count tables (the AI's "public · 2 tables"). */
+  const _viewCount = $derived(tables.filter((t) => /view/i.test(t.kind ?? '')).length)
 
   // ── Async SQL-completion hints (enums + user functions) ──────────────────────
   // Loaded lazily when the SQL tab becomes active. Stored as reactive state so
@@ -2217,7 +2677,13 @@ let rowSearch = $state('')
       dbLatencyMs = null
       return
     }
-    void pingNow()
+    // The first reading waits out the connect's own catalog load. Taken at once
+    // it queued behind the schema, table and count queries and showed a local
+    // DuckDB file as a red "958ms, very slow" that read 3 ms a moment later.
+    // Connecting just proved the link, so nothing is missed in the wait.
+    // The last database's reading is not this one's: blank (pulsing) until then.
+    dbLatencyMs = null
+    const firstPing = setTimeout(() => void pingNow(), 2_500)
     let stopped = false
     /** @type {ReturnType<typeof setTimeout> | undefined} */
     let timer
@@ -2245,7 +2711,7 @@ let rowSearch = $state('')
       schedule()
     }
     schedule()
-    return () => { stopped = true; if (timer) clearTimeout(timer) }
+    return () => { stopped = true; clearTimeout(firstPing); if (timer) clearTimeout(timer) }
   })
 
   // Reconnect the instant the OS reports the network is back, or when the user
@@ -2400,15 +2866,28 @@ let rowSearch = $state('')
   const aiChatMatch = $derived((/** @type {string} */ k) => chatBelongsTo(k, connection))
 
   // ID of the currently-active saved connection (for highlighting in the palette)
-  const activeConnectionId = $derived(
-    connection
-      ? (savedConnections.find((c) => {
-          if (c.type === 'sqlite') return c.filePath === connection.filePath
-          if (c.type === 'd1') return c.databaseId === connection.databaseId && c.accountId === connection.accountId
-          return c.host === connection.host && c.database === connection.database && c.user === connection.user
-        })?.id ?? '')
-      : '',
-  )
+  /** The saved connection last connected from, as onConnected was told it. */
+  let connectedSavedId = $state('')
+
+  const activeConnectionId = $derived.by(() => {
+    if (!connection) return ''
+    // Equal where both say: a port or type left out matches as it always did.
+    const agree = (/** @type {any} */ a, /** @type {any} */ b) => a == null || b == null || a === '' || b === '' || String(a) === String(b)
+    /** @param {any} c */
+    const matches = (c) => {
+      if (c.type === 'sqlite') return c.filePath === connection.filePath
+      if (c.type === 'd1') return c.databaseId === connection.databaseId && c.accountId === connection.accountId
+      // The port and engine too: two local servers on one host, each with a
+      // "postgres" database and user, read as one connection and shared their
+      // drafts, history and tabs.
+      return c.host === connection.host && c.database === connection.database && c.user === connection.user
+        && agree(c.port, connection.port) && agree(c.type, connection.type)
+    }
+    // The saved connection it was opened with, while it still describes it.
+    const opened = connectedSavedId ? savedConnections.find((c) => c.id === connectedSavedId) : undefined
+    if (opened && matches(opened)) return opened.id
+    return savedConnections.find(matches)?.id ?? ''
+  })
 
   const persistConnectionId = $derived(activeConnectionId || connectionId)
 
@@ -2445,8 +2924,6 @@ let rowSearch = $state('')
     return 'Stroke'
   })
 
-  /** The saved connection last connected from, as onConnected was told it. */
-  let connectedSavedId = $state('')
   /**
    * The saved connection the AI tools should call active. activeConnectionId
    * matches on host, database and user, which misses after switching database
@@ -2521,6 +2998,95 @@ let rowSearch = $state('')
     window.addEventListener('beforeunload', flushSqlTabs)
     return () => window.removeEventListener('beforeunload', flushSqlTabs)
   })
+
+  // The open tabs of each database, so connecting again opens them again
+  // (open-tabs.js). A database's list is written only once its tabs from last
+  // time have been put back: a connect starts from no tabs, and writing that
+  // would wipe the list it is about to restore.
+  /** @type {Set<string>} */
+  const _openTabsReady = new Set()
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let _openTabsTimer = null
+  /** @type {(() => void) | null} */
+  let _openTabsWrite = null
+  let _openTabsQueued = ''
+  function flushOpenTabs() {
+    if (_openTabsTimer) clearTimeout(_openTabsTimer)
+    _openTabsTimer = null
+    const write = _openTabsWrite
+    _openTabsWrite = null
+    write?.()
+  }
+  /** Stop writing this database's list until its tabs are restored again. @param {string} key */
+  function holdOpenTabs(key) {
+    flushOpenTabs()
+    _openTabsReady.delete(key)
+  }
+  $effect(() => {
+    const key = sqlDraftKey
+    const list = tabsToStore(tabs, activeTabId)
+    if (!key || !_openTabsReady.has(key)) return
+    const queued = `${key}\n${JSON.stringify(list)}`
+    if (queued === _openTabsQueued) return
+    _openTabsQueued = queued
+    if (_openTabsTimer) clearTimeout(_openTabsTimer)
+    _openTabsWrite = () => saveOpenTabs(key, list)
+    _openTabsTimer = setTimeout(flushOpenTabs, 400)
+  })
+  onMount(() => {
+    window.addEventListener('beforeunload', flushOpenTabs)
+    return () => window.removeEventListener('beforeunload', flushOpenTabs)
+  })
+
+  /**
+   * Put back the tabs this database had open last time, in their order, with
+   * the one that was in front in front again. Skipped when the user has opened
+   * something of their own while the catalog loaded.
+   * @param {string} key the database's sqlDraftKey
+   */
+  async function restoreOpenTabs(key) {
+    if (!key || key !== sqlDraftKey || loadSettings().reopenTabs === false) return
+    const kept = loadOpenTabs(key)
+    if (!kept.length) return
+    // What a connect opens by itself: anything else is the user's.
+    const automatic = (/** @type {any} */ t) => t.kind === 'welcome' || t.kind === 'redis' || t.kind === 'dynamodb' || (t.kind === 'docs' && !t.collection)
+    if (!tabs.every(automatic)) return
+    const pro = $hasPro
+    const listed = new Set(tables.map((t) => t.name))
+    const sqlTabs = kept.some((k) => k.kind === 'sql') ? restoreSqlTabs() : []
+    let si = 0
+    /** @type {{ tab: any, active: boolean }[]} */
+    const built = []
+    for (const k of kept) {
+      /** @type {any} */
+      let tab = null
+      if (k.kind === 'table' && k.table) {
+        // A table dropped since is left out; one in another schema is checked when it loads.
+        if (k.schema === activeSchema && listed.size && !listed.has(k.table)) continue
+        tab = createTableTab(k.schema ?? activeSchema, k.table, /** @type {any} */ (k.tableKind ?? 'table'))
+        if (k.view) tab = { ...tab, state: { ...tab.state, ...k.view } }
+      } else if (k.kind === 'sql') {
+        tab = sqlTabs[si++] ?? null
+      } else if (k.kind === 'docs') {
+        const name = k.collection ?? ''
+        tab = { ...createDocsTab(), collection: name, title: name ? name.slice(name.lastIndexOf('.') + 1) : 'Browse' }
+      } else if (PAGE_KINDS.has(k.kind)) {
+        // Pages behind Pro open only with it, as they do from the palette.
+        if (!pro && k.kind !== 'redis' && k.kind !== 'dynamodb') continue
+        tab = createKindTab(/** @type {any} */ (k.kind))
+      }
+      if (!tab) continue
+      if (k.pinned) tab = { ...tab, pinned: true }
+      built.push({ tab, active: !!k.active })
+    }
+    // Editor tabs kept beyond the placeholders (written by an older version) go last.
+    for (; si < sqlTabs.length; si++) built.push({ tab: sqlTabs[si], active: false })
+    if (!built.length) return
+    tabs = built.map((b) => b.tab)
+    const front = (built.find((b) => b.active) ?? built[0]).tab
+    activeTabId = null
+    await activateTab(front.id)
+  }
 
   /** @type {import('$lib/stores/query-history.js').QueryHistoryEntry[]} */
   let queryHistory = $state([])
@@ -2600,7 +3166,7 @@ let rowSearch = $state('')
       return {
         schemas, activeSchema, tables: _tableNames,
         activeTable, columns: [], primaryKey: [], foreignKeys: [],
-        allTableColumns: {}, dbType: engineFamily(connection?.type),
+        allTableColumns: {}, dbType: engineFamily(connection?.type), viewCount: _viewCount,
         environment: connection?.environment ?? null,
         database: connection?.database || connection?.name || '',
       }
@@ -2616,6 +3182,7 @@ let rowSearch = $state('')
       allTableColumns: _allTableColumns,
       /** @type {import('$lib/stores/connections.js').DbType} */
       dbType: engineFamily(connection?.type),
+      viewCount: _viewCount,
       environment: connection?.environment ?? null,
       database: connection?.database || connection?.name || '',
     }
@@ -2653,6 +3220,9 @@ let rowSearch = $state('')
     return {
       schema: activeSchema,
       table: activeTable,
+      // Kept, not re-derived: without it every save turned a view tab back into
+      // a table (grid icon, Structure offered) the moment another tab opened.
+      tableKind: activeTableKind,
       page,
       pageSize,
       rowSearch,
@@ -2981,7 +3551,17 @@ let rowSearch = $state('')
     menuActions.theme?.()
   })
 
+  /**
+   * A dialog is up (Settings, Share, a confirm...). The palette opened over it,
+   * two modals deep, with Escape closing the wrong one. One dialog at a time:
+   * the palette's shortcuts wait until it is closed.
+   */
+  function anotherDialogOpen() {
+    return !commandOpen && !!document.querySelector('[data-slot="dialog-content"][data-state="open"]')
+  }
+
   createCommandHotkey('palette.open', (e) => {
+    if (anotherDialogOpen()) return
     e.preventDefault()
     commandPage = 'root'
     commandOpen = true
@@ -2999,7 +3579,7 @@ let rowSearch = $state('')
         e.stopPropagation()
         // Only open+set page mode from a closed state - never yank the page mode
         // if the palette is already open mid-interaction.
-        if (commandOpen) return
+        if (commandOpen || anotherDialogOpen()) return
         commandPage = 'tables'
         commandOpen = true
       }
@@ -3396,11 +3976,9 @@ let rowSearch = $state('')
   $effect(() => {
     const conn = connection
     const type = dbType
-    if (!conn || !type) return
+    if (!conn || !type || !connectSettled) return
     const run = () => { void terminalClient({ ...conn, type }).catch(() => {}) }
-    const ric = /** @type {any} */ (window).requestIdleCallback
-    const id = ric ? ric(run, { timeout: 4000 }) : setTimeout(run, 1500)
-    return () => { (ric ? /** @type {any} */ (window).cancelIdleCallback : clearTimeout)(id) }
+    return whenIdle(run, { timeout: 4000 })
   })
   // A new connection gets a fresh client: close the old panel's session.
   $effect(() => {
@@ -3471,7 +4049,7 @@ let rowSearch = $state('')
   function openNewWindow() {
     void import('@tauri-apps/api/core')
       .then(({ invoke }) => invoke('open_new_window'))
-      .catch((err) => toast.error('Could not open a new window', { description: String(err) }))
+      .catch((err) => toast.error('Could not open a new window', { description: errorText(err) }))
   }
 
   /**
@@ -3622,6 +4200,7 @@ let rowSearch = $state('')
 
   // Page navigator - the VS Code chord, one modifier off ⌘P's table search.
   createCommandHotkey('palette.pages', (e) => {
+    if (anotherDialogOpen()) return
     e.preventDefault()
     commandPage = 'pages'
     commandOpen = true
@@ -3819,6 +4398,9 @@ let rowSearch = $state('')
     if (showConnectionModal)   { e.preventDefault(); showConnectionModal = false;   return }
     if (showSettingsModal)     { e.preventDefault(); showSettingsModal = false;     return }
     if (vcolPanelOpen)         { e.preventDefault(); vcolPanelOpen = false;         return }
+    // Any other open dialog (What's new, a confirm, a component's own) closes
+    // itself on Escape; the cell, filter and inspector under it stay as they are.
+    if (document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return
     if (editingCell) {
       e.preventDefault()
       editingCell = null
@@ -3828,9 +4410,20 @@ let rowSearch = $state('')
     if (!inspectorTarget) return
     e.preventDefault()
     closeInspector()
-  })
+    // The library's defaults prevent and stop every Escape before this runs,
+    // handled or not, so a dialog missing from the list above never closed.
+  }, { preventDefault: false, stopPropagation: false })
 
-  createCommandHotkey('table.deleteRows', (e) => {
+  createCommandHotkey('table.deleteRows', (e) => deleteRowsHotkey(e))
+  // Ctrl+Delete too, while the command keeps its default: on a PC keyboard
+  // Delete is the key for it, and the grid already leaves the modified Delete
+  // to this handler (a bare Delete clears the cell).
+  createHotkey('Mod+Delete', (e) => deleteRowsHotkey(e), () => ({
+    conflictBehavior: 'allow',
+    enabled: bindingFor('table.deleteRows') === 'Mod+Backspace',
+  }))
+  /** @param {KeyboardEvent} e */
+  function deleteRowsHotkey(e) {
     if (commandOpen || showConnectionModal || showSettingsModal) return
     // Ctrl+Backspace is the word-delete shortcut in inputs/textareas - don't steal it
     const el = document.activeElement
@@ -3844,7 +4437,7 @@ let rowSearch = $state('')
     // the focused row, which is the row the menu offers this chord on.
     e.preventDefault()
     stageDeleteSelectedRows()
-  })
+  }
 
   createCommandHotkey('view.refresh', (e) => {
     if (!connection) return
@@ -4376,6 +4969,7 @@ let rowSearch = $state('')
     // restores its own when its editor opens.
     flushSqlTabs()
     _sqlTabsRestoredFor = ''
+    holdOpenTabs(sqlDraftKey)
     tabs = []
     activeTabId = null
     // Every tab id in the map/MRU/stack just died with the tab list - drop them
@@ -4516,6 +5110,47 @@ let rowSearch = $state('')
    * fields (Tab walks them) once the editor holds the tab.
    * @param {{ text: string, title: string, snippet?: string }} spec
    */
+  /**
+   * New table. The dialog writes Postgres, MySQL or SQLite DDL; SQL Server and
+   * ClickHouse got Postgres DDL from it (double quotes, serial, timestamptz)
+   * that they reject, so there it opens the editor on the engine's own
+   * CREATE TABLE, with its fields to Tab through.
+   */
+  function openNewTable() {
+    const fam = sqlFamily(dbType)
+    if (fam === 'mssql' || fam === 'clickhouse') {
+      const s = SQL_SNIPPETS.find((x) => x.name === 'CREATE TABLE' && x.only?.includes(fam))
+      if (s) { openObjectSql({ text: '', title: 'New table', snippet: s.body }); return }
+    }
+    // GoogleSQL: Spanner keys the table after the column list, and BigQuery
+    // names the dataset. Both checked against their emulators.
+    if (dbType === 'spanner' && !spannerIsPg()) {
+      openObjectSql({ text: '', title: 'New table', snippet: 'CREATE TABLE ${1:name} (\n  id INT64 NOT NULL,\n  ${2:column} ${3:STRING(MAX)},\n  created_at TIMESTAMP NOT NULL OPTIONS (allow_commit_timestamp = true)\n) PRIMARY KEY (id)' })
+      return
+    }
+    // PostgreSQL dialect: no serial (it asks for a sequence kind), so a
+    // bit-reversed identity, the kind Spanner recommends. Checked on the emulator.
+    if (dbType === 'spanner') {
+      openObjectSql({ text: '', title: 'New table', snippet: 'CREATE TABLE ${1:name} (\n  id bigint GENERATED BY DEFAULT AS IDENTITY (BIT_REVERSED_POSITIVE) PRIMARY KEY,\n  ${2:column} ${3:varchar} NOT NULL,\n  created_at timestamptz DEFAULT now() NOT NULL\n)' })
+      return
+    }
+    // Oracle and Snowflake: identity and timestamp types of their own. The
+    // Oracle one was run in sqlplus on Oracle 23 Free.
+    if (dbType === 'oracle') {
+      openObjectSql({ text: '', title: 'New table', snippet: 'CREATE TABLE ${1:name} (\n  id NUMBER GENERATED BY DEFAULT AS IDENTITY PRIMARY KEY,\n  ${2:column} ${3:VARCHAR2(255)} NOT NULL,\n  created_at TIMESTAMP DEFAULT SYSTIMESTAMP NOT NULL\n)' })
+      return
+    }
+    if (dbType === 'snowflake') {
+      openObjectSql({ text: '', title: 'New table', snippet: 'CREATE TABLE ${1:name} (\n  id NUMBER AUTOINCREMENT PRIMARY KEY,\n  ${2:column} ${3:VARCHAR} NOT NULL,\n  created_at TIMESTAMP_TZ DEFAULT CURRENT_TIMESTAMP() NOT NULL\n)' })
+      return
+    }
+    if (dbType === 'bigquery') {
+      openObjectSql({ text: '', title: 'New table', snippet: `CREATE TABLE ${activeSchema ? activeSchema + '.' : ''}\${1:name} (\n  id INT64 NOT NULL,\n  \${2:column} \${3:STRING},\n  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP()\n)` })
+      return
+    }
+    showCreateTableDialog = true
+  }
+
   function openObjectSql({ text, title, snippet }) {
     if (aiMode) exitAiMode()
     openSqlTabWith(text, title, { draft: false })
@@ -4758,6 +5393,24 @@ let rowSearch = $state('')
   }
 
   /** Shared links as a tab; without a connection there is no tab bar, so the overlay. */
+  /** What the Queries tab shows: History, Saved or the saved charts. */
+  let queriesView = $state(/** @type {'history' | 'saved' | 'charts'} */ ('history'))
+
+  /** The Queries tab (history, saved queries, saved charts), on a view. @param {'history' | 'saved' | 'charts'} [view] */
+  function openQueriesTab(view = 'history') {
+    if (!connection) return
+    commandOpen = false
+    queriesView = view
+    const existing = findQueriesTab(tabs)
+    if (existing) { void activateTab(existing.id); return }
+    saveActiveTabState()
+    dropWelcomeTabs()
+    const tab = createQueriesTab()
+    tabs = [...tabs, tab]
+    activeTabId = tab.id
+    clearTableEditor()
+  }
+
   function openSharesTab() {
     commandOpen = false
     showSettingsModal = false
@@ -5013,7 +5666,7 @@ let rowSearch = $state('')
     const count = tabPendingCount(closing)
     if (count === 0) return true
     const ok = await askConfirm(
-      `This table has ${count} unsaved change${count === 1 ? '' : 's'}. Close the tab and discard them?`,
+      `This table has ${count} unsaved change${count === 1 ? '' : 's'}. Close the tab and discard ${count === 1 ? 'it' : 'them'}?`,
       'Close & discard',
     )
     if (!ok) return false
@@ -5052,16 +5705,18 @@ let rowSearch = $state('')
     if (!(await confirmDiscardTabChanges(closing))) return
     rememberClosedTab(closing)
     const nextTabs = tabs.filter((t) => t.id !== id)
-    if (nextTabs.length === 0) {
-      tabs = [createWelcomeTab()]
+    // Only tabs the bar shows count: a hidden one can't be the screen you land on.
+    if (!nextTabs.some(isGroupable)) {
+      tabs = [...nextTabs.filter(isGroupable), createWelcomeTab()]
       activeTabId = tabs[0].id
       clearTableEditor()
       return
     }
     tabs = nextTabs
     if (activeTabId === id) {
-      const nextIdx = Math.min(idx, nextTabs.length - 1)
-      await activateTab(nextTabs[nextIdx].id)
+      const shown = nextTabs.filter(isGroupable)
+      const before = nextTabs.slice(0, idx).filter(isGroupable).length
+      await activateTab(shown[Math.min(before, shown.length - 1)].id)
     }
   }
 
@@ -5070,6 +5725,7 @@ let rowSearch = $state('')
     if (!tab || tab.kind === 'welcome') return
     _liveRowsByTab.delete(tab.id)
     forgetSqlResult(tab.id)
+    dropMirror(tab.id)
     // Anything still in flight for this tab is now orphaned: dropping its load
     // token makes the in-flight result fail its own liveness check instead of
     // being applied to whatever tab took its place.
@@ -5185,6 +5841,37 @@ let rowSearch = $state('')
     await activateTab(copy.id)
   }
 
+  // AI tabs exist only while "AI chat in a tab" is on; off, AI is the
+  // window's AI mode. Turning it off used to leave them in `tabs`, hidden from
+  // the bar: the screen showed the hidden tab (blank), and closing the last
+  // visible tab didn't open the new-tab page because hidden ones remained.
+  $effect(() => {
+    if ($appAiInTab) return
+    untrack(() => {
+      let keptChanged = false
+      for (const [k, sess] of _sessions) {
+        if (!sess.tabs?.some((t) => t.kind === 'ai')) continue
+        const left = sess.tabs.filter((t) => t.kind !== 'ai')
+        const active = left.some((t) => t.id === sess.activeTabId) ? sess.activeTabId : (left[0]?.id ?? null)
+        _sessions.set(k, { ...sess, tabs: left, activeTabId: active })
+        keptChanged = true
+      }
+      if (keptChanged) sessionsTick++
+      if (!tabs.some((t) => t.kind === 'ai')) return
+      const wasActive = tabs.find((t) => t.id === activeTabId)?.kind === 'ai'
+      const idx = tabs.findIndex((t) => t.id === activeTabId)
+      const left = tabs.filter((t) => t.kind !== 'ai')
+      if (!left.length) {
+        tabs = [createWelcomeTab()]
+        activeTabId = tabs[0].id
+        clearTableEditor()
+        return
+      }
+      tabs = left
+      if (wasActive) void activateTab(left[Math.min(Math.max(idx, 0), left.length - 1)].id)
+    })
+  })
+
   // ── Pane-layout reconciliation & group-aware actions ─────────────────────
   // AI tabs live in a full-window overlay, not the tab flow, so they never
   // belong to a group.
@@ -5292,8 +5979,9 @@ let rowSearch = $state('')
     // Remember it so Reopen Closed Tab (⌘⇧T) can restore it - mirrors closeTab().
     rememberClosedTab(closing)
     const nextTabs = tabs.filter((t) => t.id !== id)
-    if (nextTabs.length === 0) {
-      tabs = [createWelcomeTab()]
+    // Only tabs the bar shows count: a hidden one can't be the screen you land on.
+    if (!nextTabs.some(isGroupable)) {
+      tabs = [...nextTabs.filter(isGroupable), createWelcomeTab()]
       activeTabId = tabs[0].id
       clearTableEditor()
       return
@@ -5501,8 +6189,9 @@ let rowSearch = $state('')
     }
     // Fire the fetch in background - caller can open more tabs without waiting
     void startTabFetch(tab.id)
-    // Load reverse FKs once per table (cached - not re-fetched on page/sort changes)
-    void loadIncomingForeignKeys(schema, table)
+    // Load reverse FKs once per table (cached - not re-fetched on page/sort
+    // changes), unless their columns are turned off in Settings.
+    if ($appRelationColumns) void loadIncomingForeignKeys(schema, table)
   }
 
   /** Cap on the incoming-FK cache so long sessions across many tables don't grow it unbounded. */
@@ -5663,7 +6352,15 @@ let rowSearch = $state('')
       return
     }
     if (!list.includes(activeSchema)) {
-      activeSchema = list.includes('public') ? 'public' : list[0]
+      // The database the connection names first (ClickHouse and MySQL list
+      // databases as schemas), then public, then the first that is not the
+      // engine's own: alphabetically that was INFORMATION_SCHEMA on a
+      // ClickHouse connection to `default`.
+      const named = String(/** @type {any} */ (connection)?.database ?? '').trim()
+      activeSchema = (named && list.includes(named) && named)
+        || (list.includes('public') && 'public')
+        || list.find((s) => !isSystemSchema(s))
+        || list[0]
     }
   }
 
@@ -5834,7 +6531,7 @@ let rowSearch = $state('')
     } catch (e) {
       if (String(e).includes('Query cancelled')) return
       if (connectionMoved(connAtCall)) return
-      toast.error('Could not load table structure', { description: String(e) })
+      toast.error('Could not load table structure', { description: errorText(e) })
       if (activeTable === targetTable) { structureColumns = []; structureError = String(e).replace(/^Error:\s*/, '') }
     } finally {
       if (mySeq === _structureSeq) loadingStructure = false
@@ -6139,6 +6836,42 @@ let rowSearch = $state('')
       }
     }
     return landed
+  }
+
+  /**
+   * Re-count the open table in the sidebar after rows were added from outside
+   * the grid (Import data): its count stayed at the old number, 0 for a table
+   * just filled. Engines that count inline re-list quietly instead.
+   */
+  async function recountActiveTable() {
+    const name = activeTable
+    if (!name) return
+    const key = catalogKey(persistConnectionId, 'tables', activeSchema)
+    const landed = await resolveRowCounts(key, activeSchema, [name])
+    if (!landed) {
+      _catalog.invalidate(key)
+      await loadTables({ quiet: true })
+    }
+  }
+
+  /**
+   * Move the open table's sidebar count by rows the grid itself added or
+   * removed. An insert or delete left the count as it was ("notes 2" over three
+   * rows); the delta is known, so no COUNT(*) is needed.
+   * @param {number} delta
+   */
+  function bumpActiveTableCount(delta) {
+    const name = activeTable
+    if (!name || !delta) return
+    let changed = false
+    tables = tables.map((t) => {
+      if (t.name !== name || typeof t.rowCount !== 'number') return t
+      changed = true
+      return { ...t, rowCount: Math.max(0, t.rowCount + delta) }
+    })
+    if (!changed) return
+    const key = catalogKey(persistConnectionId, 'tables', activeSchema)
+    if (_catalog.has(key)) _catalog.set(key, tables)
   }
 
   async function reloadTableFromQuery(resetPage = true) {
@@ -6575,6 +7308,9 @@ let rowSearch = $state('')
     _windowOrder = s.windowOrder ? { ...s.windowOrder, sorts: (s.windowOrder.sorts ?? []).map((k) => ({ ...k })) } : null
     forgetWindowFetchState()
     windowed = true
+    // The same view as when this tab was left, so its mirror still describes it.
+    const m = activeTabId ? _mirrors.get(activeTabId) : undefined
+    if (m) m.seq = _windowSeq
     dataVersion++
   }
 
@@ -6626,6 +7362,82 @@ let rowSearch = $state('')
     return v === undefined || v === null ? null : v
   }
 
+  // ── Table mirror ──────────────────────────────────────────────────────────
+  // A windowed view deep into a large remote table paid a remote OFFSET per
+  // window: the server reads and discards every row before it, so row 196,000
+  // took seconds and the grid sat on skeletons. Each such view is copied once,
+  // in its own order, into the backend's result store (`table_mirror`, page by
+  // page by key), and a window whose rows have landed there is read from the
+  // local file instead. Windows past what has landed fetch remotely as before.
+  //
+  // One mirror per tab, kept while the tab is open and dropped when its view
+  // changes (reload, sort, filter, a write) - a stale copy must never serve
+  // rows. Read only while it matches the view exactly: the seq it was started
+  // for.
+  /** Where the grid is looking (handleVisibleRange), for a screenful-first fetch. */
+  let _visStart = 0
+  let _visEnd = 0
+  /** A window larger than this gets its on-screen rows fetched first on a jump. */
+  const VIEWPORT_FIRST_MIN = 1000
+  const MIRROR_MIN_ROWS = 10_000
+  const MIRROR_MAX_ROWS = 5_000_000
+  /** A view whose rows weigh more than this in total is not copied to disk. */
+  const MIRROR_MAX_BYTES = 2 * 1024 * 1024 * 1024
+  const MIRROR_MAX_COUNT = 4
+  /** tab id → the mirror its current view is being copied into. @type {Map<string, { id: string, seq: number }>} */
+  const _mirrors = new Map()
+  let _mirrorSerial = 0
+
+  /** The active view's mirror, when it describes exactly this view. */
+  function activeMirror() {
+    const m = activeTabId ? _mirrors.get(activeTabId) : undefined
+    return m && m.seq === _windowSeq && windowed && _windowBase === 0 ? m.id : null
+  }
+
+  /** @param {string | null | undefined} tabId */
+  function dropMirror(tabId) {
+    if (!tabId) return
+    const m = _mirrors.get(tabId)
+    if (!m) return
+    _mirrors.delete(tabId)
+    resultDrop(m.id)
+  }
+
+  /** The active table's rows changed under its mirror (an edit): drop it. */
+  function dropActiveMirror() {
+    dropMirror(activeTabId)
+  }
+
+  /** Copy the active windowed view into the result store, when it is worth it. */
+  function startMirror() {
+    const tabId = activeTabId
+    if (!tabId) return
+    dropMirror(tabId)
+    if (!windowed || _windowBase !== 0 || _windowCount < MIRROR_MIN_ROWS) return
+    // Live refresh reloads on a timer: a copy would be stale within seconds and
+    // re-copying the table each time is the opposite of faster.
+    if (activeAutoRefreshMs > 0) return
+    if (_windowBytesPerRow && _windowBytesPerRow * _windowCount > MIRROR_MAX_BYTES) return
+    const seek = windowSeek()
+    if (!seek) return
+    // A few at most: the result store keeps 16 results across the app, and
+    // mirrors must not push the console's results out of it.
+    while (_mirrors.size >= MIRROR_MAX_COUNT) dropMirror(_mirrors.keys().next().value)
+    const id = `mirror:${tabId}:${++_mirrorSerial}`
+    _mirrors.set(tabId, { id, seq: _windowSeq })
+    // Pages sized by bytes, and one at a time over a slow link: the copy must
+    // never be what a scroll waits for.
+    void startTableMirror(id, activeSchema, activeTable ?? '', currentRowQuery(false), seek, Math.min(_windowCount, MIRROR_MAX_ROWS), {
+      pageRows: pickMirrorPage(_windowBytesPerRow),
+      parallel: _windowSlow ? 1 : 2,
+    })
+      .catch(() => {
+        // Refused (no disk room) or failed mid-walk: forget it; the windows
+        // keep fetching remotely, which is all they did before.
+        if (_mirrors.get(tabId)?.id === id) _mirrors.delete(tabId)
+      })
+  }
+
   /** Fetch one window and splice it into the sparse `rows` array in place.
    *  Window `w` covers view rows [w*_windowRows, …), which live at absolute table
    *  offset _windowBase + that - the view can be a page, not just the whole table. */
@@ -6647,13 +7459,51 @@ let rowSearch = $state('')
     if (_windowFailed.delete(w)) syncWindowStatus()
     const t0 = performance.now()
     try {
-      const data = await getTableRows(activeSchema, activeTable, limit, _windowBase + start, { ...currentRowQuery(false), keyset })
+      // From the mirror when it already holds these rows: a local file read in
+      // place of a remote OFFSET. Short (still streaming) or failed, the
+      // window goes to the database as before.
+      const mirror = activeMirror()
+      /** @type {any[] | null} */
+      let local = null
+      if (mirror) {
+        try {
+          const got = await resultWindow(mirror, start, limit)
+          if (Array.isArray(got) && got.length === limit) local = got
+        } catch { /* dropped or unreadable: the remote path below */ }
+        if (seq !== _windowSeq) return
+      }
+      // A jump to rows nothing has loaded near: put the screenful up first. The
+      // whole window is 10,000 rows, ~1.5 MB, most of a second over a far
+      // link, for the ~30 rows on screen. Those are asked for alone (a few
+      // hundred, one small round trip), then the window as before.
+      // Keyset windows too: by OFFSET in the same order, which is the same rows.
+      // They were left out, so on a table of wide rows (HTML, JSON) the rows in
+      // view waited for a ~2 MB window, 4 s at 5 Mbit, while a screenful is a
+      // tenth of a second. Worth it whenever the window is heavy or the link slow.
+      const heavyWindow = limit * (_windowBytesPerRow || 0) > SCREENFUL_FIRST_BYTES || _windowSlow
+      if (!local && (limit > VIEWPORT_FIRST_MIN || heavyWindow) && _visStart >= start && _visStart < start + limit && rows[_visStart] === undefined) {
+        const from = Math.max(start, _visStart - 20)
+        const count = Math.min(start + limit, Math.max(_visEnd, _visStart) + 60) - from
+        try {
+          const head = await getTableRows(activeSchema, activeTable, Math.min(count, 400), _windowBase + from, { ...currentRowQuery(false), fetchTag: windowFetchTag() })
+          if (seq !== _windowSeq) return
+          const got = head.rows ?? []
+          for (let i = 0; i < got.length; i++) if (rows[from + i] === undefined) rows[from + i] = got[i]
+          dataVersion++
+          tracePoint(`window ${start} screenful ${got.length} rows ${Math.round(performance.now() - t0)}ms`)
+        } catch { /* the full window below still runs */ }
+      }
+      const data = local ? { rows: local } : await getTableRows(activeSchema, activeTable, limit, _windowBase + start, { ...currentRowQuery(false), keyset, fetchTag: windowFetchTag() })
       // Rolling, so the measure tracks the connection rather than latching on the
       // first deep page. Recorded even for a superseded fetch - the round-trip
-      // was just as slow whether or not its rows are still wanted.
-      const ms = performance.now() - t0
-      _windowMs = _windowMs ? _windowMs * 0.65 + ms * 0.35 : ms
-      _windowSlow = _windowMs > WINDOW_SLOW_MS
+      // was just as slow whether or not its rows are still wanted. Only for a
+      // remote fetch: a local read says nothing about the connection.
+      if (!local) {
+        const ms = performance.now() - t0
+        _windowMs = _windowMs ? _windowMs * 0.65 + ms * 0.35 : ms
+        _windowSlow = _windowMs > WINDOW_SLOW_MS
+      }
+      tracePoint(`window ${start} ${local ? 'local' : keyset ? 'seek' : 'offset'} ${Math.round(performance.now() - t0)}ms`)
       if (seq !== _windowSeq) return // table / query changed while in flight
       const fetched = data.rows ?? []
       for (let i = 0; i < fetched.length; i++) rows[start + i] = fetched[i]
@@ -6743,8 +7593,11 @@ let rowSearch = $state('')
   /** Publish fetcher state for the grid's loading pill, only on a real change. */
   function syncWindowStatus() {
     const failed = _windowFailed.size > 0
-    if (windowStatus.slow !== _windowSlow || windowStatus.failed !== failed) {
-      windowStatus = { slow: _windowSlow, failed }
+    // Slow windows over a fast link are the query's cost (a deep OFFSET reads
+    // every row before it), not the connection's: say which, from the ping.
+    const cause = _windowSlow && dbLatencyMs != null && dbLatencyMs * 4 < WINDOW_SLOW_MS ? 'query' : 'connection'
+    if (windowStatus.slow !== _windowSlow || windowStatus.failed !== failed || windowStatus.cause !== cause) {
+      windowStatus = { slow: _windowSlow, failed, cause }
     }
   }
 
@@ -6787,6 +7640,8 @@ let rowSearch = $state('')
    */
   function handleVisibleRange(start, end) {
     if (!windowed) return
+    _visStart = start
+    _visEnd = end
     const firstW = Math.floor(start / _windowRows)
     const lastW = Math.floor(end / _windowRows)
     if (firstW !== _lastFirstW) {
@@ -6939,6 +7794,7 @@ let rowSearch = $state('')
         offset,
         { ...ownerQuery,
           keyset: keysetArg,
+          fetchTag: fetchTagFor(ownerTabId, seq),
           includeMeta,
           // Don't wait on COUNT(*) - paint rows now, count streams in below.
           // Windowed loads need the total immediately to size the sparse array.
@@ -7039,7 +7895,7 @@ let rowSearch = $state('')
         }
         let landed = fetched
         if (wantsWindow && viewCount > fetched.length) {
-          const restData = await getTableRows(ownerSchema, ownerTable, Math.min(viewCount - fetched.length, MAX_PAGE_SIZE), viewBase + fetched.length, { ...ownerQuery, includeMeta: false, includeCount: false })
+          const restData = await getTableRows(ownerSchema, ownerTable, Math.min(viewCount - fetched.length, MAX_PAGE_SIZE), viewBase + fetched.length, { ...ownerQuery, includeMeta: false, includeCount: false, fetchTag: fetchTagFor(ownerTabId, seq) })
           if (!live()) return
           landed = [...fetched, ...(restData.rows ?? [])]
         }
@@ -7092,6 +7948,8 @@ let rowSearch = $state('')
           for (let w = firstGap; w <= firstGap + WINDOW_PREFETCH; w++) _windowQueue.push(w)
           pumpWindowQueue()
         }
+        // The view's local copy, so a jump deep into it is a file read.
+        if (isActive()) startMirror()
       } else if (wantsWindow) {
         // Past the limit bar but small and light after measuring - load the rest.
         resetWindowing()
@@ -7105,7 +7963,7 @@ let rowSearch = $state('')
         rows = fetched
         _infiniteRows = fetched
         if (viewCount > fetched.length) {
-          const restData = await getTableRows(ownerSchema, ownerTable, Math.min(viewCount - fetched.length, MAX_PAGE_SIZE), viewBase + fetched.length, { ...ownerQuery, includeMeta: false, includeCount: false })
+          const restData = await getTableRows(ownerSchema, ownerTable, Math.min(viewCount - fetched.length, MAX_PAGE_SIZE), viewBase + fetched.length, { ...ownerQuery, includeMeta: false, includeCount: false, fetchTag: fetchTagFor(ownerTabId, seq) })
           if (!live()) return
           const all = [...fetched, ...(restData.rows ?? [])]
           // The tab may have gone to the background during this second trip -
@@ -7173,6 +8031,9 @@ let rowSearch = $state('')
     } catch (e) {
       if (!live()) return
       const errStr = String(e)
+      // Replaced on the server by a newer fetch of this tab: that one owns the
+      // grid now. Never an error to show (matches SUPERSEDED_FETCH in query.rs).
+      if (errStr.includes('Superseded by a newer load')) return
       if (isNetworkError(errStr)) { connectionLost = true; void silentReconnect() }
       // A typed SQL condition that the database rejects is a mistake in the
       // filter, not a broken table: keep the grid (and the filter bar, which
@@ -7372,6 +8233,11 @@ let rowSearch = $state('')
       requestShare({ kind: 'chart', title: chartTitle(chartPane.shareSpec()), source, chart: chartPane.shareSpec(), columns: dataViewColumns.map((c) => ({ name: c.name, type: c.dataType ?? c.data_type })), rows: dataViewRows })
       return
     }
+    if (mode === 'json') {
+      // The JSON view's rows, one object per row, as the view shows them.
+      requestShare({ kind: 'json', title: String(activeTable ?? 'Rows'), source, value: rowsToJsonValue(cols, cells) })
+      return
+    }
     requestShare({ kind: 'table', title: String(activeTable ?? 'Rows'), source, columns: cols, rows: cells, totalRows: Math.max(total || 0, cells.length) })
   }
 
@@ -7392,7 +8258,7 @@ let rowSearch = $state('')
       } catch (e) {
         toast.dismiss(fetchId)
         exportingData = false
-        toast.error('Export failed', { description: String(e) })
+        toast.error('Export failed', { description: errorText(e) })
         return
       }
       toast.dismiss(fetchId)
@@ -7444,7 +8310,7 @@ let rowSearch = $state('')
       }
     } catch (e) {
       toast.dismiss(toastId)
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
       recordActivity({ type: 'export', title: `Failed to export ${activeTable} as ${format.toUpperCase()}`, schema: activeSchema, table: activeTable ?? undefined, success: false, error: String(e) })
     } finally {
       exportingData = false
@@ -7602,7 +8468,7 @@ let rowSearch = $state('')
       void refreshAfterSql(sqlRunEffects(u.statements[0] ?? ''))
       settleRevert(true)
     } catch (e) {
-      toast.error('Revert failed', { description: String(e).replace(/^Error:\s*/, '').replace(/^Query failed:\s*/, ''), code: true })
+      toast.error('Revert failed', { description: errorText(e).replace(/^Error:\s*/, '').replace(/^Query failed:\s*/, ''), code: true })
       settleRevert(false)
     }
   }
@@ -7611,6 +8477,12 @@ let rowSearch = $state('')
     track('sql_run')
     const sqlRan = typeof overrideSql === 'string' && overrideSql.trim() ? overrideSql : sqlText
     if (!connection || !sqlRan.trim()) return
+    // Run to the painted result, for the perf log (off unless profiling). Ends
+    // when the result is applied (or the run fails), not after the history write
+    // that follows it.
+    const traceEnd = traceInteraction('run sql')
+    let traced = false
+    const traceDone = () => { if (!traced) { traced = true; traceEnd() } }
     if (tableReadonly && isWriteSql(sqlRan)) {
       sqlError = 'This connection is open in read-only mode, so write statements are blocked.'
       return
@@ -7761,8 +8633,10 @@ let rowSearch = $state('')
       let msg = data.message ?? ''
       // The reply is camelCase (`SqlResult` in query.rs); `row_count` was never sent.
       const affected = data.rowCount ?? data.row_count
-      if (!msg && affected != null && cols.length === 0) {
-        msg = `${formatCompactCount(affected)} row(s) affected`
+      // Writes only: a read the engine returned no shape for (InfluxDB with
+      // nothing matched) said "0 rows affected", as if it had been an UPDATE.
+      if (!msg && affected != null && cols.length === 0 && isWriteSql(data.sql || sqlRan)) {
+        msg = `${formatCompactCount(affected)} ${affected === 1 ? 'row' : 'rows'} affected`
       }
       const stored = runTabId ? _sqlViewsByTab.has(runTabId) : false
       patchSqlTab(runTabId, { sqlColumns: cols, sqlRows: stored ? [] : rws, sqlQueryMs: ranMs, sqlMessage: msg, sqlError: '' })
@@ -7773,7 +8647,13 @@ let rowSearch = $state('')
         sqlQueryMs = ranMs
         sqlMessage = msg
       }
-      if (changedSql) void refreshAfterSql(sqlRunEffects(changedSql))
+      traceDone()
+      if (changedSql) {
+        // A write from the editor can touch any open table: no local copy of
+        // one may outlive it.
+        for (const id of [..._mirrors.keys()]) dropMirror(id)
+        void refreshAfterSql(sqlRunEffects(changedSql))
+      }
     } catch (e) {
       ranError = String(e)
       if (runTabId) forgetSqlResult(runTabId)
@@ -7789,6 +8669,7 @@ let rowSearch = $state('')
       if (runTabId && _sqlQueryIdByTab.get(runTabId) === queryId) _sqlQueryIdByTab.delete(runTabId)
       patchSqlTab(runTabId, { sqlLoading: false })
       if (stillHere()) sqlLoading = false
+      traceDone()
       recordActivity({ type: 'sql_exec', title: sqlRan.trim().slice(0, 80) + (sqlRan.trim().length > 80 ? '…' : ''), detail: sqlRan, durationMs: ranMs, rowCount: ranRowCount || undefined, success: !ranError, error: ranError || undefined })
       // A failed run goes into history too, marked with its error, so the
       // query you were fixing is still there to fix. A Stop is not a failure.
@@ -7808,6 +8689,11 @@ let rowSearch = $state('')
   }
 
   async function onConnected(conn, savedId) {
+    connectSettled = false
+    traceMark('connected')
+    const _ph0 = performance.now()
+    /** Phase marks for the perf log (off unless profiling). @param {string} l */
+    const phase = (l) => tracePoint(`connected ${l} +${Math.round(performance.now() - _ph0)}ms`)
     // A fresh pool is in front and unnamed: no routing until the switch that
     // opened it names it (handleSwitchDatabase), or a call meant for this
     // database could be sent to a kept one for the database just left.
@@ -7823,7 +8709,15 @@ let rowSearch = $state('')
     // Persist last-used ID and bump timestamp
     if (savedId) {
       setLastConnectionId(savedId)
-      upsertConnection({ ...conn, id: savedId, lastConnectedAt: Date.now() })
+      savedConnections = upsertConnection({ ...conn, id: savedId, lastConnectedAt: Date.now() })
+      // The workspace follows the database that is open. Connecting to one
+      // filed elsewhere (a provider's database saved under "Work" while on
+      // Personal) otherwise left the sidebar listing a workspace without it.
+      const row = savedConnections.find((c) => c.id === savedId)
+      if (row) {
+        const ws = workspaceOf(row, get(workspaces))
+        if (ws !== get(activeWorkspaceId)) setActiveWorkspace(ws)
+      }
     }
     tableFilter = ''
     error = ''
@@ -7850,7 +8744,15 @@ let rowSearch = $state('')
     // tab list over the kept one.
     flushSqlTabs()
     _sqlTabsRestoredFor = ''
+    const tabsKey = sqlDraftKey
+    holdOpenTabs(tabsKey)
     tabs = []
+    // Tabs from last time are coming back once the catalog is in: the new-tab
+    // page would render now only to be replaced by them (a flash, and its
+    // mount was part of the connect's first render). Shown only when nothing
+    // is coming back.
+    restoringTabs = !!tabsKey && loadSettings().reopenTabs !== false && loadOpenTabs(tabsKey).length > 0
+    if (restoringTabs) setTimeout(() => { restoringTabs = false }, 3000)
     // Labs: the tabs kept for the other open databases keep their rows and
     // results. Wiping them handed a resumed grid the proxied copy of its rows
     // (slow to scroll) and dropped every kept SQL result.
@@ -7862,7 +8764,7 @@ let rowSearch = $state('')
     // open the keyspace workspace instead of the welcome tab + tables sidebar.
     const fam = engineFamily(conn.type)
     const connIsDynamo = fam === 'dynamodb'
-    const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb' || fam === 'elasticsearch' || fam === 'opensearch'
+    const connIsDoc = fam === 'couchdb' || fam === 'cassandra' || fam === 'firestore' || fam === 'mongodb' || fam === 'elasticsearch' || fam === 'opensearch' || fam === 'neo4j' || fam === 'influxdb'
     const connIsRedis = fam === 'redis'
     dynamoTable = ''
     if (connIsDoc) {
@@ -7883,18 +8785,21 @@ let rowSearch = $state('')
       // Schema → tables is a genuine dependency (loadTables needs activeSchema), so
       // this pair stays serial. The retry loop only sleeps when the backend isn't
       // ready yet (schemas come back empty); the happy path succeeds on attempt 0.
+      phase('setup')
       for (let attempt = 0; attempt < 3; attempt++) {
         if (attempt > 0) await new Promise(r => setTimeout(r, attempt * 700))
         try {
           await loadSchemas()
+          phase('schemas')
         } catch (e) {
           // Schema list failed - surface it but keep going so loadTables() still
           // runs and clears the loading flag (sidebar must never hang forever).
-          toast.error('Could not load schemas', { description: String(e) })
+          toast.error('Could not load schemas', { description: errorText(e) })
         }
         if (schemas.length > 0) break
       }
       await loadTables({ force: true })
+      phase('tables')
       // Retry only when the fetch actually failed - an empty database is a valid
       // result and must not pay a 1 s penalty on every connect.
       if (tables.length === 0 && schemas.length > 0 && error) {
@@ -7914,6 +8819,26 @@ let rowSearch = $state('')
       } catch { /* ignore */ }
     })()
     await storesReady
+    phase('stores')
+    // Last time's tabs, now that the catalog says which tables still exist.
+    try {
+      await restoreOpenTabs(tabsKey)
+    } finally {
+      _openTabsReady.add(tabsKey)
+      restoringTabs = false
+      phase('tabs')
+      void tick().then(() => requestAnimationFrame(() => {
+        connectSettled = true
+        phase('painted')
+        // Which code this connect pulled in, and when (perf log only).
+        try {
+          for (const e of performance.getEntriesByType('resource')) {
+            if (e.startTime < _ph0 - 50) continue
+            tracePoint(`loaded ${e.name.split('/').pop()?.split('?')[0]} at +${Math.round(e.startTime - _ph0)}ms for ${Math.round(e.duration)}ms`)
+          }
+        } catch { /* no resource timing */ }
+      }))
+    }
   }
 
   onMount(() => installInputShortcuts())
@@ -8019,7 +8944,7 @@ let rowSearch = $state('')
   // Keep these specifiers identical to the {#await import('./X.svelte')} blocks
   // below so Vite resolves them to the same chunk.
   $effect(() => {
-    if (!connection) return
+    if (!connection || !connectSettled) return
     // [reachable on this engine, loader]. Gates mirror the tab affordances in
     // the empty-state grid and the palette; keep them in sync when a page moves.
     /** @type {Array<[boolean, () => Promise<unknown>]>} */
@@ -8069,6 +8994,8 @@ let rowSearch = $state('')
   })
 
   onMount(async () => {
+    performance.mark('stroke:shell')
+    traceMark('shell mounted')
     // Resolve every saved host before the user can pick one. A cold DNS lookup
     // measured 4147ms here against 58ms warm, and the connect waits on it, so
     // this is the difference between a 4s connect and a 300ms one. Fire and
@@ -8119,6 +9046,8 @@ let rowSearch = $state('')
     // First-time user - show onboarding instead of bare connection modal
     try {
       if (!localStorage.getItem(ONBOARDING_KEY)) {
+        // Loaded before the reveal, so the first screen is the finished one.
+        await lazyDialogs.onboarding().catch(() => {})
         showOnboarding = true
         revealApp()
         return
@@ -8126,7 +9055,7 @@ let rowSearch = $state('')
     } catch {}
 
     const last = getLastConnection()
-    if (!last) { showConnectionModal = true; revealApp(); return }
+    if (!last) { await lazyDialogs.connection().catch(() => {}); showConnectionModal = true; revealApp(); return }
 
     // Disconnect is a decision, and it survives a restart. Coming back connected
     // to the database someone deliberately stepped away from - on a reload, or
@@ -8137,63 +9066,9 @@ let rowSearch = $state('')
 
     // Respect the "auto reconnect on startup" setting - if disabled, go straight
     // to the connection modal instead of re-connecting silently.
-    if (!loadSettings().autoReconnectOnStartup) { showConnectionModal = true; revealApp(); return }
+    if (!loadSettings().autoReconnectOnStartup) { await lazyDialogs.connection().catch(() => {}); showConnectionModal = true; revealApp(); return }
 
-    beginConnectOverlay(last.name ?? '', 'Reconnecting')
-    // A warm reconnect and its table list land in a few hundred ms. Revealing
-    // on the overlay meant three screens in that time - "Reconnecting", an empty
-    // shell with a skeleton sidebar, then the tables - which is the startup
-    // flicker. Stay hidden until the tables are in (the effect watching
-    // `revealOnTables`) and only fall back to the overlay when it runs long.
-    revealOnTables = true
-    setTimeout(revealApp, RECONNECT_REVEAL_MS)
-    // The backend already enforces its own per-engine deadlines (DNS + TCP preflight,
-    // a 20s connect deadline for Postgres, HTTP timeouts for the REST engines) and
-    // fails with a message the user can act on. This race is only a last-resort guard
-    // for a command that never returns AT ALL, so it has to sit above those deadlines.
-    // At 5s it fired first and turned every slow-but-healthy wake-up into "not
-    // connected" - serverless Postgres (Neon, and Prisma/Supabase pooler cold starts)
-    // autosuspends and takes 3-15s to come back, which is why resuming one meant
-    // reconnecting by hand on nearly every launch.
-    /** @param {Promise<unknown>} p */
-    const withTimeout = (p) => Promise.race([
-      p,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Connection timed out')), 45_000)),
-    ])
-    try {
-      if (last.type === 'sqlite') await withTimeout(connectSqlite(last))
-      else if (last.type === 'd1') await withTimeout(connectD1(last))
-      else if (last.type === 'libsql') await withTimeout(connectLibSql(last))
-      else if (last.type === 'mysql' || last.type === 'mariadb') await withTimeout(connectMysql(last))
-      else if (last.type === 'clickhouse') await withTimeout(connectClickhouse(last))
-      else if (last.type === 'posthog') await withTimeout(connectPosthog(last))
-      else if (last.type === 'duckdb') await withTimeout(connectDuckdb(last))
-      else if (last.type === 'mssql') await withTimeout(connectMssql(last))
-      else if (last.type === 'oracle') await withTimeout(connectOracle(last))
-      else if (engineFamily(last.type) === 'redis') await withTimeout(connectRedis(last))
-      else if (last.type === 'dynamodb') await withTimeout(connectDynamo(last))
-      else if (last.type === 'couchdb') await withTimeout(connectCouch(last))
-      else if (last.type === 'elasticsearch' || last.type === 'opensearch') await withTimeout(connectElastic(last))
-      else if (last.type === 'cassandra') await withTimeout(connectCassandra(last))
-      else if (last.type === 'firestore') await withTimeout(connectFirestore(last))
-      else if (last.type === 'mongodb') await withTimeout(connectMongo(last))
-      else await withTimeout(connectPostgres(last))
-      // onConnected already refreshes the query stores (concurrently with the
-      // catalog load) - no second fetch needed here.
-      if (autoConnectCancelled) { try { await disconnectPostgres() } catch { /* ignore */ } return }
-      await onConnected(last, last.id)
-    } catch {
-      if (autoConnectCancelled) return
-      // Racing the timeout abandons the promise but not the backend: a connect that
-      // lands after we gave up would leave a live pool behind a UI that says
-      // "Not connected", and the next attempt would stack a second one on top.
-      try { await disconnectPostgres() } catch { /* nothing to tear down */ }
-      showConnectionModal = true
-    } finally {
-      autoConnecting = false
-      // Failed, cancelled or timed out: whatever screen is up now is final.
-      revealApp()
-    }
+    await reconnectLast(last)
   })
 
   async function handleSchemaChange(schema) {
@@ -8250,7 +9125,7 @@ let rowSearch = $state('')
 
   function enterAiMode() {
     if (!connection) return
-    // AI in a tab: every way into AI mode (⌘⇧E, the title bar, the
+    // AI in a tab: every way into AI mode (⌘I, the title bar, the
     // palette) opens the tab instead.
     if ($appAiInTab) { openSingletonTab({ find: findAiTab, create: createAiTab }); return }
     aiMode = true
@@ -8287,7 +9162,7 @@ let rowSearch = $state('')
         newId: newConnectionId,
       }))
     } catch (e) {
-      toast.error('Could not switch database', { description: String(e) })
+      toast.error('Could not switch database', { description: errorText(e) })
     }
   }
 
@@ -8427,7 +9302,7 @@ let rowSearch = $state('')
       toast.success(`Database "${name}" dropped`)
       databasesRefreshKey++
     } catch (e) {
-      toast.error(`Could not drop "${name}"`, { description: String(e) })
+      toast.error(`Could not drop "${name}"`, { description: errorText(e) })
     }
   }
 
@@ -8439,7 +9314,7 @@ let rowSearch = $state('')
       const closed = r?.rows?.length ?? 0
       toast.success(closed === 0 ? `No other sessions on "${name}"` : `Closed ${closed} session(s) on "${name}"`)
     } catch (e) {
-      toast.error(`Could not close sessions on "${name}"`, { description: String(e) })
+      toast.error(`Could not close sessions on "${name}"`, { description: errorText(e) })
     }
   }
 
@@ -8585,6 +9460,47 @@ let rowSearch = $state('')
     }
   }
 
+  /**
+   * A database file, in one step: a new SQLite file where you choose, or an
+   * existing SQLite / DuckDB file. A file already saved as a connection opens
+   * that connection; otherwise one is saved, named after the file. Creating a
+   * new database used to take the connection form, its file picker and then
+   * Connect.
+   * @param {'new' | 'open'} how
+   */
+  async function handleFileDatabase(how) {
+    /** @type {string | null} */
+    let path = null
+    try {
+      const dlg = await import('@tauri-apps/plugin-dialog')
+      const picked = how === 'new'
+        ? await dlg.save({ title: 'New SQLite database', defaultPath: 'database.db', filters: [{ name: 'SQLite', extensions: ['db', 'sqlite', 'sqlite3'] }] })
+        : await dlg.open({ title: 'Open a database file', multiple: false, filters: [{ name: 'Database files', extensions: ['db', 'sqlite', 'sqlite3', 'db3', 'duckdb', 'ddb'] }] })
+      path = typeof picked === 'string' && picked ? picked : null
+    } catch { /* outside Tauri */ }
+    if (!path) return
+    const type = /\.(duckdb|ddb)$/i.test(path) ? 'duckdb' : 'sqlite'
+    const saved = loadSavedConnections().find((c) => c.type === type && c.filePath === path)
+    const name = (path.split(/[\\/]/).pop() ?? path).replace(/\.(db|sqlite3?|db3|duckdb|ddb)$/i, '') || 'database'
+    const conn = saved ?? /** @type {import('$lib/stores/connections.js').SavedConnection} */ ({ id: crypto.randomUUID(), type, name, filePath: path })
+    if (!saved) upsertConnection(conn)
+    savedConnections = loadSavedConnections()
+    await disconnectPostgres().catch(() => {})
+    connection = null
+    clearConnectionState()
+    beginConnectOverlay(conn.name ?? name)
+    try {
+      await connectByType(conn)
+      await onConnected(conn, conn.id)
+      showConnectionModal = false
+    } catch (e) {
+      error = String(e)
+      showConnectionModal = true
+    } finally {
+      autoConnecting = false
+    }
+  }
+
   async function handleSampleConnect() {
     await disconnectPostgres().catch(() => {})
     connection = null
@@ -8616,6 +9532,8 @@ let rowSearch = $state('')
    * @param {import('$lib/stores/connections.js').SavedConnection} conn
    */
   async function connectByType(conn) {
+    // Read from the list before the keychain answered, it has no password.
+    conn = await withSecrets(conn)
     // Which engines get used, never which servers. The event name is the whole
     // payload - there is no field here that could carry a host or a database.
     track(`connect_${conn.type === 'cockroachdb' ? 'cockroachdb' : conn.type}`)
@@ -8633,7 +9551,13 @@ let rowSearch = $state('')
     else if (conn.type === 'couchdb') await connectCouch(conn)
     else if (conn.type === 'elasticsearch' || conn.type === 'opensearch') await connectElastic(conn)
     else if (conn.type === 'cassandra') await connectCassandra(conn)
+    else if (conn.type === 'neo4j') await connectNeo4j(conn)
+    else if (conn.type === 'influxdb') await connectInflux(conn)
     else if (conn.type === 'firestore') await connectFirestore(conn)
+    else if (conn.type === 'spanner') await connectSpanner(conn)
+    else if (conn.type === 'bigquery') await connectBigquery(conn)
+    else if (conn.type === 'odbc') await connectOdbc(conn)
+    else if (conn.type === 'snowflake') await connectSnowflake(conn)
     else if (conn.type === 'mongodb') await connectMongo(conn)
     else await connectPostgres(conn)
   }
@@ -8689,6 +9613,7 @@ let rowSearch = $state('')
     for (const id of [..._sqlViewsByTab.keys()]) if (!keep.has(id)) forgetSqlResult(id)
     prune(_sqlRowsByTab)
     prune(_autoRefreshByTab)
+    for (const id of [..._mirrors.keys()]) if (!keep.has(id)) dropMirror(id)
   }
 
   /** Put the open connection's tabs (and its sidebar) aside under its key. */
@@ -8823,6 +9748,19 @@ let rowSearch = $state('')
    * switch. They look like any other tab: which database one belongs to is in
    * its tooltip and in the status bar (openDatabases).
    */
+  /**
+   * An open database's name where several are open (tab tooltips, status bar):
+   * its connection's own name, since "postgres" next to "Redis local" said
+   * nothing and Spanner and BigQuery both called theirs "shop". The database
+   * joins it only when one connection has several open.
+   * @param {any} c @param {any[]} conns
+   */
+  function openLabel(c, conns) {
+    if (!c?.name) return sessionLabel(c)
+    const several = conns.filter((o) => o?.id && o.id === c.id).length > 1
+    return several ? `${c.name} · ${sessionLabel(c)}` : String(c.name)
+  }
+
   const barTabs = $derived.by(() => {
     void sessionsTick
     const own = $appAiInTab ? tabs : tabs.filter((t) => t.kind !== 'ai')
@@ -8830,14 +9768,16 @@ let rowSearch = $state('')
     const here = sessionKey(connection)
     const kept = [..._sessions].filter(([k, s]) => k !== here && s.tabs.some((t) => t.kind !== 'welcome'))
     if (!kept.length) return own
-    const label = sessionLabel(connection)
+    const conns = [connection, ...kept.map(([, s]) => s.conn)]
+    const label = openLabel(connection, conns)
     const order = sessionOrder.includes(here) ? sessionOrder : [...sessionOrder, here]
     /** @type {any[]} */
     const out = []
     for (const k of order) {
+      const s = _sessions.get(k)
       const group = k === here
         ? own.map((t) => ({ ...t, connLabel: label }))
-        : (_sessions.get(k)?.tabs ?? []).filter((t) => t.kind !== 'welcome' && ($appAiInTab || t.kind !== 'ai')).map((t) => ({ ...t, connLabel: _sessions.get(k)?.label, foreign: true }))
+        : (s?.tabs ?? []).filter((t) => t.kind !== 'welcome' && ($appAiInTab || t.kind !== 'ai')).map((t) => ({ ...t, connLabel: openLabel(s?.conn, conns), foreign: true }))
       out.push(...group)
     }
     return out
@@ -8849,13 +9789,15 @@ let rowSearch = $state('')
     if (!connection || _sessions.size === 0) return []
     const here = sessionKey(connection)
     const order = sessionOrder.includes(here) ? sessionOrder : [...sessionOrder, here]
-    /** @type {{ key: string, label: string, current: boolean }[]} */
-    const out = []
+    /** @type {{ key: string, conn: any, current: boolean }[]} */
+    const open = []
     for (const k of order) {
-      if (k === here) out.push({ key: k, label: sessionLabel(connection), current: true })
-      else if (_sessions.has(k)) out.push({ key: k, label: /** @type {KeptSession} */ (_sessions.get(k)).label, current: false })
+      if (k === here) open.push({ key: k, conn: connection, current: true })
+      else if (_sessions.has(k)) open.push({ key: k, conn: /** @type {KeptSession} */ (_sessions.get(k)).conn, current: false })
     }
-    return out.length > 1 ? out : []
+    if (open.length < 2) return []
+    const conns = open.map((o) => o.conn)
+    return open.map(({ key, conn, current }) => ({ key, current, label: openLabel(conn, conns), engine: engineId(conn) }))
   })
 
   /**
@@ -8895,6 +9837,8 @@ let rowSearch = $state('')
    * @param {{ focusTab?: string | null }} [opts] Labs: the tab to land on
    */
   async function handleSwitchDatabase(conn, opts = {}) {
+    // Click to connected, for the perf log (off unless profiling).
+    const traceConnect = traceInteraction(`connect ${conn?.type ?? ''}`)
     // A deliberate switch is the other half of "PIN to open or reconnect".
     // Resolves true immediately unless a PIN is set with the connect prompt on.
     if (!(await requireUnlock('Unlock to connect to a database'))) return
@@ -8968,11 +9912,12 @@ let rowSearch = $state('')
       // say it. The list left on screen belongs to a database nobody is looking
       // at any more, and the Databases tab is a switcher, not a destination.
       sidebarShowTables()
+      traceConnect()
     } catch (e) {
       switchingTo = ''
       // Say why, then put the user back where they were instead of leaving
       // them disconnected behind a dialog with no message in it.
-      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: String(e) })
+      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: e instanceof Error ? e.message : String(e) })
       const back = kept ? _sessions.get(kept) : undefined
       if (back && (await resumeKept(kept, back, null))) return
       let restored = false
@@ -9077,7 +10022,6 @@ let rowSearch = $state('')
     retryingLoad = true
     try {
       error = ''
-      showRawError = false
       if (dropped) await reconnectPool()
       // No table selected means the failure came from the catalog, not a row
       // fetch, so retry what actually broke.
@@ -9202,6 +10146,8 @@ let rowSearch = $state('')
             .filter((t) => fx.tables.some((r) => r.name === t.name.toLowerCase() && (!r.schema || r.schema === schemaLc)))
             .map((t) => t.name)
         : []
+      // Whoever has these tables open on the shared studio reloads them.
+      if (studioShare) for (const name of touched) studioShare.presence.announceChanged(`${activeSchema || 'main'}.${name}`)
       const landed = touched.length ? await resolveRowCounts(key, activeSchema, touched) : 0
       if (!landed && !connectionMoved(connAtCall)) {
         _catalog.invalidate(key)
@@ -9258,7 +10204,7 @@ let rowSearch = $state('')
       toast.success(`Truncated "${tableName}"`)
       if (activeTable === tableName) await loadRows()
     } catch (err) {
-      toast.error('Could not truncate table', { description: String(err) })
+      toast.error('Could not truncate table', { description: errorText(err) })
     }
   }
 
@@ -9272,7 +10218,7 @@ let rowSearch = $state('')
     try {
       await dropTable(schema, tableName, cascade, kind)
     } catch (err) {
-      toast.error('Could not drop', { description: String(err) })
+      toast.error('Could not drop', { description: errorText(err) })
       return
     }
     toast.success(`Dropped ${kind === 'table' ? 'table' : 'view'} "${tableName}"`)
@@ -9295,7 +10241,7 @@ let rowSearch = $state('')
       if (aiMode) exitAiMode()
       openDdlTab(ddl.endsWith('\n') ? ddl : `${ddl}\n`, `DDL · ${tableName}`)
     } catch (e) {
-      toast.error('Could not load DDL', { description: String(e) })
+      toast.error('Could not load DDL', { description: errorText(e) })
     }
   }
 
@@ -9312,12 +10258,13 @@ let rowSearch = $state('')
 
       // Gate on rows.length: rowsToSql returns a "-- no rows" comment for empty
       // input, but an empty table should export as DDL only.
-      const inserts = rows.length ? rowsToSql(cols, rows, tableName) : ''
+      // In the engine's own SQL, to load beside its own DDL.
+      const inserts = rows.length ? rowsToSql(cols, rows, tableName, engineFamily(connection?.type)) : ''
       const sql = inserts ? `${ddl}\n\n${inserts}` : ddl
       const filename = `${tableName}_${new Date().toISOString().slice(0, 10)}.sql`
       await saveExportFile(sql, filename, 'sql')
     } catch (e) {
-      toast.error('Could not export', { description: String(e) })
+      toast.error('Could not export', { description: errorText(e) })
     }
   }
 
@@ -9332,7 +10279,7 @@ let rowSearch = $state('')
       const filename = buildExportFilename(tableName, 'csv')
       await saveExportFile(csv, filename, 'csv')
     } catch (e) {
-      toast.error('Could not export', { description: String(e) })
+      toast.error('Could not export', { description: errorText(e) })
     }
   }
 
@@ -9352,7 +10299,7 @@ let rowSearch = $state('')
       const sql = `-- Generated test data template for ${tableName}\nINSERT INTO "${tableName}" (\n  ${colNames}\n) VALUES (\n  ${colPlaceholders}\n);`
       await openQueryInEditor(sql)
     } catch (e) {
-      toast.error('Could not generate test data', { description: String(e) })
+      toast.error('Could not generate test data', { description: errorText(e) })
     }
   }
 
@@ -9373,6 +10320,8 @@ let rowSearch = $state('')
 
   /** @param {number[]} rowIndices */
   async function handleDeleteRows(rowIndices) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable || !primaryKey.length || rowIndices.length === 0) return
 
     const removed = [...new Set(rowIndices)].sort((a, b) => a - b)
@@ -9389,7 +10338,9 @@ let rowSearch = $state('')
       if (deleted === 0) {
         throw new Error('No rows deleted (they may have changed)')
       }
+      announceShareChange()
       recordActivity({ type: 'row_delete', title: `Deleted ${deleted} row${deleted === 1 ? '' : 's'} from ${activeTable}`, schema: activeSchema, table: activeTable, rowCount: deleted, durationMs: Date.now() - _deleteStart, success: true })
+      bumpActiveTableCount(-deleted)
 
       const removedSet = new Set(removed)
       rows = rows.filter((_, i) => !removedSet.has(i))
@@ -9420,7 +10371,7 @@ let rowSearch = $state('')
       saveActiveTabState()
       await loadRows({ keepScroll: true })
     } catch (err) {
-      toast.error('Could not delete rows', { description: String(err) })
+      toast.error('Could not delete rows', { description: errorText(err) })
       throw err
     } finally {
       deletingRows = false
@@ -9444,6 +10395,8 @@ let rowSearch = $state('')
    * @returns {Promise<boolean>}
    */
   async function handleApplyChanges({ edits, deleteRowIndices, insertValues }) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable) return true
     /** @type {Map<number, Record<string, unknown>>} */
     const valuesByRow = new Map()
@@ -9471,6 +10424,7 @@ let rowSearch = $state('')
     const started = Date.now()
     try {
       const res = await applyTableChanges(activeSchema, activeTable, updates, deletes, insertValues)
+      announceShareChange()
       recordActivity({
         type: 'row_save',
         title: `Applied ${res.updated + res.deleted + (res.inserted ? 1 : 0)} change(s) to ${activeTable}`,
@@ -9513,13 +10467,17 @@ let rowSearch = $state('')
 
   /** @param {Record<string, unknown>} values */
   async function handleInsertRow(values) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable) return
 
     insertingRow = true
     const _insertStart = Date.now()
     try {
       const { row } = await insertTableRow(activeSchema, activeTable, values)
+      announceShareChange()
       recordActivity({ type: 'row_insert', title: `Inserted row into ${activeTable}`, schema: activeSchema, table: activeTable, durationMs: Date.now() - _insertStart, success: true })
+      bumpActiveTableCount(1)
 
       const hasActiveFilters =
         rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0
@@ -9565,7 +10523,7 @@ let rowSearch = $state('')
         })
       }
     } catch (err) {
-      toast.error('Could not insert row', { description: String(err) })
+      toast.error('Could not insert row', { description: errorText(err) })
       throw err
     } finally {
       insertingRow = false
@@ -9578,6 +10536,8 @@ let rowSearch = $state('')
    * @param {string} sql
    */
   async function handleExecuteRawDml(sql) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!sql.trim()) return
     const _start = Date.now()
     try {
@@ -9585,12 +10545,13 @@ let rowSearch = $state('')
       // Hand-written DML: rows may have been inserted or deleted, or edited so
       // they no longer match the active filter. Nothing here can be assumed.
       invalidateRowCount()
+      announceShareChange()
       recordActivity({ type: 'row_save', title: `Applied edited SQL${activeTable ? ` on ${activeTable}` : ''}`, schema: activeSchema, table: activeTable ?? '', durationMs: Date.now() - _start, success: true })
       await loadRows()
       toast.success('Changes applied')
     } catch (err) {
       recordActivity({ type: 'row_save', title: `Failed edited SQL${activeTable ? ` on ${activeTable}` : ''}`, schema: activeSchema, table: activeTable ?? '', success: false, error: String(err) })
-      toast.error('Could not apply changes', { description: String(err) })
+      toast.error('Could not apply changes', { description: errorText(err) })
       throw err
     }
   }
@@ -9675,6 +10636,8 @@ let rowSearch = $state('')
 
   /** @param {{ rowIdx: number, colIdx: number, value: unknown }} detail */
   async function handleSaveCell(detail) {
+    // The table is about to change under its local copy.
+    dropActiveMirror()
     if (!activeTable || !primaryKey.length) return
 
     const col = columns[detail.colIdx]
@@ -9698,6 +10661,7 @@ let rowSearch = $state('')
       // Unfiltered, editing a cell cannot change how many rows there are.
       if (rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0) invalidateRowCount()
       saveActiveTabState()
+      announceShareChange()
       recordActivity({ type: 'row_save', title: `Updated ${col.name} in ${activeTable}`, schema: activeSchema, table: activeTable, durationMs: Date.now() - _saveStart, success: true })
     } catch (e) {
       recordActivity({ type: 'row_save', title: `Failed to update ${col.name} in ${activeTable}`, schema: activeSchema, table: activeTable, success: false, error: String(e) })
@@ -9714,6 +10678,22 @@ let rowSearch = $state('')
    * @param {string} sql
    */
   async function openQueryInEditor(sql) {
+    // From outside the editor (Advisor's Fix in editor, a dashboard card, the
+    // palette), this went to the first editor tab and replaced its text: a
+    // query being written there, or a saved query's tab, was gone. An editor
+    // tab in front still takes the text (picking from its history); one behind
+    // is reused only while it holds nothing, else the SQL gets a new tab.
+    const inFront = activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false
+    if (!inFront) {
+      const existing = tabs.find((t) => t.kind === 'sql' && /** @type {any} */ (t).draft !== false)
+      const held = String(/** @type {any} */ (existing)?.state?.sqlText ?? '').trim()
+      if (existing && held && held !== sql.trim() && held !== 'SELECT 1;') {
+        if (aiMode) exitAiMode()
+        openSqlTabWith(sql, 'Query Editor')
+        if (activeTabId) linkSqlTab(activeTabId, savedQueryFor(sql, savedQueries))
+        return
+      }
+    }
     await focusSqlView()
     sqlText = sql
     // Loading a saved query's text makes the tab that query's: Save writes
@@ -9722,8 +10702,7 @@ let rowSearch = $state('')
   }
 
   async function openQueryHistory() {
-    await focusSqlView()
-    queryHistoryVisible = true
+    openQueriesTab('history')
   }
 
   /**
@@ -9879,16 +10858,19 @@ let rowSearch = $state('')
     }
   }
 
-  /** `Postgres · prod-db.c1uwsk8m01gi.ap-south-1.rds.amazonaws.com` → `Postgres · prod-db`: the host's first label says enough. @param {string} w */
-  function shortWhere(w) {
-    return String(w ?? '').replace(/([A-Za-z0-9][\w-]*)\.[\w.-]*\.(?:com|net|io|dev|cloud|app|org)\S*/, '$1')
-  }
 </script>
 
+{#if dialogMounted.onboarding}
+  {#await lazyDialogs.onboarding() then { default: Onboarding }}
 <Onboarding bind:open={showOnboarding} onconnect={() => (showConnectionModal = true)} onsample={handleSampleConnect} />
+  {/await}
+{/if}
+{#if dialogMounted.connection}
+  {#await lazyDialogs.connection() then { default: ConnectionModal }}
 <ConnectionModal
   bind:open={showConnectionModal}
   bind:initialEngine={connectionModalEngine}
+  bind:initialEditId={connectionModalEditId}
   bind:initialUri={connectionModalUri}
   bind:initialName={connectionModalName}
   onconnected={(conn, id) => onConnected(conn, id)}
@@ -9897,26 +10879,32 @@ let rowSearch = $state('')
   ondisconnect={requestDisconnect}
   onremoved={handleConnectionRemoved}
 />
+  {/await}
+{/if}
 <SwitchDatabaseDialog
   bind:open={showSwitchDbDialog}
   databaseName={pendingDbSwitch?.label ?? ''}
   currentName={connection?.database ?? connection?.name ?? ''}
   onconfirm={commitDatabaseSwitch}
 />
+{#if dialogMounted.createDb}
+  {#await lazyDialogs.createDb() then { default: CreateDatabaseDialog }}
 <CreateDatabaseDialog
   bind:open={showCreateDbDialog}
   connType={dbAdmin ?? connection?.type ?? 'postgres'}
   oncreate={createDatabase}
 />
+  {/await}
+{/if}
 {#if dbNameDialog}
-  <DatabaseNameDialog
+  {#await import('./DatabaseNameDialog.svelte') then { default: DatabaseNameDialog }}<DatabaseNameDialog
     bind:open={dbNameDialogOpen}
     mode={dbNameDialog.mode}
     kind={dbAdmin ?? 'postgres'}
     source={dbNameDialog.source}
     existing={dbNameDialog.existing}
     onsubmit={runDbNameStatement}
-  />
+  />{/await}
 {/if}
 <DropDatabaseDialog
   bind:open={showDropDbDialog}
@@ -9952,7 +10940,7 @@ let rowSearch = $state('')
   existingSchemas={schemas}
   onexecute={async (sql) => {
     try { await executeDdl(sql) }
-    catch (e) { toast.error('Could not create schema', { description: String(e) }); throw e }
+    catch (e) { toast.error('Could not create schema', { description: errorText(e) }); throw e }
   }}
   oncreated={async (schemaName) => {
     toast.success(`Schema "${schemaName}" created`)
@@ -9960,6 +10948,8 @@ let rowSearch = $state('')
     await handleSchemaChange(schemaName)
   }}
 />
+{#if dialogMounted.generateSql}
+  {#await lazyDialogs.generateSql() then { default: GenerateSqlDialog }}
 <GenerateSqlDialog
   bind:open={generateSqlOpen}
   schema={activeSchema}
@@ -9967,6 +10957,8 @@ let rowSearch = $state('')
   dialect={dbType}
   onopeninsql={(sql) => { if (aiMode) exitAiMode(); void openQueryInEditor(sql) }}
 />
+  {/await}
+{/if}
 
 {#if dialogMounted.docker}
   {#await lazyDialogs.docker() then { default: DockerLaunchModal }}
@@ -9978,7 +10970,11 @@ let rowSearch = $state('')
   {/await}
 {/if}
 
+{#if dialogMounted.mcp}
+  {#await lazyDialogs.mcp() then { default: McpPanel }}
 <McpPanel bind:open={showMcpPanel} connected={!!connection} />
+  {/await}
+{/if}
 
 {#if dialogMounted.settings}
   {#await lazyDialogs.settings() then { default: SettingsDialog }}
@@ -10002,7 +10998,7 @@ let rowSearch = $state('')
   table={activeTable ?? ''}
   {columns}
   {primaryKey}
-  onimported={() => reloadTableFromQuery(false)}
+  onimported={async () => { await reloadTableFromQuery(false); void recountActiveTable() }}
 />
   {/await}
 {/if}
@@ -10016,9 +11012,19 @@ let rowSearch = $state('')
 <KeyboardShortcutsDialog bind:open={showShortcutsModal} />
 <LeaderPanel bind:open={leaderOpen} actions={leaderActions} />
 
+{#if dialogMounted.insider}
+  {#await lazyDialogs.insider() then { default: InsiderDialog }}
 <InsiderDialog bind:open={showInsiderModal} />
+  {/await}
+{/if}
 
+{#if dialogMounted.about}
+  {#await lazyDialogs.about() then { default: AboutDialog }}
 <AboutDialog bind:open={showAboutModal} onopenreport={() => (showReportIssueDialog = true)} />
+  {/await}
+{/if}
+{#if dialogMounted.report}
+  {#await lazyDialogs.report() then { default: ReportIssueDialog }}
 <ReportIssueDialog
   bind:open={showReportIssueDialog}
   initialType={crashReport ? 'crash' : 'bug'}
@@ -10028,6 +11034,8 @@ let rowSearch = $state('')
   heading={crashReport ? 'Stroke quit unexpectedly' : 'Report an issue'}
   lead={crashReport ? 'Stroke closed by itself last time. This report holds the error and where in Stroke it happened, nothing else; read it over before you send it.' : ''}
 />
+  {/await}
+{/if}
 <!-- Share links: one dialog for every kind, opened through requestShare(). -->
 {#if showStudioShare || studioShare}
   {#await import('./StudioShareDialog.svelte') then { default: StudioShareDialog }}
@@ -10052,7 +11060,7 @@ let rowSearch = $state('')
 <Dialog.Root bind:open={showProGate} closeOnEscape={true} closeOnOutsideClick={true}>
   <Dialog.Portal>
     <Dialog.Overlay class="fixed inset-0 z-50 bg-black/65" />
-    <Dialog.Content class="fixed left-1/2 top-1/2 z-50 w-full max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border/60 bg-background p-5 elevate-3-rim outline-none">
+    <Dialog.Content class="fixed inset-0 m-auto h-fit z-50 w-full max-w-sm rounded-2xl border border-border/60 bg-background p-5 elevate-3-rim outline-none">
       <div class="mb-5 flex size-10 items-center justify-center rounded-lg border border-warning/20 bg-warning/10">
         <Lock class="size-5 text-warning" />
       </div>
@@ -10087,6 +11095,7 @@ let rowSearch = $state('')
     <SqlRevertDialog undo={revertAsk} dialect={dbType} onconfirm={() => void confirmRevert()} oncancel={() => settleRevert(false)} />
   {/await}
 {/if}
+<TransferDialog />
 <UpdateDialog
   bind:this={updateDialog}
   onwhatsnewaction={handleWhatsNewAction}
@@ -10103,6 +11112,10 @@ let rowSearch = $state('')
 <CommandPalette
   bind:open={commandOpen}
   bind:page={commandPage}
+  onexporttable={activeTab?.kind === 'table' && activeTable && !aiMode && total > 0 ? (/** @type {string} */ f) => void handleExport(f) : null}
+  exportTableName={activeTable ?? ''}
+  onexplainquery={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false && !aiMode ? () => sqlConsoleRef?.explainEditor?.() : null}
+  onimporttable={activeTab?.kind === 'table' && activeTable && !aiMode && !tableReadonly ? () => (importDataOpen = true) : null}
   connected={!!connection}
   {schemas}
   {tables}
@@ -10133,10 +11146,12 @@ let rowSearch = $state('')
   onopenSchema={() => { if (aiMode) exitAiMode(); openSchemaTab() }}
   onopensecurity={() => { if (aiMode) exitAiMode(); openSecurityTab() }}
   onopenlogs={() => { if (aiMode) exitAiMode(); openLogsTab() }}
+  onopenqueries={() => { if (aiMode) exitAiMode(); openQueriesTab('history') }}
   onopenterminal={() => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }}
   onnewterminal={() => { commandOpen = false; if (aiMode) exitAiMode(); openNewTerminalTab() }}
   onopenwhatsnew={() => { commandOpen = false; void updateDialog?.showWhatsNew?.() }}
   onsharestudio={studioShareEnabled ? () => { commandOpen = false; showStudioShare = true } : null}
+  onsharedconsole={studioShare ? () => { commandOpen = false; openSharedConsole() } : null}
   onopeninsights={() => { if (aiMode) exitAiMode(); openInsightsTab() }}
   onopenadvisor={() => { if (aiMode) exitAiMode(); openAdvisorTab() }}
   onopenobjects={() => { if (aiMode) exitAiMode(); openObjectsTab() }}
@@ -10157,9 +11172,11 @@ let rowSearch = $state('')
   {hasInsights}
   {hasAdvisor}
   onopenJsonViewer={() => { if (aiMode) exitAiMode(); openJsonTab() }}
+  onfiledb={(how) => void handleFileDatabase(how)}
   onopenshortcuts={() => openShortcuts()}
   onopenmyshares={() => openSharesTab()}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
+  onopenappearance={() => { settingsSection = 'appearance'; showSettingsModal = true }}
   onopenabout={() => (showAboutModal = true)}
   onopenreport={() => (showReportIssueDialog = true)}
   oncheckupdate={() => void updateDialog?.checkNow()}
@@ -10187,7 +11204,7 @@ let rowSearch = $state('')
 <!-- Capture phase, deliberately - see onWindowKeydownCapture. -->
 <svelte:window onkeydowncapture={onWindowKeydownCapture} />
 
-{#if autoConnecting && !connection}
+{#if overlayWanted || overlayHeld}
   <!-- Only covers the actual connect handshake: onConnected sets `connection`
        the moment the backend confirms, which drops this overlay and lets the
        catalog (schemas/tables/counts) stream into the sidebar skeletons. -->
@@ -10204,6 +11221,7 @@ let rowSearch = $state('')
       verb={autoConnectVerb}
       name={autoConnectName ? shortConnLabel(autoConnectName) : ''}
       delay={autoConnectVerb === 'Reconnecting' ? 350 : 0}
+      offline={autoConnectOffline}
       oncancel={() => void cancelAutoConnect()}
     />
   </div>
@@ -10273,10 +11291,10 @@ let rowSearch = $state('')
     >
       <svelte:boundary onerror={(e) => console.error('[sidebar] crashed:', e)}>
         {#snippet failed(err, reset)}
-          <div class="flex h-full w-[220px] shrink-0 flex-col items-center justify-center gap-3 border-r border-border/50 bg-sidebar p-4 text-center">
+          <div class="flex h-full w-[13.75rem] shrink-0 flex-col items-center justify-center gap-3 border-r border-border/50 bg-sidebar p-4 text-center">
             <AlertTriangle class="size-5 text-destructive" />
             <p class="text-ui-xs font-medium text-muted-foreground">Sidebar error</p>
-            <p class="max-w-full break-words font-mono text-ui-3xs text-muted-foreground/80">{String(/** @type {any} */ (err)?.message ?? err)}</p>
+            <p class="max-w-full break-words font-mono text-ui-3xs text-muted-foreground">{String(/** @type {any} */ (err)?.message ?? err)}</p>
             <button
               type="button"
               class="rounded-md border border-border bg-muted/40 px-2.5 py-1 text-ui-xs font-medium transition-colors hover:bg-accent"
@@ -10319,6 +11337,7 @@ let rowSearch = $state('')
         onswitchconnection={(c) => { if (aiMode) exitAiMode(); void handleSwitchDatabase(c) }}
         onaddconnection={() => { showConnectionModal = true }}
         onremoveconnection={(id) => { removeConnection(id); handleConnectionRemoved(id) }}
+        oneditconnection={(c) => { connectionModalEditId = c.id; showConnectionModal = true }}
         onsetconnectiongroup={(id, group) => { savedConnections = setConnectionGroup(id, group) }}
         onconnectionmeta={(list) => { savedConnections = list }}
         ondisconnectconnection={() => handleDisconnect()}
@@ -10337,6 +11356,7 @@ let rowSearch = $state('')
         onschemachange={handleSchemaChange}
         ontableselect={handleTableSelect}
         sqlTables={!isKV}
+        tablesLabel={docAdapter?.noun.collections ?? ''}
         ontablefilter={(v) => (tableFilter = v)}
         onrefresh={handleRefresh}
         {connection}
@@ -10349,7 +11369,7 @@ let rowSearch = $state('')
         ondatabaseinfo={(args) => void openDatabaseInfo(args)}
         onterminatedbsessions={(args) => void terminateDbSessions(args)}
         {databasesRefreshKey}
-        onnewtable={() => (showCreateTableDialog = true)}
+        onnewtable={openNewTable}
         onnewschema={() => (showCreateSchemaDialog = true)}
         ontruncatetable={handleTruncateTable}
         ondroptable={(t, c, k) => void handleDropTable(t, c, k)}
@@ -10357,6 +11377,7 @@ let rowSearch = $state('')
         onviewstructure={(t) => void openTableStructure(t)}
         onexportsql={(t) => void handleExportSql(t)}
         onexportdata={(t) => void handleExportData(t)}
+        onimportdata={isKV ? null : async (t) => { if (aiMode) exitAiMode(); await openTableTab(activeSchema, t); importDataOpen = true }}
         onopeninconsole={handleOpenTableInConsole}
         onopenobjectsql={openObjectSql}
         ongeneratesql={handleGenerateSql}
@@ -10385,6 +11406,7 @@ let rowSearch = $state('')
         queriesCount={savedQueries.length}
       >
         {#snippet queriesPanel()}
+          {#await import('./SidebarQueries.svelte') then { default: SidebarQueries }}
           <SidebarQueries
             connectionId={persistConnectionId}
             queries={savedQueries}
@@ -10394,6 +11416,7 @@ let rowSearch = $state('')
             onnew={(folderId) => { if (aiMode) exitAiMode(); void newSavedQuery(folderId) }}
             onrefresh={refreshQueryStores}
           />
+          {/await}
         {/snippet}
       </Sidebar>
       </svelte:boundary>
@@ -10440,107 +11463,17 @@ let rowSearch = $state('')
     {/snippet}
 
     {#if !connection}
-      <!-- Launcher: recent connections first (one click back to work), then a
-           new connection, then engine shortcuts. Left-aligned in one column so
-           the eye runs straight down the list. -->
-      <div class="relative flex flex-1 flex-col items-center justify-center overflow-y-auto p-8">
-        <div class="flex w-full max-w-[30rem] flex-col">
-          <h1 class="text-ui-2xl font-semibold tracking-tight text-foreground">
-            Connect a database
-          </h1>
-          <p class="mt-1 text-ui-sm text-muted-foreground text-pretty">
-            Browse schemas, edit rows and run queries in one fast, native window.
-          </p>
-
-          <div class="mt-6 flex items-center gap-2">
-            <Button type="button" class="h-8 px-3.5 text-ui-sm font-medium" bind:ref={welcomeConnectBtn} onclick={() => (showConnectionModal = true)}>
-              <Plus class="size-3.5 shrink-0" />
-              New connection
-            </Button>
-            <span class="ml-2 flex items-center gap-1.5 text-ui-xs text-muted-foreground">or press <Kbd command="palette.open" size="sm" /></span>
-          </div>
-
-          <!-- Recent: one line each, name first, where it lives muted beside it.
-               Two-line rows made five connections the whole page. -->
-          {#if recentConnections.length}
-            <section class="mt-8" aria-labelledby="welcome-recent">
-              <div class="mb-1.5 flex items-center justify-between px-2.5">
-                <h2 id="welcome-recent" class="text-ui-2xs font-medium text-muted-foreground">Recent</h2>
-                <button type="button" class="text-ui-2xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => (showConnectionModal = true)}>
-                  All connections
-                </button>
-              </div>
-              <ul class="flex flex-col">
-                {#each recentConnections as conn (conn.id)}
-                  {@const slot = savedConnections.indexOf(conn) + 1}
-                  <li>
-                    <button
-                      type="button"
-                      title="Connect to {conn.name}"
-                      class="group flex h-9 w-full min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-left transition-[background-color,scale] duration-150 ease-out hover:bg-accent/60 active:scale-[0.99] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-                      onclick={() => void handleSwitchDatabase(conn)}
-                    >
-                      <DbIcon id={conn.type} class="size-4 shrink-0" />
-                      <span class="min-w-0 shrink truncate text-ui-sm text-foreground">{conn.name}</span>
-                      <span class="min-w-0 flex-1 truncate text-ui-xs text-muted-foreground">{welcomeTarget(conn)}</span>
-                      <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground group-hover:hidden group-focus-visible:hidden">{ago(conn.lastConnectedAt ?? 0)}</span>
-                      <span class="hidden shrink-0 group-hover:inline-flex group-focus-visible:inline-flex">
-                        {#if slot > 0 && slot <= 9}<Kbd command={`connection.switchTo.${slot}`} size="sm" />{:else}<span class="text-ui-2xs text-foreground">Connect</span>{/if}
-                      </span>
-                    </button>
-                  </li>
-                {/each}
-              </ul>
-            </section>
-          {/if}
-
-          <!-- Each engine opens its own form directly: naming the engine is the
-               first step of the wizard. -->
-          <section class="mt-8" aria-labelledby="welcome-engines">
-            <h2 id="welcome-engines" class="mb-1.5 px-2.5 text-ui-2xs font-medium text-muted-foreground">Start with</h2>
-            <div class="grid grid-cols-2 gap-0.5 sm:grid-cols-3">
-              {#each [['postgres','PostgreSQL'],['mysql','MySQL'],['sqlite','SQLite'],['mongodb','MongoDB'],['redis','Redis'],['d1','Cloudflare D1']] as [id, label] (id)}
-                <button
-                  type="button"
-                  title="New {label} connection"
-                  class="inline-flex h-9 min-w-0 items-center gap-2.5 rounded-lg px-2.5 text-ui-sm text-muted-foreground transition-[color,background-color,scale] duration-150 ease-out hover:bg-accent/60 hover:text-foreground active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-                  onclick={() => { connectionModalEngine = id; showConnectionModal = true }}
-                >
-                  <DbIcon {id} class="size-4 shrink-0" />
-                  <span class="truncate">{label}</span>
-                </button>
-              {/each}
-            </div>
-          </section>
-        </div>
-
-        <!-- The version and a way to check for a newer one: with no
-             connection open there is no sidebar, and so no update button. -->
-        <p class="absolute inset-x-0 bottom-6 flex items-center justify-center gap-2 text-ui-2xs text-muted-foreground">
-          {#if appVersion}
-            <span class="tabular-nums">v{appVersion}</span>
-            <span aria-hidden="true">·</span>
-          {/if}
-          <button
-            type="button"
-            disabled={checkingUpdate}
-            class="inline-flex items-center gap-1 text-foreground/80 underline-offset-4 transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground hover:underline active:scale-[0.97] disabled:pointer-events-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            onclick={() => void updateDialog?.checkNow?.()}
-          >
-            <Icon name="refresh-cw" class={cn('size-3 shrink-0', checkingUpdate && 'animate-spin')} aria-hidden="true" />
-            {checkingUpdate ? 'Checking' : 'Check for updates'}
-          </button>
-          <span aria-hidden="true">·</span>
-          <span>made with care by
-          <a
-            href="https://nischal-dahal.com.np"
-            target="_blank"
-            rel="noreferrer"
-            class="text-foreground/80 underline-offset-4 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-            onclick={(e) => { e.preventDefault(); void openExternalUrl('https://nischal-dahal.com.np') }}
-          >@broisnees</a></span>
-        </p>
-      </div>
+      <LauncherScreen
+        {savedConnections}
+        dialogOpen={showConnectionModal}
+        {appVersion}
+        {checkingUpdate}
+        onnew={(engine) => { if (engine) connectionModalEngine = engine; showConnectionModal = true }}
+        onopen={(conn) => void handleSwitchDatabase(conn)}
+        oncheckupdates={() => void updateDialog?.checkNow?.()}
+        onopenlink={(url) => void openExternalUrl(url)}
+        onfiledb={(how) => void handleFileDatabase(how)}
+      />
     {:else}
       <!-- Full-window AI chat, kept mounted after first open so state is preserved -->
       {#if aiEverOpened}
@@ -10691,7 +11624,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./SecurityPage.svelte')}<TabLoading />{:then { default: SecurityPage }}
-              <SecurityPage bind:this={securityPageRef} active={activeTab?.kind === 'security'} connectionType={connection?.type ?? null} />
+              <SecurityPage bind:this={securityPageRef} active={activeTab?.kind === 'security'} connectionType={connection?.type ?? null} connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
@@ -10705,7 +11638,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./BackupPage.svelte')}<TabLoading />{:then { default: BackupPage }}
-              <BackupPage dbType={dbType} activeSchema={activeSchema} {schemas} savedConnection={savedConnections.find((c) => c.id === activeConnectionId) ?? null} tables={tables.map((t) => ({ name: t.name, rowCount: t.rowCount }))} onrestored={async () => { await loadSchemas(); await loadTables({ force: true }); bumpObjects() }} />
+              <BackupPage dbType={dbType} activeSchema={activeSchema} {schemas} savedConnection={savedConnections.find((c) => c.id === activeConnectionId) ?? null} tables={tables.filter((t) => !/view|foreign/i.test(t.kind ?? '')).map((t) => ({ name: t.name, rowCount: t.rowCount }))} onrestored={async () => { await loadSchemas(); await loadTables({ force: true }); bumpObjects() }} />
             {/await}
           </svelte:boundary>
         </div>
@@ -10791,7 +11724,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./InstanceInsightsPage.svelte')}<TabLoading />{:then { default: InstanceInsightsPage }}
-              <InstanceInsightsPage active={activeTab?.kind === 'insights'} connectionName={connection?.name ?? connection?.database ?? ''} {dbType} />
+              <InstanceInsightsPage active={activeTab?.kind === 'insights'} connectionName={connection?.name ?? connection?.database ?? ''} {dbType} connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
@@ -10837,6 +11770,7 @@ let rowSearch = $state('')
             {#await import('./ObjectsPage.svelte')}<TabLoading />{:then { default: ObjectsPage }}
               <ObjectsPage
                 bind:focusSearch={objectsFocusSearch}
+                connectionId={persistConnectionId ?? ''}
                 active={activeTab?.kind === 'objects'}
                 connectionType={connection?.type ?? null}
                 onopen={({ schema, name }) => void openTableTab(schema || activeSchema, name)}
@@ -10899,6 +11833,7 @@ let rowSearch = $state('')
                     adapter={docAdapter}
                     collection={/** @type {any} */ (dt).collection ?? ''}
                     where={docWhere}
+                    collectionCount={loadingTables ? -1 : tables.length}
                     onopensql={(text, coll) => { if (aiMode) exitAiMode(); openSqlTabWith(text, coll ? `${docAdapter.consoleLabel} · ${coll}` : docAdapter.consoleLabel) }}
                   />
                 {/key}
@@ -10916,7 +11851,7 @@ let rowSearch = $state('')
         >
           <svelte:boundary failed={tabError}>
             {#await import('./MapPage.svelte')}<TabLoading />{:then { default: MapPage }}
-              <MapPage />
+              <MapPage connectionId={persistConnectionId ?? ''} />
             {/await}
           </svelte:boundary>
         </div>
@@ -10947,6 +11882,25 @@ let rowSearch = $state('')
             </svelte:boundary>
           </div>
         {/key}
+      {/if}
+
+      <!-- Queries tab: history, saved queries and saved charts. Mounts while active. -->
+      {#if activeTab?.kind === 'queries'}
+        <div class="flex min-h-0 flex-1 flex-col">
+          <svelte:boundary failed={tabError}>
+            {#await import('./QueriesPage.svelte')}<TabLoading />{:then { default: QueriesPage }}
+              <QueriesPage
+                bind:view={queriesView}
+                history={queryHistory}
+                saved={savedQueries}
+                connectionName={connection?.name ?? ''}
+                onopen={(sql) => void openQueryInEditor(sql)}
+                onrun={async (sql) => { await openQueryInEditor(sql); await tick(); sqlConsoleRef?.runEditor?.() }}
+                onrefresh={refreshQueryStores}
+              />
+            {/await}
+          </svelte:boundary>
+        </div>
       {/if}
 
       <!-- Shared links tab: mounts while active, and reloads each time it is shown -->
@@ -11051,6 +12005,7 @@ let rowSearch = $state('')
             {#await import('./EntityRelationPage.svelte')}<TabLoading />{:then { default: EntityRelationPage }}
               <EntityRelationPage
                 bind:this={erdTabPage}
+                connectionId={persistConnectionId ?? ''}
                 onopendiagrams={() => openDiagramsTab()}
                 schema={activeSchema}
                 {schemas}
@@ -11073,6 +12028,7 @@ let rowSearch = $state('')
             {#await import('./SearchPage.svelte')}<TabLoading />{:then { default: SearchPage }}
               <SearchPage
                 bind:focusSearch={dbSearchFocusInput}
+                connectionId={persistConnectionId ?? ''}
                 {tables}
                 schema={activeSchema}
                 dialect={dbType}
@@ -11235,6 +12191,7 @@ let rowSearch = $state('')
             oncommittransaction={() => void endSqlTransaction('commit')}
             onrollbacktransaction={() => void endSqlTransaction('rollback')}
             bind:sql={sqlText}
+            collab={sharedConsoleOn ? sharedConsoleExt : null}
             bind:queryHistoryVisible
             {queryHistory}
             {savedQueries}
@@ -11275,6 +12232,7 @@ let rowSearch = $state('')
             onmodshifto={() => { if (connection) openOrmTab() }}
             onqueryrefresh={refreshQueryStores}
             onhistoryselect={(sql) => openQueryInEditor(sql)}
+            onopenqueries={(view) => openQueriesTab(view)}
             onsavequery={handleSaveQuery}
             onsaveinplace={handleSaveInPlace}
             savedQueryName={activeSavedQuery?.name ?? ''}
@@ -11287,79 +12245,27 @@ let rowSearch = $state('')
         </div>
       {/if}
 
-      {#if activeTab?.kind === 'table'}
+      {#if tableEverOpened}
+        <!-- Kept mounted behind other tabs. Leaving for an editor clears the
+             table state (no table, no error), and those two branches are only
+             taken on a table tab, so the hidden area keeps its grid instead of
+             swapping it for the empty state and building it again on return. -->
+        <div
+          class={onTableTab ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden'}
+          inert={!onTableTab || undefined}
+        >
         <!-- The failure outranks the empty state: an error raised while the tab
              has no table selected still has to be readable, and it carries the
              only control that clears it. -->
-        {#if error}
-          <!-- ── Load failure, stated where the grid would be ────────────────
-               A banner pinned to the top over an empty grid made the reader
-               look in two places and left them with "dismiss to continue" as
-               the only way forward. One centred state instead: what broke, why,
-               and the action that fixes it - reconnect for a dropped pool,
-               retry for everything else. -->
-          {@const kind = connectionErrorKind(error)}
-          {@const humanized = humanizeDbError(error)}
-          <div
-            class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center"
-            role="alert"
-          >
-            {#if kind === 'unreachable'}
-              <WifiOff class="size-8 shrink-0 text-muted-foreground" />
-            {:else if kind === 'dropped'}
-              <Unplug class="size-8 shrink-0 text-muted-foreground" />
-            {:else}
-              <AlertTriangle class="size-8 shrink-0 text-destructive" />
-            {/if}
-
-            <div class="flex max-w-md flex-col gap-1">
-              <p class="text-ui-sm font-medium text-foreground">
-                {#if kind === 'unreachable'}Cannot reach database
-                {:else if kind === 'dropped'}Connection dropped
-                {:else}This table failed to load{/if}
-              </p>
-              <!-- Drivers wrap the cause in transport noise - D1 returns its whole
-                   HTTP envelope around a five-word message. Show the cause; the
-                   raw text stays one click away and in the query log. -->
-              <p class="break-words font-mono text-ui-xs leading-relaxed {kind ? 'text-muted-foreground' : 'text-destructive'}">
-                {#if kind === 'unreachable'}Check your internet connection, or whether the server is still accepting connections.
-                {:else if kind === 'dropped'}The pool for this connection closed. Reconnecting rebuilds it and reloads the table.
-                {:else}{humanized}{/if}
-              </p>
-              {#if showRawError}
-                <p class="mt-1 max-h-40 overflow-auto break-all text-left font-mono text-ui-3xs text-muted-foreground">{error}</p>
-              {/if}
-            </div>
-
-            <div class="flex items-center gap-2">
-              <button
-                type="button"
-                data-autofocus
-                disabled={retryingLoad}
-                class="inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-muted/40 px-3 text-ui-xs font-medium text-foreground transition-colors hover:bg-accent disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-                onclick={() => void retryTableLoad()}
-              >
-                <RefreshCw class="size-3.5 shrink-0 {retryingLoad ? 'animate-spin' : ''}" />
-                {kind === 'dropped' || connectionLost ? 'Reconnect' : 'Retry'}
-              </button>
-              {#if !kind}
-                <button
-                  type="button"
-                  class="inline-flex h-8 items-center rounded-md px-3 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-                  onclick={() => { error = ''; showRawError = false }}
-                >Dismiss</button>
-              {/if}
-            </div>
-
-            {#if humanized !== error.replace(/^Error:\s*/, '').trim()}
-              <button
-                type="button"
-                class="text-ui-3xs text-muted-foreground underline-offset-2 transition-colors hover:text-foreground hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
-                onclick={() => (showRawError = !showRawError)}
-              >{showRawError ? 'Hide raw error' : 'Show raw error'}</button>
-            {/if}
-          </div>
-        {:else if !activeTable}
+        {#if error && onTableTab}
+          <TableLoadError
+            {error}
+            {connectionLost}
+            retrying={retryingLoad}
+            onretry={() => void retryTableLoad()}
+            ondismiss={() => { error = '' }}
+          />
+        {:else if !activeTable && onTableTab}
           <div class="flex flex-1 flex-col items-center justify-center gap-2 p-8 text-center">
             <p class="font-mono text-ui text-muted-foreground">
               Select a table from the sidebar or press
@@ -11521,22 +12427,22 @@ let rowSearch = $state('')
               {#await loadDataTable() then { default: DataTable }}
               <DataTable
                 bind:this={dataTable}
-                {columns}
-                {rows}
+                columns={gridData.columns}
+                rows={gridData.rows}
                 getsqlhints={buildSqlHints}
-                {primaryKey}
-                {foreignKeys}
-                rowNumberOffset={infiniteScroll ? 0 : currentOffset}
-                {incomingForeignKeys}
+                primaryKey={gridData.primaryKey}
+                foreignKeys={gridData.foreignKeys}
+                rowNumberOffset={gridData.rowNumberOffset}
+                incomingForeignKeys={gridData.incomingForeignKeys}
                 onfetchrelatedrows={handleFetchRelatedRows}
                 onfetchcellvalue={dbType === 'postgres' ? handleFetchCellValue : null}
                 onloadcellvalue={dbType === 'postgres' ? handleLoadCellValue : null}
-                schema={activeSchema}
-                tableName={activeTable ?? ''}
+                schema={gridData.schema}
+                tableName={gridData.tableName}
                 connectionId={persistConnectionId}
                 onrequestsearch={() => tableToolbar?.focusRowSearch?.()}
                 dialect={dbType}
-                indexes={activeTableIndexes}
+                indexes={gridData.indexes}
                 {hiddenColumns}
                 {reloadToken}
                 {dataVersion}
@@ -11545,12 +12451,12 @@ let rowSearch = $state('')
                 {windowStatus}
                 onvisiblerange={handleVisibleRange}
                 onretrywindows={retryFailedWindows}
-                columnWidthsKey={activeTable ? `${persistConnectionId}\x00${activeSchema}.${activeTable}` : undefined}
+                columnWidthsKey={gridData.columnWidthsKey}
                 loading={loadingRows}
                 {loadingMore}
                 {infiniteScroll}
-                endOfResults={infiniteScroll && !windowed && total > 0 && rows.length >= total}
-                filtered={rowSearch.trim() !== '' || activeFilters(rowFilters).length > 0}
+                endOfResults={gridData.endOfResults}
+                filtered={gridData.filtered}
                 onclearfilters={clearRowFilters}
                 onloadmore={handleLoadMore}
                 saving={savingCell || deletingRows || insertingRow}
@@ -11570,13 +12476,15 @@ let rowSearch = $state('')
                 bind:canScrollHorizontally={tableCanScrollH}
                 bind:focusColumn={focusTableColumn}
                 bind:focusCell={tableFocusCell}
+                peers={gridPeers}
+                onpresence={studioShare ? publishGridPresence : null}
                 bind:getScroll={tableGetScroll}
                 bind:getExpanded={tableGetExpanded}
                 bind:applyScroll={tableApplyScroll}
                 bind:vcolPanelOpen
-                {rowSort}
-                {rowSortMore}
-                searchQuery={rowSearch}
+                rowSort={gridData.rowSort}
+                rowSortMore={gridData.rowSortMore}
+                searchQuery={gridData.searchQuery}
                 {searchOptions}
                 onsortchange={(s) => void handleRowSortChange(s)}
                 onhidecolumn={(colName) => {
@@ -11649,6 +12557,8 @@ let rowSearch = $state('')
                   onprevpage={() => void handlePageChange(page - 1)}
                   onnextpage={() => void handlePageChange(page + 1)}
                   onsave={handleSaveCell}
+                  onloadvalue={dbType === 'postgres' ? handleLoadCellValue : null}
+                  {dataVersion}
                 />
               {:else if dataViewMode === 'text'}
                 {#await import('./TableTextView.svelte')}<TabLoading />{:then { default: TableTextView }}
@@ -11684,7 +12594,7 @@ let rowSearch = $state('')
               {/if}
             </svelte:boundary>
             {#if dataViewMode === 'table'}
-              <RowDetailPanel
+              {#if inspectorTarget}{#await import('./RowDetailPanel.svelte') then { default: RowDetailPanel }}<RowDetailPanel
                 {columns}
                 {rows}
                 {primaryKey}
@@ -11692,156 +12602,40 @@ let rowSearch = $state('')
                 {dataVersion}
                 onclose={closeInspector}
                 onsave={handleSaveCell}
-              />
+              />{/await}{/if}
             {/if}
           </div>
           {/if}
         {/if}
+        </div>
       {/if}
 
-      {#if !activeTab || activeTab.kind === 'welcome'}
-        <!-- One platform test for the whole app: `IS_MAC` comes from `detectOs()`,
-             which reads the Tauri platform. `navigator.platform` is deprecated,
-             and a second source of truth is a second answer waiting to happen. -->
-        {@const isMac = IS_MAC}
-        {@const mod = isMac ? '⌘' : 'Ctrl'}
-        <!-- Tile chrome. Every tile is the same fixed height with the icon row
-             pinned to the top and the label to the bottom, so labels stay on a
-             shared baseline whether or not a tile carries a chord or wraps to
-             two lines. Colors use solid tokens (not fractional alpha) - thinned
-             strokes read as fuzzy against the dark panel. -->
-        <!-- min-h, not h: a label that wraps to two lines in a narrow pane grows
-             the tile instead of spilling out of it. min-w-0 + overflow-hidden
-             keep a long word inside the border when the column is tight. -->
-        {@const cell = 'group relative flex min-h-[5.25rem] min-w-0 flex-col justify-between overflow-hidden rounded-lg border border-border/60 bg-card/50 p-2.5 text-left transition-[background-color,border-color,box-shadow,transform] duration-150 ease-[var(--ease-out)] hover:border-border hover:bg-accent/40 hover:shadow-sm active:scale-[0.98]'}
-        {@const proCell = 'group relative flex min-h-[5.25rem] min-w-0 cursor-not-allowed flex-col justify-between overflow-hidden rounded-lg border border-border/40 bg-card/30 p-2.5 text-left transition-[background-color,border-color] duration-150 hover:border-warning/30 hover:bg-warning/[0.04]'}
-        {@const iconCls = 'size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground'}
-        {@const proIconCls = 'size-4 shrink-0 text-muted-foreground'}
-        {@const labelCls = 'text-ui-2xs font-medium leading-[1.25] text-foreground/85 transition-colors group-hover:text-foreground [overflow-wrap:anywhere]'}
-        {@const proLabelCls = 'text-ui-2xs font-medium leading-[1.25] text-muted-foreground [overflow-wrap:anywhere]'}
-
-        <!-- Shift is spelled out off macOS: the bundled UI/mono webfonts have no
-             U+21E7, so "Ctrl⇧E" fell back mid-word and rendered as garbage.
-             Keys are separate spans - butted-together chords are unreadable at
-             this size. -->
-        {@const shiftKey = isMac ? '⇧' : 'Shift'}
-        {#snippet chord(/** @type {string[]} */ keys)}
-          <Kbd {keys} wrap />
-        {/snippet}
-
-        <!-- A tile: one line, icon and label. Compact on purpose: the two-line
-             version with a description and printed chord was most of the page,
-             and in the monospace font its descriptions truncated anyway. The
-             description and the shortcut are in the tooltip. -->
-        {#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[], tone?: 'info' | 'success' | 'primary' | 'warning' }} */ opts = {})}
-          {@const locked = !!opts.pro && !$hasPro}
-          {@const toneCls = { info: 'text-info', success: 'text-success', primary: 'text-primary', warning: 'text-warning' }[opts.tone ?? 'info']}
-          {@const chordText = opts.keys ? ` (${opts.keys.join(isMac ? '' : '+')})` : ''}
-          <!-- A simple action: coloured icon and label; what it does and its
-               chord are in the tooltip, the chord also shows on hover. -->
-          <button
-            type="button"
-            {onclick}
-            title={locked ? `${label} - ${desc} - Pro` : `${label} - ${desc}${chordText}`}
-            class={cn(
-              "group flex h-9 min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-muted-foreground outline-none transition-colors hover:bg-accent/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring",
-              locked && "cursor-not-allowed",
-            )}
-          >
-            <Icon class={cn('size-4 shrink-0', toneCls)} />
-            <span class="min-w-0 truncate text-ui-sm">{label}</span>
-            {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
-            <!-- In the layout only while it shows: hidden but laid out, the chord
-                 kept its width and cut "Search" to "Se..." at every pane size. -->
-            {#if opts.keys}<span class="ml-auto hidden shrink-0 group-hover:inline-flex group-focus-visible:inline-flex">{@render chord(opts.keys)}</span>{/if}
-          </button>
-        {/snippet}
-
-        <!-- A second-tier destination: one line, no border, no chord. It has to
-             read as subordinate to the tiles at a glance, which is what keeps
-             the page a shortlist rather than a menu. -->
-        {#snippet jump(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {() => void} */ onclick)}
-          <button
-            type="button"
-            {onclick}
-            class="group inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md px-2 text-left text-muted-foreground/80 outline-none hover:text-foreground focus-visible:text-foreground focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
-          >
-            <Icon class="size-4 shrink-0" />
-            <span class="truncate text-ui-sm">{label}</span>
-          </button>
-        {/snippet}
-
-        <!-- Scroll container keeps top/bottom padding reachable when the content
-             outgrows the viewport (e.g. at high zoom); inner wrapper centers when it fits. -->
-        <div class="min-h-0 flex-1 overflow-auto">
-          <!-- Everything on this page hangs off ONE leading edge, and the block
-               itself is centred in the pane. It used to centre each band on its
-               own axis: a centred logo over a centred label over a centred meta
-               line over a left-aligned grid, so nothing lined up with anything
-               and the tiles read as off-centre against the text above them.
-               `max-w-xl` is the grid's width, so the header, the list and the
-               footer now all start where the first tile starts. -->
-          <div class="welcome-hero @container/welcome mx-auto flex min-h-full w-full max-w-2xl flex-col justify-center gap-6 px-6 pt-10 pb-[12vh]">
-
-          {#if connection}
-            <!-- Identity: which database this tab is on, as a header row that
-                 shares the block's left edge with everything below it. -->
-            <div class="flex min-w-0 items-center gap-3">
-              <span class="flex size-10 shrink-0 items-center justify-center rounded-xl border border-border/60 bg-card">
-                <DbIcon id={connection.type ?? ''} class="size-5 shrink-0" />
-              </span>
-              <div class="flex min-w-0 flex-col gap-0.5">
-                <h1 class="truncate text-ui-xl font-semibold tracking-[-0.01em] text-foreground">{welcomeTitle}</h1>
-                <p class="truncate text-ui-xs text-muted-foreground" title={welcomeWhere}>{shortWhere(welcomeWhere)}</p>
-              </div>
-            </div>
-            <!-- The one main control: everything starts in ⌘K. -->
-            <button
-              type="button"
-              class="flex h-11 w-full cursor-pointer items-center gap-3 rounded-lg bg-muted/40 px-3.5 text-left text-ui-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
-              onclick={() => { commandPage = 'root'; commandOpen = true }}
-            >
-              <Search class="size-4 shrink-0" />
-              <span class="min-w-0 flex-1 truncate">Search tables, run SQL, or ask AI…</span>
-              {@render chord([mod, 'K'])}
-            </button>
-          {/if}
-
-          <!-- Six actions, two rows of three (one column when the pane is narrow). -->
-          <div class="grid w-full grid-cols-1 gap-1 @md/welcome:grid-cols-3">
-            {#if isDoc}
-              {@render row(Database, "Browse", "Open collections and edit documents", openDocsTab, { tone: 'info' })}
-              {@render row(Terminal, "Query", "Run queries in the SQL editor", openSqlTab, { keys: [mod, shiftKey, "S"], tone: 'success' })}
-            {:else if isDynamo}
-              {@render row(Database, "Tables", "Scan, query and edit items", openDynamoTab, { tone: 'info' })}
-              {@render row(Terminal, "PartiQL", "Query in the SQL editor", openSqlTab, { keys: [mod, shiftKey, "S"], tone: 'success' })}
-            {:else if isRedis}
-              {@render row(KeyRound, "Keyspace", "Browse keys and values", openRedisTab, { tone: 'info' })}
-            {:else}
-              {@render row(Terminal, "SQL", "Write and run a query", openSqlTab, { keys: [mod, shiftKey, "S"], tone: 'info' })}
-            {/if}
-            {#if connection && !isDynamo && !isDoc}
-              {@render row(SquareTerminal, "Terminal", isRedis ? "redis-cli, docked below" : "psql, mysql or sqlite3, docked below", () => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }, { keys: [IS_MAC ? "⌘" : "Ctrl", "J"], tone: 'success' })}
-            {/if}
-            {@render row(Sparkles, "AI", "Ask about this database", openAiTab, { pro: true, keys: [mod, shiftKey, "E"], tone: 'primary' })}
-            {#if connection && !isKV}
-              {@render row(Search, "Search", "Find in database: search every table at once", openSearchTab, { keys: [mod, shiftKey, "G"], tone: 'warning' })}
-            {/if}
-            {@render row(Blocks, "Extensions", "Add and manage extensions", openExtensionsTab, { pro: true, keys: [mod, shiftKey, "X"], tone: 'info' })}
-            {@render row(Database, "Connect", "Switch or add a connection", () => (showConnectionModal = true), { keys: [mod, shiftKey, "C"], tone: 'success' })}
-          </div>
-
-          <button type="button" class="inline-flex h-7 items-center gap-1.5 self-start rounded-md px-1 text-ui-xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => { commandPage = 'pages'; commandOpen = true }}>
-            Browse all pages {@render chord([mod, shiftKey, 'P'])}
-          </button>
-          </div>
-        </div>
+      {#if (!activeTab || activeTab.kind === 'welcome') && !restoringTabs}
+        <NewTabPage
+          {connection}
+          {isDoc}
+          {isDynamo}
+          {isRedis}
+          {isKV}
+          onpalette={(page) => { commandPage = page; commandOpen = true }}
+          ondocs={openDocsTab}
+          onsql={openSqlTab}
+          ondynamo={openDynamoTab}
+          onredis={openRedisTab}
+          onterminal={() => { if (aiMode) exitAiMode(); if (!terminalDockOpen) toggleTerminalDock() }}
+          onai={openAiTab}
+          onsearch={openSearchTab}
+          onextensions={openExtensionsTab}
+          onconnect={() => (showConnectionModal = true)}
+        />
       {/if}
       {/snippet}
       {/if}
     {/if}
 
-    {#if connection && terminalDockEver}
+    <!-- A dock used before is mounted ahead of time so ⌘J opens on a live
+         prompt, but only once the connect has painted (or when opened). -->
+    {#if connection && terminalDockEver && (terminalDockOpen || connectSettled)}
       <!-- ⌘J terminal: a hairline, then the client. No header bar; the few
            actions float at the top-right of the terminal itself. -->
       <div
@@ -11920,7 +12714,7 @@ let rowSearch = $state('')
   </div>
 
 {#if queryLogOpen && connection}
-  <QueryLogConsole {activeSchema} activeTable={activeTable ?? ''} onclose={() => { queryLogOpen = false }} />
+  {#await import('./QueryLogConsole.svelte') then { default: QueryLogConsole }}<QueryLogConsole {activeSchema} activeTable={activeTable ?? ''} onclose={() => { queryLogOpen = false }} />{/await}
 {/if}
 
 <!-- AI mode is its own full-height layout (chat list column + conversation), like the title row the status bar steps aside. -->

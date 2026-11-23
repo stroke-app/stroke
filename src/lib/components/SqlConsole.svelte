@@ -1,5 +1,6 @@
 <script>
-  import { IS_MAC } from '$lib/shortcuts.js'
+  import { tx } from '$lib/i18n.js'
+  import { comboTitle } from '$lib/shortcuts.js'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import PanelBottom from "@lucide/svelte/icons/panel-bottom";
@@ -16,7 +17,8 @@
   import ChevronDown from "@lucide/svelte/icons/chevron-down";
   import Download from "@lucide/svelte/icons/download";
   import Share2 from "@lucide/svelte/icons/share-2";
-  import { requestShare, chartTitle, resultsTitle } from "$lib/share-flow.js";
+  import History from "@lucide/svelte/icons/history";
+  import { requestShare, chartTitle, resultsTitle, rowsToJson as rowsToJsonValue } from "$lib/share-flow.js";
   import Table2 from "@lucide/svelte/icons/table-2";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
@@ -32,6 +34,9 @@
   import { Label } from "$lib/components/ui/label/index.js";
   import { queryTitle } from "$lib/stores/query-history.js";
   import DataTable from "./DataTable.svelte";
+  import ResultMap from "./ResultMap.svelte";
+  import MapIcon from "@lucide/svelte/icons/map";
+  import { spatialColumns } from "$lib/result-geo.js";
   import TableLoading from "./TableLoading.svelte";
   import JsonViewer from "./JsonViewer.svelte";
   import ChartView from "./ChartView.svelte";
@@ -78,6 +83,8 @@
     /** Connection family, so parameter values are quoted the way this engine reads them. */
     engine = "postgres",
     sql = $bindable("SELECT 1;"),
+    /** The shared studio console's editor binding, while this tab is it. @type {import('@codemirror/state').Extension | null} */
+    collab = null,
     columns = [],
     rows = [],
     queryMs = 0,
@@ -113,6 +120,8 @@
     /** Set true to open the History list in the results pane; it reads back
      *  false once the list is up, so the next request opens it again. */
     queryHistoryVisible = $bindable(false),
+    /** Open the Queries tab (history, saved, charts). @param {'history' | 'saved' | 'charts'} view */
+    onopenqueries = /** @type {((view: 'history' | 'saved' | 'charts') => void) | undefined} */ (undefined),
     /** @type {import('$lib/stores/query-history.js').QueryHistoryEntry[]} */
     queryHistory = [],
     /** @type {import('$lib/stores/query-history.js').SavedQuery[]} */
@@ -170,6 +179,17 @@
     onaskaiprompt = undefined,
   } = $props();
 
+  // A new run starts its result at the top. The grid kept its scroll offset
+  // across runs, so a 1M-row result streaming in opened around row 9,282 of
+  // wherever the last one had been. The token bumps when a run starts.
+  let resultToken = $state(0)
+  let _wasLoading = false
+  $effect(() => {
+    const now = loading
+    if (now && !_wasLoading) untrack(() => { resultToken += 1 })
+    _wasLoading = now
+  })
+
   /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => boolean, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
   let sqlEditorRef = $state(null)
 
@@ -182,6 +202,11 @@
   /** Run the whole editor, as Run does (a statement opened in a new tab). */
   export function runEditor() {
     handleRun(undefined)
+  }
+
+  /** Explain the editor's query (the command palette's Explain query). */
+  export function explainEditor() {
+    void handleExplain()
   }
 
   /** Focus the SQL editor - called by the parent when this tab becomes active. */
@@ -239,6 +264,12 @@
       rememberedBefore = remember
     })
   })
+
+  /** "14m", "1h 5m": how long a transaction has held its locks. @param {number} ms */
+  function heldFor(ms) {
+    const m = Math.floor(ms / 60_000)
+    return m < 60 ? `${m}m` : `${Math.floor(m / 60)}h ${m % 60}m`
+  }
 
   /** @param {string} name @param {import('$lib/sql-params.js').SqlParamValue} next */
   function setParam(name, next) {
@@ -406,8 +437,9 @@
     if (!outputVisible) toggleOutput()
   }
 
-  /** Open a list, or close the open one back to the result. @param {'history' | 'saved' | 'charts'} view */
+  /** Open a list: the Queries tab when the shell has one, else in the results pane. @param {'history' | 'saved' | 'charts'} view */
   function toggleList(view) {
+    if (onopenqueries) return onopenqueries(view)
     if (!outputVisible || outputView !== view) return openList(view)
     closeList()
   }
@@ -425,7 +457,8 @@
   $effect(() => {
     if (!queryHistoryVisible) return
     untrack(() => {
-      openList('history')
+      if (onopenqueries) onopenqueries('history')
+      else openList('history')
       queryHistoryVisible = false
     })
   })
@@ -441,6 +474,8 @@
   /** @type {object | null} */
   let explainResult = $state(null)
   let explainLoading = $state(false)
+  /** Names the running plan so Stop reaches it. @type {string | null} */
+  let explainQueryId = $state(null)
   let explainError = $state('')
   let selected = $state(new Set())
 
@@ -575,6 +610,54 @@
   // Postgres: measure (runs, then rolls back) or only estimate. Kept per app.
   let explainAnalyze = $state((() => { try { return localStorage.getItem('stroke:explain-analyze') !== 'false' } catch { return true } })())
 
+  // The result map: a panel beside the grid whenever a result holds shapes.
+  // Open or closed, and its width, are kept per app.
+  const MAP_OPEN_KEY = 'stroke:result-map:open'
+  const MAP_WIDTH_KEY = 'stroke:result-map:width'
+  let mapOpen = $state((() => { try { return localStorage.getItem(MAP_OPEN_KEY) !== 'false' } catch { return true } })())
+  let mapWidth = $state((() => { try { return Number(localStorage.getItem(MAP_WIDTH_KEY)) || 420 } catch { return 420 } })())
+  let mapStartWidth = 0
+  /** @type {any} */
+  let resultTableRef = $state(null)
+  const spatialCols = $derived(currentDisplay.columns.length && foundRows.length ? spatialColumns(currentDisplay.columns, foundRows) : [])
+  const showMap = $derived(mapOpen && spatialCols.length > 0 && outputView === 'table')
+  // A windowed result holds only the rows near the viewport, so its map showed
+  // 200 of a 500-row result. Up to MAP_ALL_ROWS the map reads every row from
+  // the store; past that it keeps the loaded rows and says so. The sparse array
+  // is replaced when the result grows or is sorted, so it keys the read.
+  const MAP_ALL_ROWS = 50_000
+  /** @type {{ of: any[], rows: any[][] } | null} */
+  let mapAll = $state.raw(null)
+  $effect(() => {
+    const of = currentDisplay.rows
+    if (!showMap || !windowed || of.length > MAP_ALL_ROWS || mapAll?.of === of) return
+    let live = true
+    onloadallrows().then((rows) => { if (live) mapAll = { of, rows } }, () => {})
+    return () => { live = false }
+  })
+  const mapRows = $derived(windowed && mapAll?.of === currentDisplay.rows ? mapAll.rows : foundRows)
+  /** @param {boolean} open */
+  function setMapOpen(open) {
+    mapOpen = open
+    try { localStorage.setItem(MAP_OPEN_KEY, String(open)) } catch { /* only the preference is lost */ }
+  }
+  /** A click on the map: select that row (or add it), and show it in the grid. @param {number | null} row @param {boolean} additive */
+  function selectFromMap(row, additive) {
+    if (row == null) {
+      if (!additive) selected = new Set()
+      return
+    }
+    if (additive) {
+      const next = new Set(selected)
+      if (next.has(row)) next.delete(row)
+      else next.add(row)
+      selected = next
+    } else {
+      selected = new Set([row])
+    }
+    resultTableRef?.revealRow?.(row)
+  }
+
   /** @param {boolean} [analyze] */
   async function handleExplain(analyze = explainAnalyze) {
     if (analyze !== explainAnalyze) {
@@ -588,13 +671,20 @@
     explainError = ''
     explainResult = null
     if (!outputVisible) outputVisible = true
+    const queryId = `explain-${crypto.randomUUID()}`
+    explainQueryId = queryId
     try {
-      explainResult = await explainSql(querySql, { analyze: explainAnalyze })
+      explainResult = await explainSql(querySql, { analyze: explainAnalyze, queryId })
     } catch (e) {
       explainError = String(e)
     } finally {
+      if (explainQueryId === queryId) explainQueryId = null
       explainLoading = false
     }
+  }
+
+  function stopExplain() {
+    if (explainQueryId) void cancelQuery(explainQueryId).catch(() => {})
   }
 
   let outputVisible = $state(
@@ -691,6 +781,8 @@
     return Math.round(Math.min(max, Math.max(280, w)));
   }
   const beside = $derived($appSqlEditor.resultsBeside && outputVisible);
+  /** Where Saved lives: its own Queries tab in the shell, else the results pane. */
+  const savedWhere = $derived(onopenqueries ? 'in the Queries tab under Saved' : 'under Saved in the results pane');
   /** @type {(() => Promise<void>) | null} */
   let formatSql = $state(null);
 
@@ -735,6 +827,8 @@
   // The backend reports a stopped run as an error string. It is the user's own
   // action, not a failure, so it gets its own quiet view instead of the red one.
   const stopped = $derived(/Query cancelled/i.test(shownError))
+  /** Stopped on an engine that can't stop a statement: the server may finish it. */
+  const serverMayFinish = $derived(stopped && /may still finish/i.test(shownError))
   // Tauri errors arrive as `Error: <message>`; the prefix repeats the header.
   const errorText = $derived(shownError.replace(/^Error:\s*/, ''))
 
@@ -875,6 +969,8 @@
     if (outputView === 'chart' && chartViewRef?.shareSpec) {
       const spec = chartViewRef.shareSpec()
       requestShare({ kind: 'chart', title: chartTitle(spec), chart: spec, columns: cols, rows: r })
+    } else if (outputView === 'json') {
+      requestShare({ kind: 'json', title: shareTitle(), value: rowsToJsonValue(cols, r) })
     } else {
       requestShare({ kind: 'result', title: shareTitle(), columns: cols, rows: r, sql })
     }
@@ -907,12 +1003,12 @@
           onclick={() => handleRun(undefined)}
           title={tipText(
             'Run query',
-            `Runs every statement, each gets its own result tab. ${mod}R runs only the statement under the cursor, ${mod}L selects it.`,
+            `Runs every statement, each gets its own result tab. ${comboTitle('Mod+R')} runs only the statement under the cursor, ${comboTitle('Mod+L')} selects it.`,
             [mod, '↵'],
           )}
         >
           <Play class="size-3.5 shrink-0" />
-          Run
+          {$tx('sql.run', 'Run')}
         </button>
         <DropdownMenu.Root bind:open={runMenuOpen} onOpenChange={captureRunPreviews}>
           <DropdownMenu.Trigger
@@ -928,7 +1024,7 @@
           <DropdownMenu.Content align="start" class="min-w-64">
             <DropdownMenu.Item onSelect={() => handleRun(undefined)}>
               <Play class="size-3.5 shrink-0 text-muted-foreground" />
-              <span class="whitespace-nowrap">Run all statements</span>
+              <span class="whitespace-nowrap">{$tx('sql.runAll', 'Run all statements')}</span>
               <DropdownMenu.Shortcut combo="Mod+Enter" />
             </DropdownMenu.Item>
             <DropdownMenu.Item
@@ -939,11 +1035,11 @@
               <TextCursorInput class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
               <div class="flex w-full min-w-0 flex-col gap-0.5">
                 <span class="flex w-full items-center whitespace-nowrap">
-                  Run statement at cursor
+                  {$tx('sql.runAtCursor', 'Run statement at cursor')}
                   <DropdownMenu.Shortcut combo="Mod+R" />
                 </span>
                 {#if cursorStmtPreview}
-                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground/80">{clipSql(cursorStmtPreview)}</span>
+                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground">{clipSql(cursorStmtPreview)}</span>
                 {/if}
               </div>
             </DropdownMenu.Item>
@@ -951,8 +1047,8 @@
               <DropdownMenu.Item class="items-start" onSelect={() => handleRun(selectionPreview)}>
                 <TextSelect class="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
                 <div class="flex w-full min-w-0 flex-col gap-0.5">
-                  <span class="whitespace-nowrap">Run selection</span>
-                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground/80">{clipSql(selectionPreview)}</span>
+                  <span class="whitespace-nowrap">{$tx('sql.runSelection', 'Run selection')}</span>
+                  <span class="truncate font-mono text-ui-3xs leading-4 text-muted-foreground">{clipSql(selectionPreview)}</span>
                 </div>
               </DropdownMenu.Item>
             {/if}
@@ -995,11 +1091,26 @@
            8.69:1, the count 6.68:1.) -->
       <div class="flex h-7 shrink-0 items-center gap-1.5 rounded-md border border-warning/25 bg-warning/10 px-2">
         <span class="size-1.5 shrink-0 rounded-full bg-warning" aria-hidden="true"></span>
-        <span class="whitespace-nowrap text-ui-2xs font-medium text-warning">In transaction</span>
+        <span class="whitespace-nowrap text-ui-2xs font-medium text-warning">{$tx('sql.inTx', 'In transaction')}</span>
         <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
           {txStatus.statements}<span class="ml-0.5">{txStatus.statements === 1 ? 'stmt' : 'stmts'}</span>
         </span>
+        <!-- How long its locks have been held, once that is worth a glance. -->
+        {#if txStatus.openMs >= 60_000}
+          <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground" title="Time since the transaction began">{heldFor(txStatus.openMs)}</span>
+        {/if}
       </div>
+      {#if txStatus.blocking}
+        <!-- Someone else is waiting on this transaction: the reason to finish
+             it now. Its own chip so the count can't be read as statements. -->
+        <span
+          class="flex h-7 shrink-0 items-center gap-1 whitespace-nowrap rounded-md border border-destructive/30 bg-destructive/10 px-2 text-ui-2xs font-medium text-destructive"
+          title="Other sessions are waiting on a lock this transaction holds. Commit or roll back to let them through."
+        >
+          <span class="font-mono tabular-nums">{txStatus.blocking}</span>
+          {txStatus.blocking === 1 ? 'session waiting' : 'sessions waiting'}
+        </span>
+      {/if}
       <Button
         variant="outline"
         size="sm"
@@ -1008,7 +1119,7 @@
         onclick={() => oncommittransaction()}
         title={tipText('Commit', `Save everything this transaction has done: ${txStatus.statements} statement(s), ${txStatus.rowsAffected} row(s) changed.`)}
       >
-        Commit
+        {$tx('sql.commit', 'Commit')}
       </Button>
       <Button
         variant="ghost"
@@ -1018,7 +1129,7 @@
         onclick={() => onrollbacktransaction()}
         title={tipText('Roll back', 'Undo everything this transaction has done.')}
       >
-        Roll back
+        {$tx('sql.rollback', 'Roll back')}
       </Button>
     {:else}
       <Button
@@ -1032,7 +1143,7 @@
           'Run statements without saving them, then commit or roll back.',
         )}
       >
-        Begin
+        {$tx('sql.begin', 'Begin')}
       </Button>
     {/if}
 
@@ -1049,7 +1160,7 @@
         title={tipText('Variables', 'Set values for :name, $name and ${name} variables. They are inlined as escaped literals when the query runs.')}
       >
         <Variable class="size-3.5 shrink-0" />
-        Variables
+        {$tx('sql.variables', 'Variables')}
         <span class="rounded-sm bg-muted/70 px-1 font-mono text-ui-3xs tabular-nums text-muted-foreground">{sqlParams.length}</span>
       </Button>
     {/if}
@@ -1111,16 +1222,16 @@
         <DropdownMenu.Content align="start" class="min-w-48">
           <DropdownMenu.Item onSelect={() => copyQueryAs('sql')}>
             <Copy class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label">Copy SQL</span>
+            <span data-slot="menu-label">{$tx('sql.copySql', 'Copy SQL')}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.Item onSelect={() => copyQueryAs('drizzle')}>
             <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label">Copy as Drizzle</span>
+            <span data-slot="menu-label">{$tx('sql.copyDrizzle', 'Copy as Drizzle')}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => copyQueryAs('prisma')}>
             <Code2 class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label">Copy as Prisma</span>
+            <span data-slot="menu-label">{$tx('sql.copyPrisma', 'Copy as Prisma')}</span>
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
           <!-- An encrypted link: the results (columns you choose, personal
@@ -1128,12 +1239,16 @@
           {#if columns.length > 0}
             <DropdownMenu.Item onSelect={() => requestShare({ kind: 'result', title: shareTitle(), ...resultSource(), sql })}>
               <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
-              <span data-slot="menu-label">Share results…</span>
+              <span data-slot="menu-label">{$tx('sql.shareResults', 'Share results…')}</span>
+            </DropdownMenu.Item>
+            <DropdownMenu.Item onSelect={() => { const { columns: c, rows: r } = resultSource(); requestShare({ kind: 'json', title: shareTitle(), value: rowsToJsonValue(c, r) }) }}>
+              <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
+              <span data-slot="menu-label">{$tx('sql.shareJson', 'Share as JSON…')}</span>
             </DropdownMenu.Item>
           {/if}
           <DropdownMenu.Item onSelect={() => requestShare({ kind: 'query', title: shareTitle(), sql })}>
             <Share2 class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label">Share query…</span>
+            <span data-slot="menu-label">{$tx('sql.shareQuery', 'Share query…')}</span>
           </DropdownMenu.Item>
         </DropdownMenu.Content>
       </DropdownMenu.Root>
@@ -1164,15 +1279,15 @@
           {/each}
           <DropdownMenu.Separator />
           <DropdownMenu.Item onSelect={() => sqlEditorRef?.foldAll?.()}>
-            <span data-slot="menu-label">Fold all statements</span>
+            <span data-slot="menu-label">{$tx('sql.foldAll', 'Fold all statements')}</span>
             <DropdownMenu.Shortcut combo="Ctrl+Alt+[" />
           </DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => sqlEditorRef?.unfoldAll?.()}>
-            <span data-slot="menu-label">Unfold all</span>
+            <span data-slot="menu-label">{$tx('sql.unfoldAll', 'Unfold all')}</span>
             <DropdownMenu.Shortcut combo="Ctrl+Alt+]" />
           </DropdownMenu.Item>
           <DropdownMenu.Separator />
-          <DropdownMenu.Label>Text size</DropdownMenu.Label>
+          <DropdownMenu.Label>{$tx('sql.textSize', 'Text size')}</DropdownMenu.Label>
           <DropdownMenu.RadioGroup
             value={$appSqlEditor.textSize}
             onValueChange={(v) => setSqlEditorOption('textSize', /** @type {any} */ (v))}
@@ -1195,14 +1310,14 @@
         onclick={(e) => (e.shiftKey ? openSaveDialog() : void saveQuery())}
         title={savedQueryName
           ? tipText(`Save "${savedQueryName}"`, `Writes this tab into the saved query. Shift+click or ${mod}⇧S saves a copy under a new name.`, [mod, 'S'])
-          : tipText('Save query', 'Keep this query for later, under Saved in the results pane, per connection.', [mod, 'S'])}
+          : tipText('Save query', `Keep this query for later, ${savedWhere}, per connection.`, [mod, 'S'])}
       >
         {#if savingQuery}
           <Loader2 class="size-3.5 shrink-0 animate-spin" />
         {:else}
           <Bookmark class={cn('size-3.5 shrink-0', savedQueryName && 'fill-current')} />
         {/if}
-        Save
+        {$tx('common.save', 'Save')}
       </Button>
     </div>
   </div>
@@ -1216,9 +1331,9 @@
       <div class="flex w-full max-w-xl flex-col gap-1.5">
         <div class="flex h-6 items-center gap-2">
           <Variable class="size-3.5 shrink-0 text-muted-foreground" />
-          <span class="text-ui-xs font-medium text-foreground">Variables</span>
+          <span class="text-ui-xs font-medium text-foreground">{$tx('sql.variables', 'Variables')}</span>
           <span class="font-mono text-ui-2xs tabular-nums text-muted-foreground">{sqlParams.length}</span>
-          <span class="ml-auto text-ui-2xs text-muted-foreground">Enter to run</span>
+          <span class="ml-auto text-ui-2xs text-muted-foreground">{$tx('sql.enterToRun', 'Enter to run')}</span>
           <button
             type="button"
             class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -1292,6 +1407,7 @@
     <SqlEditor
       bind:this={sqlEditorRef}
       bind:value={sql}
+      {collab}
       class="absolute inset-0"
       {schemaHints}
       dialect={engine}
@@ -1356,7 +1472,7 @@
   <div class={outputVisible ? "flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden" : "flex shrink-0 flex-col"}>
     <!-- Output tab bar -->
     <div
-      class="studio-chrome flex h-10 shrink-0 items-stretch border-b border-border/30 bg-panel px-2"
+      class="@container/out studio-chrome flex h-10 shrink-0 items-stretch border-b border-border/30 bg-panel px-2"
       data-studio-chrome
     >
       <!-- Result-set selector tabs (only when multi-result) -->
@@ -1383,7 +1499,7 @@
               {#if rs.error}<X class="size-3 shrink-0" aria-label="Failed" />{/if}
               Result {i + 1}
               {#if !rs.error}
-                <span class={cn('font-mono text-ui-3xs tabular-nums', rsActive ? 'text-muted-foreground' : 'text-muted-foreground/70')}>
+                <span class={cn('font-mono text-ui-3xs tabular-nums', rsActive ? 'text-muted-foreground' : 'text-muted-foreground')}>
                   {rs.columns.length ? formatCompactCount(rs.rows.length) : '✓'}
                 </span>
               {/if}
@@ -1434,17 +1550,30 @@
           </button>
         {/each}
       </div>
+      {#if spatialCols.length > 0 && outputView === 'table'}
+        <button
+          type="button"
+          onclick={() => setMapOpen(!mapOpen)}
+          aria-pressed={showMap}
+          aria-label="Map view"
+          title={showMap ? 'Hide the map' : 'Show the shapes on a map'}
+          class={cn('flex h-7 items-center gap-1 rounded-md px-1.5 transition-colors', showMap ? 'bg-accent text-foreground' : 'text-muted-foreground hover:bg-accent/50 hover:text-foreground')}
+        >
+          <MapIcon class="size-3.5 shrink-0" />
+          <span class="text-ui-xs @max-[40rem]/out:sr-only">{$tx('cmd.Map', 'Map')}</span>
+        </button>
+      {/if}
       {#if resultShown && currentDisplay.rows.length > 0}
         <span class="mx-1 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
         {#if findOpen}
-          <div class="flex h-7 items-center gap-1 rounded-md bg-muted/50 ps-2 pe-0.5" role="search">
+          <div class="search-shell flex h-7 items-center gap-1 ps-2 pe-0.5" role="search">
             <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
             <input
               bind:this={findInput}
               bind:value={findText}
               onkeydown={onFindKey}
-              placeholder="Find in results"
-              aria-label="Find in results"
+              placeholder={$tx('sql.findInResults', 'Find in results')}
+              aria-label={$tx('sql.findInResults', 'Find in results')}
               spellcheck="false"
               autocomplete="off"
               class="no-field-frame no-focus-ring h-full w-40 min-w-0 border-0 bg-transparent px-1 text-ui-xs text-foreground shadow-none outline-none placeholder:text-muted-foreground"
@@ -1467,7 +1596,7 @@
             type="button"
             class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
             title={tipText('Find in results', 'Show only the rows that contain some text.', [mod, 'F'])}
-            aria-label="Find in results"
+            aria-label={$tx('sql.findInResults', 'Find in results')}
             onclick={openFind}
           ><Search class="size-3.5 shrink-0" /></button>
         {/if}
@@ -1478,9 +1607,9 @@
       <!-- Right: what the run returned, then its actions. The facts read as one
            quiet line (`56k rows · 523 ms`); "Unordered" is a note about that
            line, not another number, so it is plain text after a dot. -->
-      <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5">
+      <div class="ml-auto flex shrink-0 items-center gap-3 pr-1.5 @max-[34rem]/out:gap-1">
         {#if resultShown && (currentDisplay.rows.length > 0 || currentDisplay.queryMs > 0 || currentDisplay.message)}
-          <div class="flex min-w-0 items-center gap-1.5 text-ui-xs text-muted-foreground">
+          <div class="flex min-w-0 items-center gap-1.5 text-ui-xs text-muted-foreground @max-[34rem]/out:hidden">
             {#if currentDisplay.rows.length > 0}
               <span class="tabular-nums">{formatCompactCount(currentDisplay.rows.length)} {currentDisplay.rows.length === 1 ? 'row' : 'rows'}</span>
             {/if}
@@ -1489,13 +1618,24 @@
               <span class="tabular-nums">{currentDisplay.queryMs} ms</span>
             {/if}
             {#if currentDisplay.message}
-              <span class="max-w-[160px] truncate">{currentDisplay.message}</span>
+              <span class="max-w-[10rem] truncate">{currentDisplay.message}</span>
             {/if}
           </div>
         {/if}
 
       <!-- The lists, beside the result views. They are the connection's, so
            every editor tab shows the same ones. -->
+      {#if onopenqueries}
+        <!-- History, Saved and Charts have their own tab now. -->
+        <button
+          type="button"
+          onclick={() => onopenqueries('history')}
+          class="flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs @max-[40rem]/out:px-1.5 whitespace-nowrap text-muted-foreground transition-colors hover:bg-accent/50 hover:text-foreground"
+          title={tipText('Queries', 'History, saved queries and saved charts, in their own tab', [mod, '⇧', 'B'])}
+        >
+          <History class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">{$tx('group.Queries', 'Queries')}</span>
+        </button>
+      {:else}
       <div class="flex items-center gap-1">
         {#each LIST_VIEWS as lv (lv.id)}
           {@const on = outputVisible && outputView === lv.id}
@@ -1511,6 +1651,7 @@
           >{lv.label}</button>
         {/each}
       </div>
+      {/if}
 
 
         <div class="flex items-center gap-0.5">
@@ -1523,7 +1664,7 @@
             aria-label={outputView === 'chart' ? 'Share chart' : 'Share results'}
             onclick={shareShown}
           >
-            <Share2 class="size-3.5 shrink-0" />Share
+            <Share2 class="size-3.5 shrink-0" /><span class="@max-[40rem]/out:sr-only">{$tx('sql.share', 'Share')}</span>
           </button>
         {/if}
         <!-- Export dropdown, only when there are results -->
@@ -1611,12 +1752,17 @@
                   <Square class="size-3 fill-current text-muted-foreground" />
                 </span>
                 <div class="flex flex-col gap-1">
-                  <p class="text-ui-sm font-medium text-foreground">Query stopped</p>
-                  <p class="text-ui-xs text-muted-foreground">It was cancelled before the results came back.</p>
+                  <p class="text-ui-sm font-medium text-foreground">{$tx('sql.stopped', 'Query stopped')}</p>
+                  <!-- HTTP engines and document stores have no way to stop a
+                       statement on the server: the app stopped waiting, the
+                       server did not necessarily stop working. -->
+                  <p class="max-w-sm text-ui-xs text-muted-foreground">{serverMayFinish
+                    ? 'Stroke stopped waiting, but this database cannot stop a running statement, so the server may still finish it.'
+                    : 'It was cancelled on the server before the results came back.'}</p>
                 </div>
                 <Button type="button" variant="outline" size="sm" disabled={!sql.trim()} onclick={() => handleRun(undefined)}>
                   <Play class="size-3.5 shrink-0" data-icon="inline-start" />
-                  Run again
+                  {$tx('sql.runAgain', 'Run again')}
                 </Button>
               </div>
             {:else if isNetworkError(shownError)}
@@ -1650,22 +1796,38 @@
             {/if}
           {:else if outputView === 'explain'}
             {#if explainLoading}
-              <TableLoading />
+              <!-- Analyze runs the statement for real, so it can take as long
+                   as the query does: say so, and offer the way out. -->
+              <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+                <Loader2 class="size-5 shrink-0 animate-spin text-muted-foreground" />
+                <p class="text-ui-sm text-muted-foreground">{explainAnalyze ? 'Running the query to measure it' : 'Reading the plan'}</p>
+                {#if explainAnalyze}
+                  <Button type="button" variant="outline" size="sm" onclick={stopExplain}>
+                    <Square class="size-3 shrink-0 fill-current" data-icon="inline-start" />
+                    {$tx('sql.stop', 'Stop')}
+                  </Button>
+                {/if}
+              </div>
             {:else if explainError}
               <div class="flex h-full flex-col items-center justify-center gap-2 px-6 text-center">
-                <p class="font-mono text-ui-xs text-destructive">{explainError}</p>
+                {#if /Query cancelled/i.test(explainError)}
+                  <p class="text-ui-sm font-medium text-foreground">{$tx('sql.planStopped', 'Plan stopped')}</p>
+                  <p class="text-ui-xs text-muted-foreground">The query was cancelled on the server and rolled back. Nothing was changed.</p>
+                {:else}
+                  <p class="font-mono text-ui-xs text-destructive">{explainError}</p>
+                {/if}
               </div>
             {:else if explainResult}
               <ExplainPlan result={explainResult} sql={sql} analyze={explainAnalyze} onrerun={(on) => void handleExplain(on)} onaskai={onaskaiprompt} />
             {:else}
               <div class="flex h-full flex-col items-center justify-center gap-2 text-center">
                 <ScanSearch class="size-6 text-muted-foreground" />
-                <p class="text-ui-sm text-muted-foreground">Click Explain to analyze the query plan</p>
+                <p class="text-ui-sm text-muted-foreground">{$tx('sql.clickExplain', 'Click Explain to analyze the query plan')}</p>
               </div>
             {/if}
           {:else if currentDisplay.columns.length > 0}
             {#if outputView === 'json'}
-              <JsonViewer json={jsonText} data={rowObjects} shownRows={rowObjects.length} rowCount={currentDisplay.rows.length} onshowtable={() => (outputView = 'table')} />
+              <JsonViewer json={jsonText} data={rowObjects} sharetitle={shareTitle()} shownRows={rowObjects.length} rowCount={currentDisplay.rows.length} onshowtable={() => (outputView = 'table')} />
             {:else if outputView === 'chart'}
               <ChartView
                 bind:this={chartViewRef}
@@ -1676,9 +1838,21 @@
                 oncharttypechange={(t) => (chartType = t)}
               />
             {:else}
+              <!-- A size container: in a narrow pane (results beside the editor)
+                   the map beside the grid left the grid one clipped column, so
+                   under 40rem the map goes under the grid instead. The query
+                   is on a wrapper: an element can't match its own container. -->
+              <div class="@container/rs h-full min-h-0 min-w-0">
+              <div class="flex h-full min-h-0 min-w-0 @max-[40rem]/rs:flex-col">
+              <!-- A flex column: the grid's root is `flex-1`, which a block
+                   parent ignores, so the grid grew to all its rows (14,086px
+                   for 500) and neither the wheel nor a map click could scroll it. -->
+              <div class="flex min-h-0 min-w-0 flex-1 flex-col">
               <DataTable
+                bind:this={resultTableRef}
                 columns={currentDisplay.columns}
                 rows={foundRows}
+                reloadToken={resultToken}
                 searchQuery={findOpen ? findText : ''}
                 loading={loading || sorting}
                 bind:selected
@@ -1690,17 +1864,56 @@
                 {onvisiblerange}
                 onretrywindows={onretrywindows}
                 readonly
+                emptyText="The query returned no rows"
               />
+              </div>
+              {#if showMap}
+                <div class="contents @max-[40rem]/rs:hidden">
+                <ResizeHandle
+                  axis="x"
+                  edge="start"
+                  onresizestart={() => (mapStartWidth = mapWidth)}
+                  onresize={(dx) => (mapWidth = Math.min(Math.max(260, mapStartWidth + dx), 1200))}
+                  onresizeend={() => { try { localStorage.setItem(MAP_WIDTH_KEY, String(mapWidth)) } catch { /* only the width is lost */ } }}
+                />
+                </div>
+                <div class="min-h-0 w-(--map-w) max-w-[70%] shrink-0 @max-[40rem]/rs:h-1/2 @max-[40rem]/rs:w-full @max-[40rem]/rs:max-w-none @max-[40rem]/rs:border-t @max-[40rem]/rs:border-border/40" style="--map-w:{mapWidth}px">
+                  <ResultMap
+                    columns={currentDisplay.columns}
+                    rows={mapRows}
+                    spatial={spatialCols}
+                    {selected}
+                    onselect={selectFromMap}
+                    onclose={() => setMapOpen(false)}
+                    partial={windowed && mapRows.filter(Boolean).length < mapRows.length}
+                  />
+                </div>
+              {/if}
+              </div>
+              </div>
             {/if}
           {:else if loading}
             <TableLoading />
+          {:else if resultSets.length > 1 || currentDisplay.message || currentDisplay.queryMs > 0}
+            <!-- A run with no columns to show (a write, or a query the engine
+                 returned no shape for): it said "Run a query" right after one. -->
+            <div class="flex h-full flex-col items-center justify-center gap-1 text-center">
+              <p class="text-ui-sm text-foreground">{currentDisplay.message || 'The query returned no rows'}</p>
+              {#if currentDisplay.queryMs > 0}<p class="text-ui-xs tabular-nums text-muted-foreground">{currentDisplay.queryMs} ms</p>{/if}
+            </div>
           {:else}
             <!-- T3-style empty state: one light line, one quiet hint. -->
             <div class="flex h-full flex-col items-center justify-center gap-1.5 text-center">
-              <p class="text-ui-lg font-normal tracking-tight text-foreground/90">Run a query</p>
+              <p class="text-ui-lg font-normal tracking-tight text-foreground/90">{$tx('sql.runAQuery', 'Run a query')}</p>
+              <!-- Mod+Enter runs every statement; Mod+R is the one at the cursor.
+                   This named Mod+Enter for the cursor's, which then ran all of them. -->
               <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
-                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{IS_MAC ? '⌘' : 'Ctrl'} ↵</kbd>
+                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{comboTitle('Mod+R')}</kbd>
                 runs the statement at the cursor
+              </p>
+              <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
+                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{comboTitle('Mod+Enter')}</kbd>
+                runs them all
               </p>
             </div>
           {/if}
@@ -1718,17 +1931,17 @@
       <Dialog.Title class="text-ui-sm font-semibold">{savedQueryName ? 'Save as a new query' : 'Save query'}</Dialog.Title>
       <Dialog.Description class="text-ui-xs text-muted-foreground">
         {savedQueryName
-          ? `A copy of "${savedQueryName}". This tab moves to the copy; ${mod}S then saves into it.`
-          : `Saved queries are kept per connection, under Saved in the results pane. After this, ${mod}S saves this tab into it.`}
+          ? `A copy of "${savedQueryName}". This tab moves to the copy; ${comboTitle('Mod+S')} then saves into it.`
+          : `Saved queries are kept per connection, ${savedWhere}. After this, ${comboTitle('Mod+S')} saves this tab into it.`}
       </Dialog.Description>
     </Dialog.Header>
     <div class="flex flex-col gap-2">
-      <Label for="save-query-name" class="text-ui-xs">Name</Label>
+      <Label for="save-query-name" class="text-ui-xs">{$tx('sql.name', 'Name')}</Label>
       <Input
         id="save-query-name"
         bind:value={saveQueryName}
         class="font-mono text-ui-sm"
-        placeholder="Query name"
+        placeholder={$tx('sql.queryName', 'Query name')}
         onkeydown={(e) => {
           if (e.key === 'Enter') void confirmSaveQuery()
           // Explicit Escape close: this dialog is opened programmatically from
@@ -1740,7 +1953,7 @@
     </div>
     <Dialog.Footer class="gap-2 sm:justify-end">
       <Button type="button" variant="outline" size="sm" onclick={() => (saveDialogOpen = false)}>
-        Cancel
+        {$tx('common.cancel', 'Cancel')}
       </Button>
       <Button
         type="button"

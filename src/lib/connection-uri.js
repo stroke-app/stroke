@@ -67,6 +67,11 @@ export function parsePostgresUri(uri) {
       sslmode === 'verify-full' ||
       url.searchParams.get('ssl') === 'true'
 
+    const mode = ['require', 'verify-ca', 'verify-full'].includes(sslmode ?? '') ? sslmode : ''
+    const sslRootCert = url.searchParams.get('sslrootcert') ?? ''
+    // Everything else rides along as written (application_name, options, ...).
+    const rest = new URLSearchParams(url.search)
+    for (const k of ['sslmode', 'ssl', 'sslrootcert']) rest.delete(k)
     return {
       host: url.hostname || '127.0.0.1',
       port: url.port || '5432',
@@ -74,6 +79,9 @@ export function parsePostgresUri(uri) {
       user: decodePart(url.username),
       password: decodePart(url.password),
       ssl,
+      sslMode: mode,
+      sslRootCert,
+      params: rest.toString(),
     }
   } catch {
     return { error: 'Could not parse connection URI' }
@@ -517,9 +525,11 @@ function detectByScheme(scheme, s, host, port) {
     case 'couchdbs':
       return { type: 'couchdb', uriType: 'couchdb', uri: (scheme === 'couchdbs' ? 'https' : 'http') + s.slice(scheme.length) }
     case 'cassandra':
-    case 'scylla':
     case 'cql':
       return { type: 'cassandra', uriType: 'cassandra' }
+    case 'scylla':
+    case 'scylladb':
+      return { type: 'scylladb', uriType: 'cassandra' }
     case 'http':
     case 'https':
     case 'ws':
@@ -678,8 +688,11 @@ export function connectionUrl(p) {
   const hp = (/** @type {string} */ h, /** @type {any} */ port) => `${h || 'localhost'}${port ? `:${port}` : ''}`
   switch (p.type) {
     case 'postgres':
-    case 'cockroachdb': {
-      const q = p.ssl ? `?sslmode=${p.sslMode || 'require'}` : ''
+    case 'cockroachdb':
+    case 'yugabytedb':
+    case 'alloydb': {
+      const parts = [p.ssl && `sslmode=${p.sslMode || 'require'}`, p.params].filter(Boolean)
+      const q = parts.length ? `?${parts.join('&')}` : ''
       return `postgresql://${auth(p.user, p.password)}${hp(p.host, p.port)}/${enc(p.database ?? '')}${q}`
     }
     case 'mysql':
@@ -712,7 +725,7 @@ export function connectionUrl(p) {
       return m ? `${m[1]}${auth(p.user, p.password)}${m[2]}` : p.url || ''
     }
     case 'cassandra':
-      return `cassandra://${auth(p.user, p.password)}${p.hosts || 'localhost:9042'}${p.keyspace ? `/${enc(p.keyspace)}` : ''}`
+      return `${p.flavor === 'scylladb' ? 'scylla' : 'cassandra'}://${auth(p.user, p.password)}${p.hosts || 'localhost:9042'}${p.keyspace ? `/${enc(p.keyspace)}` : ''}`
     case 'sqlite':
     case 'duckdb':
       return p.filePath || ''

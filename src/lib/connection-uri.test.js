@@ -273,6 +273,9 @@ describe('detectConnectionUri: everything people paste', () => {
     expect(d('couchdb://admin:pw@localhost:5984')).toMatchObject({ type: 'couchdb' })
     expect(parseConnectionUri('couchdb', 'http://admin:pw@localhost:5984')).toEqual({ couch: true, url: 'http://localhost:5984', user: 'admin', password: 'pw' })
     expect(d('cassandra://u:p@h1:9042,h2:9042/shop')).toMatchObject({ type: 'cassandra' })
+    // ScyllaDB's scheme opens the ScyllaDB entry, read by the same CQL parser.
+    expect(d('scylla://u:p@node1:9042/shop')).toMatchObject({ type: 'scylladb', uriType: 'cassandra' })
+    expect(d('scylladb://node1:9042')).toMatchObject({ type: 'scylladb' })
     expect(parseConnectionUri('cassandra', 'cassandra://u:p@h1:9042,h2:9042/shop')).toEqual({ cql: true, user: 'u', password: 'p', hosts: 'h1:9042,h2:9042', keyspace: 'shop' })
     expect(d('http://localhost:8123')).toMatchObject({ type: 'clickhouse' })
     expect(d('https://example.com')).toBeNull()
@@ -302,5 +305,35 @@ describe('connectionUrl: Copy URL, the reverse of paste', () => {
     expect(detectConnectionUri(connectionUrl({ type: 'oracle', host: 'h', port: '1521', serviceName: 'FREEPDB1', user: 'app', password: 'app' }))).toMatchObject({ type: 'oracle' })
     expect(connectionUrl({ type: 'sqlite', filePath: '/data/app.db' })).toBe('/data/app.db')
     expect(connectionUrl({ type: 'd1', databaseId: 'x' })).toBe('')
+  })
+})
+
+describe('ScyllaDB connections', () => {
+  it('copies a ScyllaDB connection as scylla://', async () => {
+    const { connectionUrl } = await import('./connection-uri.js')
+    const p = { type: 'cassandra', flavor: 'scylladb', user: 'u', password: 'p@ss', hosts: 'n1:9042,n2:9042', keyspace: 'shop' }
+    expect(connectionUrl(p)).toBe('scylla://u:p%40ss@n1:9042,n2:9042/shop')
+    expect(connectionUrl({ ...p, flavor: undefined })).toBe('cassandra://u:p%40ss@n1:9042,n2:9042/shop')
+  })
+})
+
+describe('Postgres URL parameters', () => {
+  it('keeps the verification level, the CA and every other parameter', async () => {
+    const { parsePostgresUri, connectionUrl } = await import('./connection-uri.js')
+    const p = /** @type {any} */ (parsePostgresUri('postgres://a:b@h:6543/db?sslmode=verify-full&sslrootcert=%2Fca.pem&application_name=stroke&options=endpoint%3Dep-1'))
+    expect(p.ssl).toBe(true)
+    expect(p.sslMode).toBe('verify-full')
+    expect(p.sslRootCert).toBe('/ca.pem')
+    expect(p.params).toBe('application_name=stroke&options=endpoint%3Dep-1')
+    const back = connectionUrl({ type: 'postgres', host: 'h', port: '6543', database: 'db', user: 'a', password: 'b', ssl: true, sslMode: 'verify-full', params: p.params })
+    expect(back).toBe('postgresql://a:b@h:6543/db?sslmode=verify-full&application_name=stroke&options=endpoint%3Dep-1')
+  })
+
+  it('reads a URL with no parameters as before', async () => {
+    const { parsePostgresUri } = await import('./connection-uri.js')
+    const p = /** @type {any} */ (parsePostgresUri('postgresql://u@localhost/app'))
+    expect(p.params).toBe('')
+    expect(p.sslMode).toBe('')
+    expect(p.ssl).toBe(false)
   })
 })

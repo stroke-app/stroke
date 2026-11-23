@@ -14,7 +14,7 @@ static D1_CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
 
 fn client() -> &'static reqwest::Client {
     D1_CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
+        crate::proxy::http_builder(crate::proxy::Kind::Database)
             .tcp_keepalive(std::time::Duration::from_secs(60))
             .pool_max_idle_per_host(10)
             .pool_idle_timeout(std::time::Duration::from_secs(90))
@@ -100,7 +100,7 @@ fn result_to_sql(result: D1QueryResult, elapsed: u64) -> Result<SqlResult, Strin
     };
 
     let message = if result.meta.changes > 0 {
-        Some(format!("{} row(s) affected", result.meta.changes))
+        Some(super::query::affected_message("", result.meta.changes as i64))
     } else {
         None
     };

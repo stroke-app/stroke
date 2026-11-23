@@ -83,6 +83,39 @@ describe('pages', () => {
     await settle()
   })
 
+  it('Find in database drops its results when the connection changes', async () => {
+    // Kept across connections, the page showed one database's matches on another.
+    const bridge = /** @type {any} */ (globalThis).__TAURI_INTERNALS__
+    const invoke = bridge.invoke
+    bridge.invoke = async (/** @type {string} */ cmd) => {
+      if (cmd === 'pg_get_table_rows') return { columns: [{ name: 'name', dataType: 'text' }], rows: [['Hammer']], total: 1, primaryKey: [] }
+      return null
+    }
+    try {
+      const { default: SearchPage } = await import('./SearchPage.svelte')
+      const target = document.createElement('div')
+      document.body.appendChild(target)
+      const { reactiveProps } = await import('../../test/reactive-props.svelte.js')
+      const props = reactiveProps({ tables: [{ name: 'products' }], schema: 'shop', active: true, connectionId: 'a' })
+      const c = mount(SearchPage, { target, props })
+      mounted.push(c)
+      await settle()
+      const input = /** @type {HTMLInputElement} */ (target.querySelector('input'))
+      input.value = 'ham'
+      input.dispatchEvent(new Event('input', { bubbles: true }))
+      input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+      await settle(); await new Promise((r) => setTimeout(r, 400)); await settle()
+      expect(target.textContent).toContain('Hammer')
+      props.connectionId = 'b'
+      props.tables = [{ name: 'people' }]
+      props.schema = 'public'
+      await settle()
+      expect(target.textContent).not.toContain('Hammer')
+    } finally {
+      bridge.invoke = invoke
+    }
+  })
+
   it('Connecting overlay', async () => {
     const { default: ConnectOverlay } = await import('./ConnectOverlay.svelte')
     const el = render(ConnectOverlay, { name: 'db', detail: 'host:5432', icon: 'postgres', oncancel: () => {} })
@@ -104,12 +137,73 @@ describe('dialogs', () => {
     expect(document.querySelector('[aria-label="Column 2 length"]')).toBeTruthy()
   })
 
+  it('Import data: choosing a file parses it without a state write in a derived', async () => {
+    // The parse ran in a $derived that also assigned parseError; Svelte stops
+    // the whole UI on that (state_unsafe_mutation) as soon as a file is chosen.
+    const bridge = /** @type {any} */ (globalThis).__TAURI_INTERNALS__
+    const invoke = bridge.invoke
+    bridge.invoke = async (/** @type {string} */ cmd) => {
+      if (cmd === 'plugin:dialog|open') return '/data/people.csv'
+      if (cmd === 'read_file') return 'id,name\n1,"Lovelace, Ada"\n2,Zoë\n'
+      return null
+    }
+    try {
+      const { default: ImportDataDialog } = await import('./ImportDataDialog.svelte')
+      render(ImportDataDialog, { open: true, schema: 'public', table: 'people', columns: [{ name: 'id', dataType: 'int4' }, { name: 'name', dataType: 'text' }], primaryKey: ['id'] })
+      await settle()
+      const choose = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Choose a file'))
+      expect(choose).toBeTruthy();
+      /** @type {HTMLElement} */ (choose).click()
+      await settle()
+      expect(document.body.textContent).toContain('people.csv')
+      expect(document.body.textContent).toContain('Import 2 rows')
+    } finally {
+      bridge.invoke = invoke
+    }
+  })
+
   it('Settings, and a search that matches nothing', async () => {
     const { default: SettingsDialog } = await import('./SettingsDialog.svelte')
     render(SettingsDialog, { open: true })
     await settle()
     const search = /** @type {HTMLInputElement | null} */ (document.querySelector('input[type="text"], input:not([type])'))
     expect(search).toBeTruthy()
+  })
+})
+
+describe('pages changed overnight', () => {
+  it('Data diff: Compare waits until both sides name a table', async () => {
+    const { default: DataDiffPage } = await import('./DataDiffPage.svelte')
+    render(DataDiffPage, {
+      schemas: ['public'], tables: [{ name: 'users' }], activeSchema: 'public',
+      connections: [{ id: 'c1', name: 'local', type: 'postgres' }], currentConnectionId: 'c1',
+    })
+    await settle()
+    expect(document.body.textContent).toContain('Compare any two data sources')
+    const compare = [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Compare')
+    expect(compare?.hasAttribute('disabled')).toBe(true)
+  })
+
+  it('Tab bar with many tabs', async () => {
+    const { default: TabBar } = await import('./TabBar.svelte')
+    const tabs = Array.from({ length: 30 }, (_, i) => ({ id: `t${i}`, kind: 'table', title: `table_${i}` }))
+    const el = render(TabBar, { tabs, activeTabId: 't29' })
+    await settle()
+    expect(el.querySelectorAll('[role="tab"]').length).toBe(30)
+  })
+
+  it('Query plan from a Postgres EXPLAIN', async () => {
+    const { default: ExplainPlan } = await import('./ExplainPlan.svelte')
+    const plan = [{ Plan: { 'Node Type': 'Limit', 'Total Cost': 2.5, 'Plan Rows': 5, Plans: [{ 'Node Type': 'Seq Scan', 'Relation Name': 'pings', 'Total Cost': 2, 'Plan Rows': 100 }] } }]
+    render(ExplainPlan, { result: { plan, driver: 'postgres' }, analyze: false })
+    await settle()
+    expect(document.body.textContent).toContain('Estimated')
+  })
+
+  it('Dashboard with nothing on it', async () => {
+    const { default: DashboardPage } = await import('./DashboardPage.svelte')
+    render(DashboardPage, { connection: { id: 'c1', name: 'local', type: 'postgres' }, active: true })
+    await settle()
   })
 })
 
@@ -124,7 +218,9 @@ describe('updates', () => {
     render(WhatsNewDialog, { open: true, current: '2.10.8-nightly.202611150842', previous: '2.10.6-nightly.1', releases })
     await settle()
     const text = document.body.textContent ?? ''
-    expect(text).toContain('Stroke Nightly')
+    // The short version with a Nightly badge; the full build is its tooltip.
+    expect(text).toContain('Stroke 2.10.8 Nightly')
+    expect(document.querySelector('[title="2.10.8-nightly.202611150842"]')).not.toBeNull()
     expect(text).toContain('2.10.7')
     expect(text).toContain('2 changes across 2 versions')
   })

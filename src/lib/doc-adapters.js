@@ -1,11 +1,14 @@
 // Per-engine adapters for DocBrowser.svelte: the one page that browses and
-// edits CouchDB, Cassandra, Firestore, MongoDB and Elasticsearch/OpenSearch. Each adapter turns that engine's API
+// edits CouchDB, Cassandra, Firestore, MongoDB, Elasticsearch/OpenSearch and
+// Neo4j, and reads InfluxDB. Each adapter turns that engine's API
 // into the same few verbs (list collections, load a page, save, delete). The
 // API calls are injected so the logic is unit-tested without Tauri.
 
 /**
  * @typedef {{
  *   engine: string,
+ *   readOnly?: boolean,
+ *   timeColumns?: string[],
  *   noun: { collection: string, collections: string, item: string, items: string },
  *   consoleLabel: string,
  *   filterPlaceholder: string,
@@ -191,6 +194,94 @@ export function cassandraAdapter(api) {
     template: (_t, meta) => Object.fromEntries((meta?.keys ?? []).map((/** @type {string} */ k) => [k, null])),
     keyChangeWarning: 'The primary key changed. This writes a new row and deletes the old one in one batch. Continue?',
     querySeed: (table) => `SELECT * FROM ${table} LIMIT 100`,
+  }
+}
+
+// ── Neo4j ───────────────────────────────────────────────────────────────────
+
+/**
+ * Neo4j (beta): labels are the collections, nodes the documents. `_id` is the
+ * node's element id and `_labels` its labels; both are read-only here.
+ * @param {{
+ *   labels: () => Promise<[string, number][]>,
+ *   describe: (label: string) => Promise<{ keys: string[], count: number }>,
+ *   page: (label: string, filter: string, skip: number, limit: number) => Promise<{ docs: Record<string, any>[], next: number | null }>,
+ *   save: (label: string, doc: Record<string, any>) => Promise<Record<string, any>>,
+ *   remove: (id: string) => Promise<void>,
+ * }} api
+ * @returns {DocAdapter}
+ */
+export function neo4jAdapter(api) {
+  /** @param {string} label */
+  const ident = (label) => (/^[A-Za-z_][A-Za-z0-9_]*$/.test(label) ? label : `\`${label.replace(/`/g, '``')}\``)
+  return {
+    engine: 'neo4j',
+    noun: { collection: 'Label', collections: 'Labels', item: 'Node', items: 'nodes' },
+    consoleLabel: 'Cypher',
+    filterPlaceholder: "n.born > 1900 AND n.name STARTS WITH 'A'",
+    filterHint: 'A Cypher WHERE condition on the node n',
+    listCollections: async () => (await api.labels()).map(([name]) => name),
+    async describe(label) {
+      const d = await api.describe(label)
+      // Properties aren't keys: a node is found by its element id (`_id`).
+      return { keys: [], meta: d, summary: [`${d.count ?? '?'} nodes`, `${d.keys.length} properties`] }
+    },
+    async load(label, { cursor, filter, size = PAGE_SIZE }) {
+      const p = await api.page(label, filter, Number(cursor) || 0, size)
+      return { docs: p.docs, cursor: p.next }
+    },
+    idOf: (doc) => String(doc._id ?? ''),
+    // The node to change is the one opened, whatever the editor did to `_id`.
+    save: (label, next, prev) => api.save(label, { ...next, _id: prev?._id ?? null }),
+    async remove(_label, doc) {
+      await api.remove(String(doc._id))
+    },
+    template: () => ({ name: '' }),
+    keyChangeWarning: 'A node keeps its element id: this saves the properties to the node you opened. Continue?',
+    querySeed: (label) => `MATCH (n:${ident(label)}) RETURN n LIMIT 100`,
+  }
+}
+
+// ── InfluxDB ────────────────────────────────────────────────────────────────
+
+/**
+ * InfluxDB (beta, read-only): measurements are the collections, points the
+ * documents, newest first.
+ * @param {{
+ *   measurements: () => Promise<string[]>,
+ *   describe: (m: string) => Promise<{ tags: string[], fields: { name: string, type: string }[] }>,
+ *   page: (m: string, filter: string, skip: number, limit: number) => Promise<{ docs: Record<string, any>[], next: number | null }>,
+ * }} api
+ * @param {string} version "1", "2" or "3"
+ * @returns {DocAdapter}
+ */
+export function influxAdapter(api, version) {
+  const sql = version === '3'
+  const readOnly = () => Promise.reject(new Error('InfluxDB is read-only in Stroke for now'))
+  return {
+    engine: 'influxdb',
+    readOnly: true,
+    // The series time arrives as an RFC 3339 string; it is a timestamp.
+    timeColumns: ['time', '_time'],
+    noun: { collection: 'Measurement', collections: 'Measurements', item: 'Point', items: 'points' },
+    consoleLabel: sql ? 'SQL' : 'InfluxQL / Flux',
+    filterPlaceholder: sql ? "host = 'a' AND time > now() - INTERVAL '1 hour'" : "host = 'a' AND time > now() - 1h",
+    filterHint: sql ? 'A SQL WHERE condition' : 'An InfluxQL WHERE condition',
+    listCollections: () => api.measurements(),
+    async describe(m) {
+      const d = await api.describe(m)
+      return { keys: [], meta: d, summary: [`${d.tags.length} tags`, `${d.fields.length} fields`] }
+    },
+    async load(m, { cursor, filter, size = PAGE_SIZE }) {
+      const p = await api.page(m, filter, Number(cursor) || 0, size)
+      return { docs: p.docs, cursor: p.next }
+    },
+    idOf: (doc) => JSON.stringify(doc),
+    save: readOnly,
+    remove: readOnly,
+    template: () => ({}),
+    keyChangeWarning: '',
+    querySeed: (m) => `SELECT * FROM "${m.replace(/"/g, sql ? '""' : '\\"')}" ORDER BY time DESC LIMIT 100`,
   }
 }
 
@@ -716,9 +807,10 @@ export function docField(v) {
  * Documents as the data grid's columns and rows: key fields first, a column
  * per field, each typed by its values (`mixed` when they disagree).
  * @param {Record<string, any>[]} docs @param {string[]} keys
+ * @param {string[]} [timeColumns] the engine's own time columns, typed as timestamps
  * @returns {{ columns: { name: string, data_type: string, nullable: boolean }[], rows: any[][] }}
  */
-export function docGrid(docs, keys) {
+export function docGrid(docs, keys, timeColumns = []) {
   const names = docColumns(docs, keys)
   const types = names.map(() => '')
   const rows = docs.map((d) =>
@@ -731,5 +823,9 @@ export function docGrid(docs, keys) {
       return f.value
     }),
   )
-  return { columns: names.map((name, i) => ({ name, data_type: types[i] || 'null', nullable: true })), rows }
+  const times = new Set(timeColumns)
+  return {
+    columns: names.map((name, i) => ({ name, data_type: times.has(name) && types[i] === 'string' ? 'timestamp' : types[i] || 'null', nullable: true })),
+    rows,
+  }
 }

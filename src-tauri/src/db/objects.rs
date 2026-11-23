@@ -72,7 +72,7 @@ pub fn kinds_for(conn: &ActiveConnection) -> &'static [&'static str] {
         ActiveConnection::Duckdb(_) => &["view", "function", "sequence"],
         // Materialized views come back from list_tables as views here.
         ActiveConnection::Clickhouse(_) => &["view", "function"],
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => &[],
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_) => &[],
     }
 }
 
@@ -245,7 +245,7 @@ pub async fn list_db_objects(state: Db<'_>, schema: String) -> Result<ObjectList
         ActiveConnection::LibSql(cfg) => sqlite_triggers_from(libsql_query(cfg, SQLITE_TRIGGERS, vec![]).await?),
         ActiveConnection::Duckdb(h) => list_duckdb(h, &schema).await?,
         ActiveConnection::Clickhouse(cfg) => list_clickhouse(cfg).await?,
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => vec![],
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_) => vec![],
     };
     Ok(ObjectListing { kinds, cascade, objects })
 }
@@ -689,7 +689,7 @@ pub async fn get_object_definition(
         }
         ActiveConnection::Duckdb(h) => def_duckdb(h, &kind, &schema, &name).await?,
         ActiveConnection::Clickhouse(cfg) => def_clickhouse(cfg, &kind, &schema, &name).await?,
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => return Err(unsupported(&kind)),
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_) => return Err(unsupported(&kind)),
     };
     Ok(format!("{}\n", def.trim_end()))
 }
@@ -910,7 +910,9 @@ async fn def_pg(pool: &PgPool, kind: &str, schema: &str, name: &str, args: &str,
 /// SHOW CREATE goes over the text protocol: MySQL won't prepare SHOW CREATE
 /// TRIGGER, nor any of the statements this module runs for routines.
 async fn mysql_show(pool: &MySqlPool, sql: &str, column: &str) -> Result<Option<String>, String> {
-    let rows = sqlx::raw_sql(sql).fetch_all(pool).await.map_err(|e| e.to_string())?;
+    // Backticks, so a definition copied out runs on a stock server too.
+    let mut conn = super::mysql::backtick_conn(pool).await?;
+    let rows = sqlx::Executor::fetch_all(&mut conn, sql).await.map_err(|e| e.to_string())?;
     Ok(rows.first().and_then(|r| my_text_named(r, column)))
 }
 
@@ -1147,7 +1149,7 @@ pub async fn drop_object(
             super::clickhouse::query(cfg, &sql).await.map_err(fail)?;
             Ok(sql)
         }
-        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) => Err(unsupported(&kind)),
+        ActiveConnection::Redis(_) | ActiveConnection::Posthog(_) | ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) | ActiveConnection::Oracle(_) | ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_) => Err(unsupported(&kind)),
     }
 }
 

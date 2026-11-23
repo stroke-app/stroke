@@ -1,4 +1,5 @@
 <script>
+  import { plural } from '$lib/utils.js'
   // Dropping a database is the least reversible thing in the app, so the confirm
   // asks for the name typed back rather than a single click, and shows the exact
   // statement that will run.
@@ -59,7 +60,7 @@
       <div class="min-w-0">
         <p class="text-ui-xs font-medium text-foreground">Close other sessions</p>
         <p class="mt-0.5 text-ui-2xs text-muted-foreground">
-          {sessions ? `${sessions} session(s) connected. ` : ''}{engineName} refuses the drop while anything is connected.
+          {sessions ? `${sessions} ${plural(sessions, 'session')} connected. ` : ''}{engineName} refuses the drop while anything is connected.
         </p>
       </div>
       <button
@@ -67,16 +68,10 @@
         role="switch"
         aria-checked={force}
         aria-label="Close other sessions"
-        class={cn(
-          'relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full border-2 border-transparent transition-colors focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
-          force ? 'bg-destructive' : 'bg-muted',
-        )}
+        class={cn('app-switch', force && '!bg-destructive')}
         onclick={() => (force = !force)}
       >
-        <span class={cn(
-          'pointer-events-none block size-3.5 rounded-full bg-white shadow-sm transition-transform duration-200',
-          force ? 'translate-x-[14px]' : 'translate-x-0',
-        )}></span>
+        <span class="app-switch-thumb"></span>
       </button>
     </div>
   {/if}

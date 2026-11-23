@@ -1028,7 +1028,7 @@
                     placeholder="sk-…"
                     bind:value={formApiKey}
                   />
-                  <button
+                  <button aria-label={showKey ? 'Hide key' : 'Show key'} title={showKey ? 'Hide key' : 'Show key'}
                     type="button"
                     class="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                     onclick={() => (showKey = !showKey)}
@@ -1095,7 +1095,7 @@
             </button>
           {/if}
           {#if editingId}
-            <button type="button"
+            <button aria-label="Delete this model" title="Delete this model" type="button"
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-destructive"
               onclick={() => void handleDelete(editingId)}>
               <Trash2 class="size-3.5 shrink-0" />

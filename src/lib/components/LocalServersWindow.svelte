@@ -15,7 +15,7 @@
   import DbIcon from './DbIcon.svelte'
   import { revealApp } from '$lib/app-reveal.js'
   import { detectOs } from '$lib/platform.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import {
     ENGINES, engineOf, nextPort, connectionFor, connectionUrl, envName, formatBytes, uptime,
     localEnv, listServers, createServer, startServer, stopServer, deleteServer, serverLogs, brewServices, brewAction,
@@ -98,7 +98,7 @@
       if (e.brew) brew = await brewServices().catch(() => [])
       if (selected && selected !== 'new' && !selected.startsWith('found:') && !s.some((x) => x.id === selected)) selected = s[0]?.id ?? null
     } catch (e) {
-      if (!quiet) toast.error('Could not list local servers', { description: String(e) })
+      if (!quiet) toast.error('Could not list local servers', { description: errorText(e) })
     } finally {
       loading = false
       loaded = true
@@ -149,7 +149,7 @@
       await refresh(true)
       selected = servers[0]?.id ?? null
     } catch (e) {
-      toast.error(`Could not delete ${s.name}`, { description: String(e) })
+      toast.error(`Could not delete ${s.name}`, { description: errorText(e) })
     } finally {
       busy = null
     }
@@ -160,7 +160,7 @@
     try {
       await connectIn(from, conn)
     } catch (e) {
-      toast.error('Could not open the connection', { description: String(e) })
+      toast.error('Could not open the connection', { description: errorText(e) })
     }
   }
 
@@ -219,7 +219,7 @@
       await updateServer(s.id, { autostart: on })
       await refresh(true)
     } catch (e) {
-      toast.error('Could not save that', { description: String(e) })
+      toast.error('Could not save that', { description: errorText(e) })
     }
   }
 
@@ -231,7 +231,7 @@
       await updateServer(current.id, { name: newName.trim() })
       await refresh(true)
     } catch (e) {
-      toast.error('Could not rename it', { description: String(e) })
+      toast.error('Could not rename it', { description: errorText(e) })
     } finally {
       renaming = false
     }
@@ -365,7 +365,7 @@
       brew = await brewServices()
       void scan()
     } catch (e) {
-      toast.error(`Could not ${b.running ? 'stop' : 'start'} ${b.name}`, { description: String(e) })
+      toast.error(`Could not ${b.running ? 'stop' : 'start'} ${b.name}`, { description: errorText(e) })
     } finally {
       busy = null
     }
@@ -669,7 +669,7 @@
                 <DropdownMenu.Content align="end" class="min-w-48">
                   <DropdownMenu.Item disabled={s.running} onclick={() => void editPort()}><Hash class="size-3.5 shrink-0" />Change port…</DropdownMenu.Item>
                   {#if s.runtime === 'native'}
-                    <DropdownMenu.Item onclick={() => void revealServer(s.id).catch((err) => toast.error('Could not open the folder', { description: String(err) }))}><FolderOpen class="size-3.5 shrink-0" />Show data folder</DropdownMenu.Item>
+                    <DropdownMenu.Item onclick={() => void revealServer(s.id).catch((err) => toast.error('Could not open the folder', { description: errorText(err) }))}><FolderOpen class="size-3.5 shrink-0" />Show data folder</DropdownMenu.Item>
                   {/if}
                   <DropdownMenu.Separator />
                   <DropdownMenu.Item variant="destructive" onclick={() => void remove(s)}><Trash2 class="size-3.5 shrink-0" />Delete with its data</DropdownMenu.Item>

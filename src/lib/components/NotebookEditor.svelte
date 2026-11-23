@@ -10,7 +10,7 @@
    * - {{name}} variables, filled from the bar under the toolbar before a run.
    * - Autosave once the notebook has a file; a recent list to come back to.
    */
-  import { onDestroy } from 'svelte'
+  import { onDestroy, tick } from 'svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { comboTitle } from '$lib/shortcuts.js'
@@ -191,8 +191,16 @@
   // ── Variables ────────────────────────────────────────────────────────────
   /** @param {string} [name] */
   function addVariable(name = '') {
+    const i = vars.length
     update({ variables: [...vars, { name, value: '' }] })
+    // Straight to what is still missing: the value for a name a cell already
+    // uses, the name for a blank one. Focus stayed on the button that vanished.
+    void tick().then(() => {
+      /** @type {HTMLInputElement | null | undefined} */ (varsBar?.querySelector(`[data-var="${i}"][data-part="${name ? 'value' : 'name'}"]`))?.focus()
+    })
   }
+  /** @type {HTMLElement | null} */
+  let varsBar = $state(null)
   /** @param {number} i @param {Partial<{ name: string, value: string }>} patch */
   function setVariable(i, patch) {
     update({ variables: vars.map((v, j) => (j === i ? { ...v, ...patch } : v)) })
@@ -441,13 +449,13 @@
 
   <!-- ── Variables ───────────────────────────────────────────────────────── -->
   {#if vars.length || undefinedVars.length}
-    <div class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/40 px-4 py-1.5">
+    <div bind:this={varsBar} class="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border/40 px-4 py-1.5">
       <span class="flex items-center gap-1 text-ui-3xs font-medium text-muted-foreground"><Braces class="size-3 shrink-0" />Variables</span>
       {#each vars as v, i (i)}
         <span class="flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background pr-0.5 pl-1.5 font-mono text-ui-2xs">
-          <input class="w-20 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.name} placeholder="name" aria-label="Variable name" oninput={(e) => setVariable(i, { name: /** @type {HTMLInputElement} */ (e.target).value.replace(/[^\w]/g, '') })} />
+          <input class="w-20 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.name} placeholder="name" aria-label="Variable name" data-var={i} data-part="name" oninput={(e) => setVariable(i, { name: /** @type {HTMLInputElement} */ (e.target).value.replace(/[^\w]/g, '') })} />
           <span class="text-muted-foreground">=</span>
-          <input class="w-28 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.value} placeholder="value" aria-label="Value of {v.name || 'variable'}" oninput={(e) => setVariable(i, { value: /** @type {HTMLInputElement} */ (e.target).value })} />
+          <input class="w-28 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.value} placeholder="value" aria-label="Value of {v.name || 'variable'}" data-var={i} data-part="value" oninput={(e) => setVariable(i, { value: /** @type {HTMLInputElement} */ (e.target).value })} />
           <button type="button" class="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Remove variable" onclick={() => removeVariable(i)}><X class="size-3 shrink-0" /></button>
         </span>
       {/each}
@@ -523,7 +531,7 @@
           <button type="button" onclick={() => { const c = addCell(notebook.cells.length - 1, 'markdown'); focusCell(c.id) }} class="flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-3 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"><Plus class="size-3.5 shrink-0" />Text</button>
         </div>
         <p class="pb-16 text-center text-ui-3xs text-muted-foreground">
-          {comboTitle('Mod+Enter')} run · ⇧↵ run and next · {comboTitle('Mod+Shift+Enter')} run all · write <span class="font-mono">{'{{name}}'}</span> in a query for a variable
+          {comboTitle('Mod+Enter')} run · {comboTitle('Shift+Enter')} run and next · {comboTitle('Mod+Shift+Enter')} run all · write <span class="font-mono">{'{{name}}'}</span> in a query for a variable
         </p>
       </div>
     {/if}

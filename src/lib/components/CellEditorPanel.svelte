@@ -1,4 +1,5 @@
 <script>
+  import { layoutJson, layoutJsonText } from '$lib/json-layout.js'
   import { Button } from '$lib/components/ui/button/index.js'
   /**
    * The focused cell, full size, docked under the grid.
@@ -79,35 +80,25 @@
   } = $props()
 
   /**
-   * The value as text, pretty-printed when it is JSON and small enough to be
-   * worth it.
+   * The value as text, laid out for reading when it is JSON.
    *
-   * Indentation is not free. A jsonb holding a file as an array of byte
-   * integers pretty-prints to one number per line: 16MB of compact JSON became
-   * 41.8MB across three million lines, and that is a textarea the webview
-   * cannot lay out. Past the line, the text stays exactly as it arrived.
+   * Neither stock form works at size. Indented, a jsonb holding a file as an
+   * array of byte integers became one number per line (16MB of JSON across
+   * three million lines); compact, it is a single line of a million characters
+   * or more, which the editor stops painting once scrolled sideways. layoutJson
+   * keeps every line short at any size: objects one key per line, runs of
+   * scalars packed into lines. Whitespace only, so the value is unchanged.
    */
   function toText(/** @type {unknown} */ v) {
     if (v === null || v === undefined) return ''
     if (typeof v === 'object') {
-      try {
-        const compact = JSON.stringify(v)
-        return compact.length > PRETTY_PRINT_LIMIT ? compact : JSON.stringify(v, null, 2)
-      } catch { return String(v) }
+      try { return layoutJson(v) } catch { return String(v) }
     }
     const s = String(v)
-    if (s.length > PRETTY_PRINT_LIMIT) return s
-    // A JSON string stored in a text column is still JSON to the person reading
-    // it, so it opens formatted rather than as one 4,000-character line.
-    const t = s.trim()
-    if ((t.startsWith('{') && t.endsWith('}')) || (t.startsWith('[') && t.endsWith(']'))) {
-      try { return JSON.stringify(JSON.parse(t), null, 2) } catch { /* not JSON after all */ }
-    }
-    return s
+    // A JSON string stored in a text column (or a value that arrived as text)
+    // is still JSON to the person reading it.
+    return layoutJsonText(s) ?? s
   }
-
-  /** Past this many characters, formatting costs more than it gives back. */
-  const PRETTY_PRINT_LIMIT = 512 * 1024
 
   let draft = $state('')
   let original = $state('')
@@ -243,7 +234,15 @@
    */
   const HEAVY_VALUE_CHARS = 2 * 1024 * 1024
 
-  const heavy = $derived(draft.length > HEAVY_VALUE_CHARS)
+  /**
+   * Past this, one line is wider than the editor can paint: it lays a line out
+   * whole, and the webview drew nothing once a million-character row was
+   * scrolled sideways. Only a value that is one giant string gets here now
+   * (JSON is laid out into short lines), and the paged view wraps it.
+   */
+  const MAX_EDITOR_LINE = 100_000
+
+  const heavy = $derived(draft.length > HEAVY_VALUE_CHARS || maxLineLen > MAX_EDITOR_LINE)
 
   /**
    * How much of a heavy value the raw pane shows at once.
@@ -267,8 +266,10 @@
    * keystroke would cut the character just typed off the far edge.
    */
   let windowDraft = $state('')
-  let windowStart = 0
-  let windowLen = 0
+  // State, not plain variables: rawWindowEnd and the editor's "characters X to
+  // Y" label derive from them, and stayed at the first window when paging.
+  let windowStart = $state(0)
+  let windowLen = $state(0)
   $effect(() => {
     void seedToken
     const at = rawOffset

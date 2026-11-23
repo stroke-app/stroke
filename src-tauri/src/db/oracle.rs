@@ -28,6 +28,8 @@ use std::time::Instant;
 pub struct OracleSession {
     conn: Connection,
     lock: Mutex<()>,
+    /// How this session was opened, so a transaction can open its own.
+    cfg: OracleConfig,
     /// What the grid needs to know about a table besides its rows, by
     /// (schema, table). The ALL_* dictionary views behind it are the slow part
     /// of a page fetch (seconds for a user who sees every schema), and none of
@@ -225,24 +227,51 @@ fn ensure_client(explicit_dir: &str) -> Result<(), String> {
 }
 
 /// Why Instant Client in `dir` would not load, and what fixes it.
+///
+/// A missing dependency surfaces as "libclntsh.so: cannot open shared object
+/// file", naming the library that was found rather than the one that wasn't,
+/// so libaio is probed for directly instead of looked for in the message.
 fn load_error(dir: &Path, msg: &str) -> String {
-    let hint = if msg.contains("libaio") {
-        " Instant Client needs libaio: install it (libaio1, or libaio1t64 on Ubuntu 24.04 and later, where \
-         libaio.so.1 also needs a link: sudo ln -s /usr/lib/x86_64-linux-gnu/libaio.so.1t64 /usr/lib/x86_64-linux-gnu/libaio.so.1)."
-            .to_string()
-    } else if cfg!(target_os = "linux") && msg.contains("cannot open shared object file") {
+    let missing_dep = cfg!(target_os = "linux") && msg.contains("cannot open shared object file");
+    let mut hint = String::new();
+    if msg.contains("libaio") || (missing_dep && !libaio_loads()) {
+        let lib = format!("/usr/lib/{}-linux-gnu", std::env::consts::ARCH);
+        hint.push_str(&format!(
+            " Instant Client needs libaio: install it (libaio1, or libaio1t64 on Ubuntu 24.04 and later, where \
+             libaio.so.1 also needs a link: sudo ln -s {lib}/libaio.so.1t64 {lib}/libaio.so.1)."
+        ));
+    }
+    if missing_dep {
         // Linux Instant Client libraries carry no $ORIGIN run path, so their
         // own dependencies (libnnz.so) resolve only through the linker's path.
-        format!(
+        hint.push_str(&format!(
             " On Linux the Instant Client folder must also be on the library path: run \
              sudo sh -c 'echo {} > /etc/ld.so.conf.d/oracle-instantclient.conf' && sudo ldconfig, then restart Stroke \
              (or start Stroke with LD_LIBRARY_PATH set to that folder).",
             dir.display()
-        )
-    } else {
-        String::new()
-    };
+        ));
+    }
     format!("Could not load Oracle Instant Client from \"{}\": {msg}{hint}", dir.display())
+}
+
+/// Whether the dynamic linker can load libaio.so.1, which Instant Client links.
+#[cfg(target_os = "linux")]
+fn libaio_loads() -> bool {
+    let name = c"libaio.so.1";
+    // SAFETY: dlopen with a valid C string; the handle is closed straight away.
+    unsafe {
+        let h = libc::dlopen(name.as_ptr(), libc::RTLD_LAZY | libc::RTLD_LOCAL);
+        if h.is_null() {
+            return false;
+        }
+        libc::dlclose(h);
+    }
+    true
+}
+
+#[cfg(not(target_os = "linux"))]
+fn libaio_loads() -> bool {
+    true
 }
 
 // ── Connect ──────────────────────────────────────────────────────────────────
@@ -349,7 +378,7 @@ pub async fn connect(cfg: &OracleConfig) -> Result<OracleHandle, String> {
             .connect()
             .map_err(|e| explain_connect_error(&e.to_string()))?;
         conn.execute(SESSION_SETUP, &[]).map_err(|e| format!("Oracle session setup failed: {}", clean_err(&e.to_string())))?;
-        Ok(std::sync::Arc::new(OracleSession { conn, lock: Mutex::new(()), meta: Mutex::new(HashMap::new()) }))
+        Ok(std::sync::Arc::new(OracleSession { conn, lock: Mutex::new(()), meta: Mutex::new(HashMap::new()), cfg }))
     })
     .await
     .map_err(|e| format!("Oracle connect task failed: {e}"))?
@@ -920,13 +949,118 @@ fn run_one(conn: &Connection, sql: &str, binds: &[Bind]) -> Result<SqlResult, St
     stmt.execute(&params).map_err(ora_err)?;
     let (row_count, message) = if stmt.is_dml() {
         let n = stmt.row_count().unwrap_or(0) as i64;
-        (Some(n), Some(format!("{n} row(s) affected")))
+        (Some(n), Some(super::query::affected_message(sql, n)))
     } else if stmt.is_plsql() {
         (None, Some("PL/SQL procedure successfully completed".to_string()))
     } else {
         (None, Some("Statement executed".to_string()))
     };
     Ok(SqlResult { columns: vec![], rows: vec![], row_count, message, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
+}
+
+/// Whether `stream_into` takes this statement (a query with rows).
+pub(crate) fn reads(sql: &str) -> bool {
+    reads_only(sql) && !split_statements(sql).is_empty() && split_statements(sql).len() == 1
+}
+
+/// A query, streamed into `sink` a batch at a time while Oracle fetches it.
+///
+/// `run_one` collected every row before the grid saw one, so a large result
+/// stopped at the collect budget. Here the session's thread fetches 500 rows
+/// per round trip and hands them over in batches of 1,000, so memory stays
+/// flat whatever the size. Stop breaks the call on the server.
+pub async fn stream_into(
+    handle: &OracleHandle,
+    sql: &str,
+    sink: &mut super::query::RowSink,
+    stop: &super::stop::Stop,
+) -> Result<SqlResult, String> {
+    enum Msg {
+        Columns(Vec<ColumnInfo>),
+        Rows(Vec<Vec<Value>>),
+    }
+    const BATCH: usize = 1_000;
+    let stmt_sql = split_statements(sql).into_iter().next().unwrap_or_default();
+    let (tx, mut rx) = tokio::sync::mpsc::channel::<Msg>(8);
+    let reader = run_blocking(handle, move |conn| {
+        let mut stmt = conn.statement(&stmt_sql).fetch_array_size(500).build().map_err(ora_err)?;
+        let rs = stmt.query(&[]).map_err(ora_err)?;
+        let infos = rs.column_info().to_vec();
+        let columns: Vec<ColumnInfo> = infos
+            .iter()
+            .map(|c| {
+                let mut ci = ColumnInfo::new(c.name().to_string(), type_label(c.oracle_type()));
+                ci.nullable = c.nullable();
+                ci
+            })
+            .collect();
+        if tx.blocking_send(Msg::Columns(columns)).is_err() {
+            return Ok(());
+        }
+        let mut batch = Vec::with_capacity(BATCH);
+        for row in rs {
+            let row = row.map_err(ora_err)?;
+            batch.push(row.sql_values().iter().zip(infos.iter()).map(|(v, c)| cell_to_json(v, c.oracle_type())).collect());
+            if batch.len() >= BATCH && tx.blocking_send(Msg::Rows(std::mem::replace(&mut batch, Vec::with_capacity(BATCH)))).is_err() {
+                return Ok(());
+            }
+        }
+        if !batch.is_empty() {
+            let _ = tx.blocking_send(Msg::Rows(batch));
+        }
+        Ok(())
+    });
+    tokio::pin!(reader);
+    let t0 = Instant::now();
+    let mut columns = Vec::new();
+    let mut total = 0usize;
+    let mut sink_err: Option<String> = None;
+    let mut reader_out: Option<Result<(), String>> = None;
+    let mut stopped = false;
+    loop {
+        tokio::select! {
+            msg = rx.recv() => match msg {
+                Some(Msg::Columns(c)) => columns = c,
+                Some(Msg::Rows(rows)) => {
+                    if sink_err.is_some() || stopped {
+                        continue;
+                    }
+                    for r in rows {
+                        if total == 0 {
+                            if let Err(e) = sink.start(columns.clone()) { sink_err = Some(e); break; }
+                        }
+                        if let Err(e) = sink.push(r) { sink_err = Some(e); break; }
+                        total += 1;
+                    }
+                    if sink_err.is_some() {
+                        rx.close();
+                    }
+                }
+                None => break,
+            },
+            out = &mut reader, if reader_out.is_none() => reader_out = Some(out),
+            _ = stop.wait(), if !stopped => {
+                stopped = true;
+                rx.close();
+                cancel(handle).await;
+            }
+        }
+    }
+    let out = match reader_out {
+        Some(o) => o,
+        None => reader.await,
+    };
+    if stopped {
+        return Err(super::query::QUERY_CANCELLED.into());
+    }
+    if let Some(e) = sink_err {
+        return Err(e);
+    }
+    out?;
+    if total > 0 {
+        sink.finish()?;
+    }
+    Ok(SqlResult { columns, rows: vec![], row_count: Some(total as i64), message: None, query_ms: t0.elapsed().as_millis() as u64, sql: sql.to_string() })
 }
 
 /// `run_one`, committed when it wrote (a query has nothing to commit).
@@ -941,6 +1075,45 @@ fn run_commit(conn: &Connection, sql: &str, binds: &[Bind]) -> Result<SqlResult,
         }
     }
     r
+}
+
+// ── Explicit transactions (db::tx) ───────────────────────────────────────────
+//
+// A transaction runs on a session of its own, opened beside the shared one:
+// on the shared session every grid page and sidebar query would have joined
+// it. Oracle opens a transaction with the first statement, so there is no
+// BEGIN; statements run without the commit execute_sql adds.
+
+/// A new session on the same server and login, for a transaction.
+pub async fn open_tx_session(handle: &OracleHandle) -> Result<OracleHandle, String> {
+    connect(&handle.cfg).await
+}
+
+/// Statements inside the open transaction: nothing commits until tx_commit.
+pub async fn execute_in_tx(handle: &OracleHandle, sql: &str) -> Result<SqlResult, String> {
+    let stmts = split_statements(sql);
+    if stmts.is_empty() {
+        return Err("Query is empty".into());
+    }
+    let original = sql.trim().to_string();
+    run_blocking(handle, move |conn| {
+        let mut last = None;
+        for s in &stmts {
+            last = Some(run_one(conn, s, &[])?);
+        }
+        let mut out = last.expect("non-empty");
+        out.sql = original;
+        Ok(out)
+    })
+    .await
+}
+
+pub async fn commit(handle: &OracleHandle) -> Result<(), String> {
+    run_blocking(handle, |conn| conn.commit().map_err(ora_err)).await
+}
+
+pub async fn rollback(handle: &OracleHandle) -> Result<(), String> {
+    run_blocking(handle, |conn| conn.rollback().map_err(ora_err)).await
 }
 
 /// Run a script: each statement in turn, the last one's result returned.
@@ -1811,7 +1984,7 @@ mod live_tests {
         let url = std::env::var("STROKE_ORACLE_TEST").ok()?;
         let (creds, cs) = url.split_once('@')?;
         let (user, password) = creds.split_once('/')?;
-        Some(OracleConfig {
+        Some(OracleConfig { ssh: None,
             name: "live".into(),
             host: String::new(),
             port: 1521,
@@ -1862,8 +2035,20 @@ mod live_tests {
 mod tests {
     use super::*;
 
+    #[test]
+    fn load_error_names_libaio_when_it_is_missing() {
+        let msg = "DPI-1047: Cannot locate a 64-bit Oracle Client library: \"libclntsh.so: cannot open shared object file: No such file or directory\"";
+        let e = load_error(Path::new("/opt/ic"), msg);
+        assert!(e.contains("library path"), "{e}");
+        if cfg!(target_os = "linux") {
+            assert_eq!(e.contains("needs libaio"), !libaio_loads(), "{e}");
+            assert!(!e.contains("needs libaio") || e.contains(std::env::consts::ARCH), "{e}");
+        }
+        assert!(load_error(Path::new("/opt/ic"), "libaio.so.1: cannot open").contains("needs libaio"));
+    }
+
     fn cfg() -> OracleConfig {
-        OracleConfig {
+        OracleConfig { ssh: None,
             name: "t".into(),
             host: "db.example.com".into(),
             port: 1521,
@@ -2050,7 +2235,7 @@ mod tests {
         let url = std::env::var("STROKE_ORACLE_TEST_URL").ok()?;
         let (creds, cs) = url.split_once('@')?;
         let (user, password) = creds.split_once('/')?;
-        Some(OracleConfig {
+        Some(OracleConfig { ssh: None,
             name: "live".into(),
             host: String::new(),
             port: 1521,
@@ -2230,7 +2415,7 @@ mod tests {
         assert_eq!(exact_row_count(&h, "STROKE", "STROKE_TYPES").await.unwrap(), 28);
 
         // Messages, the explain plan and an error the UI can show.
-        assert_eq!(exec(&h, "UPDATE stroke_types SET ratio = 1 WHERE id < 5;").await.message.as_deref(), Some("4 row(s) affected"));
+        assert_eq!(exec(&h, "UPDATE stroke_types SET ratio = 1 WHERE id < 5;").await.message.as_deref(), Some("4 rows affected"));
         assert_eq!(exec(&h, "begin null; end;").await.message.as_deref(), Some("PL/SQL procedure successfully completed"));
         let plan = explain_lines(&h, "SELECT * FROM stroke_types WHERE id = 5").await.unwrap();
         assert!(plan.iter().any(|l| l.contains("INDEX UNIQUE SCAN") || l.contains("TABLE ACCESS")), "{plan:?}");

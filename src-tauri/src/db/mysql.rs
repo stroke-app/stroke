@@ -271,6 +271,50 @@ fn searchable_columns(columns: &[(String, String)], term: &str) -> Vec<String> {
         .collect()
 }
 
+/// The values of a MySQL `enum('a','b','it''s')` column type, in order.
+fn enum_values(column_type: &str) -> Option<Vec<String>> {
+    let t = column_type.trim();
+    let inner = t.strip_prefix("enum(").or_else(|| t.strip_prefix("ENUM("))?.strip_suffix(')')?;
+    let mut out = Vec::new();
+    let mut chars = inner.chars().peekable();
+    loop {
+        while chars.peek().is_some_and(|c| *c == ',' || c.is_whitespace()) {
+            chars.next();
+        }
+        if chars.next()? != '\'' {
+            return None;
+        }
+        let mut v = String::new();
+        loop {
+            match chars.next()? {
+                '\'' if chars.peek() == Some(&'\'') => {
+                    chars.next();
+                    v.push('\'');
+                }
+                '\'' => break,
+                '\\' => v.push(chars.next()?),
+                c => v.push(c),
+            }
+        }
+        out.push(v);
+        if chars.peek().is_none() {
+            return Some(out);
+        }
+    }
+}
+
+#[cfg(test)]
+mod enum_values_tests {
+    #[test]
+    fn reads_an_enum_column_type() {
+        assert_eq!(super::enum_values("enum('book','game','tool')").unwrap(), ["book", "game", "tool"]);
+        // As information_schema writes them: a quote doubled, a backslash escaped.
+        assert_eq!(super::enum_values(r"ENUM('it''s', 'a,b', 'x\\y')").unwrap(), ["it's", "a,b", r"x\y"]);
+        assert_eq!(super::enum_values("varchar(20)"), None);
+        assert_eq!(super::enum_values("enum('open"), None);
+    }
+}
+
 #[cfg(test)]
 fn build_where(columns: &[String], search: Option<&str>, search_is_regex: bool, search_case_sensitive: bool, filters: &[RowFilter]) -> Result<WhereClause, String> {
     build_where_searching(columns, None, search, search_is_regex, search_case_sensitive, filters)
@@ -442,7 +486,7 @@ pub async fn get_table_rows(
     // fetch; and a plain open (no search, filter or sort) doesn't need the column
     // list to build its query, so the column metadata joins it too: one stage.
     let meta_q = sqlx::query(
-        "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA, COLUMN_DEFAULT \
+        "SELECT COLUMN_NAME, DATA_TYPE, IS_NULLABLE, EXTRA, COLUMN_DEFAULT, COLUMN_TYPE \
          FROM information_schema.COLUMNS \
          WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION",
     )
@@ -570,7 +614,26 @@ pub async fn get_table_rows(
             .collect()
     };
 
+    // The catalog's type over the wire's: a result names a binary-collation
+    // text column "BLOB", which is how MariaDB's JSON (LONGTEXT, utf8mb4_bin)
+    // read in the grid header, and an ENUM can come back as plain CHAR.
+    let declared: HashMap<String, String> = meta_rows
+        .iter()
+        .filter_map(|r| Some((my_text(r, 0)?, my_text(r, 1)?.to_lowercase())))
+        .collect();
+    // An ENUM's values, so its cell edits from a list as a Postgres enum does;
+    // it opened as free text, where a typo is an error from the server.
+    let enums: HashMap<String, Vec<String>> = meta_rows
+        .iter()
+        .filter_map(|r| Some((my_text(r, 0)?, enum_values(&my_text(r, 5)?)?)))
+        .collect();
     for col in &mut columns {
+        if let Some(t) = declared.get(&col.name).filter(|t| !t.is_empty()) {
+            col.data_type = t.clone();
+        }
+        if let Some(v) = enums.get(&col.name) {
+            col.enum_values = Some(v.clone());
+        }
         if let Some(f) = flags_map.get(&col.name) {
             col.nullable = f.nullable;
             col.auto_generated = f.auto_generated;
@@ -661,20 +724,7 @@ pub async fn execute_sql(
         .await
         .map_err(|e| format!("Failed to acquire connection: {e}"))?;
     if let Some(rx) = cancel_rx {
-        if let Ok(conn_id) = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()")
-            .fetch_one(&mut *conn)
-            .await
-        {
-            let cancel_pool = pool.clone();
-            tokio::spawn(async move {
-                if rx.await.is_ok() {
-                    // conn_id is a numeric id from the server; safe to inline.
-                    let _ = sqlx::query(&format!("KILL QUERY {conn_id}"))
-                        .execute(&cancel_pool)
-                        .await;
-                }
-            });
-        }
+        arm_kill(pool, &mut conn, rx).await;
     }
 
     // A script (`CREATE DATABASE x; USE x; CREATE TABLE …`) cannot go through
@@ -702,6 +752,76 @@ pub async fn execute_sql(
         restore_default_database(pool, &mut conn).await;
     }
     result
+}
+
+/// Arm Stop for a run on `conn`: `KILL QUERY` its connection id from another
+/// pooled connection when `rx` fires. The run's end drops the sender, which
+/// disarms it.
+async fn arm_kill(pool: &MySqlPool, conn: &mut sqlx::pool::PoolConnection<sqlx::MySql>, rx: tokio::sync::oneshot::Receiver<()>) {
+    if let Ok(conn_id) = sqlx::query_scalar::<_, u64>("SELECT CONNECTION_ID()").fetch_one(&mut **conn).await {
+        let cancel_pool = pool.clone();
+        tokio::spawn(async move {
+            if rx.await.is_ok() {
+                // conn_id is a numeric id from the server; safe to inline.
+                let _ = sqlx::query(&format!("KILL QUERY {conn_id}")).execute(&cancel_pool).await;
+            }
+        });
+    }
+}
+
+/// One row-returning statement, streamed into the console's sink as it
+/// arrives instead of collected: a 2 GB result no longer needs 2 GB here, a
+/// JSON reply as large, and the window's heap after that. Rows go to the
+/// result store when the sink has one. Stop is KILL QUERY, as in `execute_sql`.
+pub async fn stream_into(
+    pool: &MySqlPool,
+    sql: &str,
+    sink: &mut super::query::RowSink,
+    cancel_rx: tokio::sync::oneshot::Receiver<()>,
+) -> Result<SqlResult, String> {
+    let started = Instant::now();
+    let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {e}"))?;
+    arm_kill(pool, &mut conn, cancel_rx).await;
+    let mut columns: Vec<ColumnInfo> = Vec::new();
+    let mut total = 0usize;
+    let mut text_protocol = false;
+    loop {
+        let mut stream = if text_protocol { sqlx::Executor::fetch(&mut *conn, sql) } else { sqlx::query(sql).fetch(&mut *conn) };
+        let outcome: Result<(), sqlx::Error> = async {
+            while let Some(row) = stream.try_next().await? {
+                if total == 0 {
+                    columns = row.columns().iter().map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase())).collect();
+                    sink.start(columns.clone()).map_err(sqlx::Error::Protocol)?;
+                }
+                sink.push((0..row.len()).map(|i| cell_to_json(&row, i)).collect()).map_err(sqlx::Error::Protocol)?;
+                total += 1;
+            }
+            Ok(())
+        }
+        .await;
+        drop(stream);
+        match outcome {
+            // Some statements can't be prepared: run them again as text, once,
+            // if nothing has streamed yet.
+            Err(e) if total == 0 && !text_protocol && unsupported_in_prepared(&e) => text_protocol = true,
+            Err(e) => return Err(format!("Query failed: {e}")),
+            Ok(()) => break,
+        }
+    }
+    if total > 0 {
+        sink.finish()?;
+    } else {
+        // No row to read the columns off: an empty SELECT showed no headers.
+        columns = describe_columns(&mut conn, sql).await;
+    }
+    Ok(SqlResult {
+        columns,
+        rows: vec![],
+        row_count: Some(total as i64),
+        message: None,
+        query_ms: started.elapsed().as_millis() as u64,
+        sql: sql.to_string(),
+    })
 }
 
 /// Put a connection that ran `USE` back on the pool's own database. Left as it
@@ -768,10 +888,33 @@ async fn run_script_on(
         columns: vec![],
         rows: vec![],
         row_count: Some(affected),
-        message: Some(format!("{n} statements ran, {affected} row(s) affected")),
+        message: Some(format!("{n} statements ran, {}", super::query::affected_message("", affected))),
         query_ms,
         sql: joined,
     })
+}
+
+/// A connection that writes DDL the way a stock server reads it. The app's pool
+/// turns on ANSI_QUOTES (see connection.rs), which makes SHOW CREATE use double
+/// quotes: a dump restored with the mysql client, or DDL pasted elsewhere,
+/// failed on CREATE TABLE "products". This one has ANSI_QUOTES off, and is
+/// detached so the changed mode never goes back into the pool.
+pub(crate) async fn backtick_conn(pool: &MySqlPool) -> Result<sqlx::MySqlConnection, String> {
+    let mut conn = pool.acquire().await.map_err(|e| format!("Failed to acquire connection: {e}"))?.detach();
+    sqlx::query("SET SESSION sql_mode = TRIM(BOTH ',' FROM REPLACE(CONCAT(',', @@SESSION.sql_mode, ','), ',ANSI_QUOTES,', ','))")
+        .execute(&mut conn)
+        .await
+        .map_err(|e| format!("Failed to set sql_mode: {e}"))?;
+    Ok(conn)
+}
+
+/// A statement's result columns, without running it again: what an empty result
+/// reports. Empty when the server can't prepare it (SHOW and the like).
+async fn describe_columns(conn: &mut sqlx::MySqlConnection, sql: &str) -> Vec<ColumnInfo> {
+    match sqlx::Executor::describe(conn, sql).await {
+        Ok(d) => d.columns().iter().map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase())).collect(),
+        Err(_) => Vec::new(),
+    }
 }
 
 /// A statement's first line, cut to 120 characters, for an error message.
@@ -798,17 +941,15 @@ async fn run_one_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<SqlRe
             other => other,
         }
         .map_err(|e| format!("Query failed: {e}"))?;
+        // An empty result has no row to read its columns off.
+        let columns = if columns.is_empty() { describe_columns(conn, sql).await } else { columns };
 
         let row_count = data.len() as i64;
         return Ok(SqlResult {
             columns,
             rows: data,
             row_count: Some(row_count),
-            message: if capped {
-                Some(format!("Result capped at {EXECUTE_SQL_MAX_ROWS} rows - add a LIMIT clause to fetch a specific range."))
-            } else {
-                None
-            },
+            message: if capped { Some(super::query::budget_message(row_count as usize)) } else { None },
             query_ms: query_ms(),
             sql: sql.to_string(),
         });
@@ -824,7 +965,7 @@ async fn run_one_on(conn: &mut sqlx::MySqlConnection, sql: &str) -> Result<SqlRe
         columns: vec![],
         rows: vec![],
         row_count: Some(affected),
-        message: Some(format!("{affected} row(s) affected")),
+        message: Some(super::query::affected_message(sql, affected)),
         query_ms: query_ms(),
         sql: sql.to_string(),
     })
@@ -849,6 +990,7 @@ async fn collect_result_rows(
 ) -> Result<(Vec<ColumnInfo>, Vec<Vec<Value>>, bool), sqlx::Error> {
     let mut columns: Vec<ColumnInfo> = Vec::new();
     let mut data: Vec<Vec<Value>> = Vec::new();
+    let mut budget = super::query::CollectBudget::default();
     while let Some(row) = stream.try_next().await? {
         if data.is_empty() {
             columns = row
@@ -857,8 +999,10 @@ async fn collect_result_rows(
                 .map(|c| ColumnInfo::new(c.name(), c.type_info().name().to_lowercase()))
                 .collect();
         }
-        data.push((0..row.len()).map(|i| cell_to_json(&row, i)).collect());
-        if data.len() >= EXECUTE_SQL_MAX_ROWS {
+        let cells: Vec<Value> = (0..row.len()).map(|i| cell_to_json(&row, i)).collect();
+        let fits = budget.take(&cells);
+        data.push(cells);
+        if !fits || data.len() >= EXECUTE_SQL_MAX_ROWS {
             return Ok((columns, data, true));
         }
     }
@@ -1296,6 +1440,7 @@ mod ai_tool_live {
         let spec = std::env::var("STROKE_AI_MYSQL").ok()?;
         let p: Vec<&str> = spec.splitn(5, ':').collect();
         Some(MysqlConfig {
+            via: None,
             name: "ai".into(),
             host: p[0].into(),
             port: p[1].parse().unwrap(),
@@ -1406,5 +1551,20 @@ mod search_pruning_tests {
         let names: Vec<String> = vec!["id".into(), "name".into()];
         let a = build_where(&names, Some("x"), false, false, &[]).unwrap();
         assert_eq!(a.binds.len(), 2);
+    }
+}
+
+#[cfg(test)]
+mod empty_result_tests {
+    /// Against MySQL or MariaDB (STROKE_TEST_MYSQL_URL, a mysql:// URL with a
+    /// database): a SELECT that matches nothing still names its columns.
+    #[tokio::test]
+    async fn live_empty_select_keeps_its_columns() {
+        let Ok(url) = std::env::var("STROKE_TEST_MYSQL_URL") else { return };
+        let pool = sqlx::MySqlPool::connect(&url).await.unwrap();
+        let mut conn = pool.acquire().await.unwrap();
+        let r = super::run_one_on(&mut conn, "SELECT 1 AS n, 'x' AS label FROM DUAL WHERE 1 = 0").await.unwrap();
+        assert!(r.rows.is_empty());
+        assert_eq!(r.columns.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["n", "label"]);
     }
 }

@@ -49,3 +49,14 @@ describe('sensitive columns', () => {
     expect(maskValue('abc')).toBe('••••')
   })
 })
+
+describe('sensitive columns: what is not a phone number', () => {
+  it('leaves dates and bare digit ids alone', () => {
+    const cols = [{ name: 'joined' }, { name: 'ext_id' }, { name: 'contact' }]
+    const rows = [
+      ['2024-01-03', '9223372036854775807', '(415) 555-0100'],
+      ['2024-02-10', '1234567890123', '415-555-0199'],
+    ]
+    expect(detectSensitiveColumns(cols, rows).map((h) => `${h.name}:${h.why}`)).toEqual(['contact:phone numbers'])
+  })
+})

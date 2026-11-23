@@ -177,8 +177,10 @@
       <Command.Root loop shouldFilter={false} bind:value={highlighted} class="flex max-h-72 flex-col">
         <!-- Input stays mounted (Command needs it for keyboard nav) but is only
              shown for longer lists; short menus hide it and are just scannable. -->
-        <div data-slot="menu-search" class={cn("flex items-center gap-2 px-2.5 py-2", !showSearch && "sr-only")}>
-          <SearchIcon class="size-3.5 shrink-0 text-muted-foreground" />
+        <!-- The shared outlined search box (DESIGN_SYSTEM.md), inset in the
+             menu's header. -->
+        <div data-slot="menu-search" class={cn("relative p-1.5", !showSearch && "sr-only")}>
+          <SearchIcon class="pointer-events-none absolute top-1/2 left-4 size-3.5 shrink-0 -translate-y-1/2 text-muted-foreground" />
           <Command.Input bind:value={search} {placeholder}>
             {#snippet child({ props })}
               <input
@@ -187,7 +189,7 @@
                 bind:this={inputEl}
                 onkeydown={(e) => { if (onInputKeydown(e) === true) return; /** @type {any} */ (props).onkeydown?.(e); }}
                 {placeholder}
-                class="no-focus-ring min-w-0 flex-1 bg-transparent text-ui-sm text-foreground outline-none placeholder:text-muted-foreground"
+                class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-2 text-ui-sm"
               />
             {/snippet}
           </Command.Input>

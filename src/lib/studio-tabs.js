@@ -1,4 +1,4 @@
-/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'migrations' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal' | 'shortcuts' | 'shares'} StudioTabKind */
+/** @typedef {'table' | 'sql' | 'ddl' | 'welcome' | 'ai' | 'schema' | 'orm' | 'security' | 'logs' | 'extensions' | 'extension-detail' | 'backup' | 'json' | 'charts' | 'dashboard' | 'erd' | 'reltree' | 'diagrams' | 'search' | 'notebook' | 'schema-timeline' | 'data-diff' | 'migrations' | 'insights' | 'objects' | 'redis' | 'dynamodb' | 'docs' | 'license' | 'orm-schema' | 'map' | 'advisor' | 'golf' | 'terminal' | 'shortcuts' | 'shares' | 'queries'} StudioTabKind */
 
 import { loadDefaultPageSize } from '$lib/table-query.js'
 
@@ -83,7 +83,13 @@ export function cloneTableTabState(state) {
     columns: state.columns,
     primaryKey: state.primaryKey,
     foreignKeys: state.foreignKeys,
-    rows: state.rows,
+    // Its own array. A windowed view ("All rows") fills and evicts rows in
+    // place as it scrolls, so a duplicate sharing the original's array had its
+    // rows blanked by the other tab's eviction while its window list still
+    // said they were loaded: skeletons that never filled in. `slice` keeps the
+    // holes of a sparse array, so the copy costs what is resident.
+    rows: Array.isArray(state.rows) ? state.rows.slice() : state.rows,
+    windowedLoaded: Array.isArray(state.windowedLoaded) ? [...state.windowedLoaded] : state.windowedLoaded,
     rowFilters: state.rowFilters,
     rowSort: state.rowSort,
     // Sets must be new instances so mutations don't bleed between tabs
@@ -238,10 +244,11 @@ const SINGLETON_TAB_TITLES = {
   terminal: 'Terminal',
   shortcuts: 'Keyboard shortcuts',
   shares: 'Shared links',
+  queries: 'Queries',
 }
 
 /** @param {StudioTabKind} kind */
-function createKindTab(kind) {
+export function createKindTab(kind) {
   return /** @type {StudioTab} */ ({
     id: nextTabId(),
     kind,
@@ -289,6 +296,7 @@ export const createTerminalTab = () => createKindTab('terminal')
 export const createShortcutsTab = () => createKindTab('shortcuts')
 /** Every share link this account made: views, expiry, revoke. */
 export const createSharesTab = () => createKindTab('shares')
+export const createQueriesTab = () => createKindTab('queries')
 
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findAiTab = (tabs) => findTabByKind(tabs, 'ai')
@@ -341,6 +349,7 @@ export const findLicenseTab = (tabs) => findTabByKind(tabs, 'license')
 export const findShortcutsTab = (tabs) => findTabByKind(tabs, 'shortcuts')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findSharesTab = (tabs) => findTabByKind(tabs, 'shares')
+export const findQueriesTab = (tabs) => findTabByKind(tabs, 'queries')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */
 export const findSearchTab = (tabs) => findTabByKind(tabs, 'search')
 /** @type {(tabs: StudioTab[]) => StudioTab | null} */

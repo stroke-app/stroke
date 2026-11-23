@@ -28,6 +28,36 @@ use std::sync::{Arc, Mutex, RwLock};
 /// only bounds what a window that forgot to drop could leave behind on disk.
 const MAX_RESULTS: usize = 16;
 
+/// A run won't start spooling with less free than this in the temp folder.
+const MIN_FREE: u64 = 1 << 30;
+
+/// Free bytes on the volume holding `dir`, where the platform says.
+#[cfg(unix)]
+fn free_bytes(dir: &std::path::Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(dir.as_os_str().as_bytes()).ok()?;
+    let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+    // SAFETY: a valid C string and a zeroed out-struct, as statvfs expects.
+    if unsafe { libc::statvfs(c.as_ptr(), &mut st) } != 0 {
+        return None;
+    }
+    Some(st.f_bavail as u64 * st.f_frsize as u64)
+}
+
+#[cfg(not(unix))]
+fn free_bytes(_dir: &std::path::Path) -> Option<u64> {
+    None
+}
+
+/// A write that failed because the disk is full, said so.
+fn write_error(e: std::io::Error, rows: usize) -> String {
+    if e.kind() == std::io::ErrorKind::StorageFull {
+        format!("The disk filled up while the result streamed to it, after {rows} rows. Free some space and run it again, or add a LIMIT.")
+    } else {
+        format!("Could not write the result file: {e}")
+    }
+}
+
 /// Every stored result, by the run id the console sent with its query.
 pub struct ResultStore {
     results: Mutex<Vec<(String, Arc<StoredResult>)>>,
@@ -60,6 +90,15 @@ fn remove_other_spools(dir: &std::path::Path) {
 impl ResultStore {
     /// A new, empty result for run `id`, replacing any earlier one with that id.
     pub fn create(&self, id: &str) -> Result<SpoolWriter, String> {
+        if let Some(free) = free_bytes(&self.dir) {
+            if free < MIN_FREE {
+                return Err(format!(
+                    "Only {} MB free in {}, where results stream to disk. Free some space, or turn off Settings → Database → Stream results to hold results in memory instead.",
+                    free >> 20,
+                    self.dir.display()
+                ));
+            }
+        }
         let safe: String = id.chars().map(|c| if c.is_ascii_alphanumeric() || c == '-' { c } else { '_' }).collect();
         let path = self.dir.join(format!("{}-{safe}.jsonl", std::process::id()));
         let write = File::create(&path).map_err(|e| format!("Could not create the result file: {e}"))?;
@@ -372,7 +411,8 @@ impl SpoolWriter {
         self.scratch.clear();
         serde_json::to_writer(&mut self.scratch, row).map_err(|e| e.to_string())?;
         self.scratch.push(b'\n');
-        self.file.write_all(&self.scratch).map_err(|e| format!("Could not write the result file: {e}"))?;
+        let rows = self.result.offsets.read().unwrap().len() + self.pending.len();
+        self.file.write_all(&self.scratch).map_err(|e| write_error(e, rows))?;
         self.pending.push(self.pos);
         self.pos += self.scratch.len() as u64;
         Ok(self.scratch.len())
@@ -380,7 +420,8 @@ impl SpoolWriter {
 
     /// Make every row written so far readable. Returns how many rows are.
     pub fn flush(&mut self) -> Result<usize, String> {
-        self.file.flush().map_err(|e| format!("Could not write the result file: {e}"))?;
+        let rows = self.result.offsets.read().unwrap().len() + self.pending.len();
+        self.file.flush().map_err(|e| write_error(e, rows))?;
         let mut offsets = self.result.offsets.write().unwrap();
         offsets.append(&mut self.pending);
         self.result.end.store(self.pos, AtomicOrdering::Release);
@@ -913,5 +954,15 @@ mod tests {
         assert_eq!(names, vec![json!("b"), json!("d"), json!("a"), json!("c")]);
         r.sort(None, false).unwrap();
         assert_eq!(window(&r, 0, 4), rows);
+    }
+}
+
+#[cfg(all(test, unix))]
+mod disk_tests {
+    #[test]
+    fn reads_free_space_and_names_a_full_disk() {
+        assert!(super::free_bytes(&std::env::temp_dir()).is_some_and(|b| b > 0));
+        let full = std::io::Error::from(std::io::ErrorKind::StorageFull);
+        assert!(super::write_error(full, 1234).contains("disk filled up") );
     }
 }

@@ -191,18 +191,11 @@
             </span>
           </div>
           <span
-            class={cn(
-              "flex h-5 w-9 shrink-0 items-center rounded-full px-0.5 ring-1 ring-inset transition-colors duration-200",
-              readOnly ? "bg-warning/20 ring-warning/40" : "bg-muted/30 ring-border/40"
-            )}
+            class={cn("app-switch", readOnly && "!bg-warning")}
+            data-state={readOnly ? 'checked' : 'unchecked'}
             aria-hidden="true"
           >
-            <span
-              class={cn(
-                "size-4 rounded-full transition-transform duration-200",
-                readOnly ? "translate-x-4 bg-warning" : "translate-x-0 bg-muted-foreground/40"
-              )}
-            ></span>
+            <span class="app-switch-thumb"></span>
           </span>
         </button>
       </div>
@@ -287,7 +280,7 @@
           <div class="flex size-12 items-center justify-center rounded-lg border border-border/30 bg-muted/20">
             <Server class="size-5 shrink-0 text-muted-foreground" />
           </div>
-          <p class="max-w-[220px] text-ui-sm text-muted-foreground">
+          <p class="max-w-[13.75rem] text-ui-sm text-muted-foreground">
             Connect to a database first, then start the MCP server.
           </p>
         </div>

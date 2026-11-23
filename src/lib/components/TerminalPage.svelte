@@ -1,4 +1,5 @@
 <script>
+  import DbIcon from './DbIcon.svelte'
   /**
    * The terminal tab: the connection's own command-line client (psql, mysql,
    * sqlite3, sqlcmd, redis-cli) in a real terminal, so every meta-command,
@@ -55,7 +56,6 @@
   import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput, consoleClearCommand } from '$lib/terminal-keys.js'
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import ArrowDown from '@lucide/svelte/icons/arrow-down'
-  import SquareTerminal from '@lucide/svelte/icons/square-terminal'
 
   let {
     active = false,
@@ -114,8 +114,18 @@
   let client = $state(/** @type {import('$lib/api.js').TerminalClient | null} */ (null))
   /** Engines with no interactive CLI get the app's own SQL prompt instead. */
   const BUILTIN_REPL = new Set(['d1', 'dynamodb'])
+  /**
+   * The engines the backend knows a terminal client for (AnyConnectionConfig).
+   * Any other type failed to deserialize there, so the dock showed "invalid
+   * args config for command terminal_client: unknown variant influxdb". The
+   * rest have no CLI to look for: their console language runs in the built-in
+   * prompt (InfluxQL, Cypher, CQL, Spanner and BigQuery SQL, ...).
+   */
+  const CLI_TYPES = new Set(['postgres', 'sqlite', 'd1', 'mysql', 'libsql', 'clickhouse', 'redis', 'valkey', 'dynamodb', 'couchdb', 'elasticsearch', 'opensearch', 'duckdb', 'mssql', 'oracle', 'posthog', 'mongodb'])
+  /** No query language to type: nothing for a prompt to run. */
+  const NO_PROMPT = new Set(['firestore'])
   /** Engines whose CLI is not SQL: no SQL prompt to fall back to. */
-  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore'])
+  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'neo4j', 'influxdb'])
 
   /** A result set from executeSqlMulti as the prompt's table shape. @param {string} sql */
   async function sqlRows(sql) {
@@ -128,6 +138,10 @@
   /** `.tables` / `.schema` for engines that are not SQLite-shaped. */
   function catalogFor(/** @type {string} */ type) {
     if (type === 'dynamodb') return { language: 'PartiQL', listTables: dynamoTables, describe: dynamoDescribe }
+    // The console's own language, named in the prompt's banner: it said "SQL"
+    // over Cypher and CQL.
+    if (type === 'neo4j') return { language: 'Cypher' }
+    if (type === 'cassandra') return { language: 'CQL' }
     if (type === 'mysql' || type === 'mariadb') return {
       listTables: () => sqlRows('SHOW TABLES'),
       describe: (/** @type {string} */ t) => sqlRows(`DESCRIBE \`${t.replace(/`/g, '``')}\``),
@@ -158,7 +172,7 @@
     if (!term || !connection) return
     void endSession()
     term.reset()
-    client = { name: 'SQL prompt', path: null, version: null }
+    client = { name: 'Built-in console', path: null, version: null }
     repl = createSqlRepl({
       write: (s) => term?.write(s),
       cols: () => term?.cols ?? 120,
@@ -392,6 +406,11 @@
     if (sameConnection && !docked) term.write('\r\n')
     else term.reset()
     if (BUILTIN_REPL.has(dbType)) { startBuiltinPrompt(); return }
+    if (!CLI_TYPES.has(dbType)) {
+      if (NO_PROMPT.has(dbType)) { phase = 'unsupported'; return }
+      startBuiltinPrompt()
+      return
+    }
     let info
     try {
       info = await terminalClient(config)
@@ -733,6 +752,9 @@
   let suggestToken = ''
   /** Suggestions follow typing only; output on its own never opens them. */
   let lastTypedAt = 0
+  /** When the open list was built. A key typed after it means the list was
+   *  read from a line the screen hadn't caught up with yet. */
+  let suggestAt = 0
   let suggestFrame = 0
   /** @type {any} */
   let hintsCache = null
@@ -762,6 +784,7 @@
     suggestToken = token
     suggestItems = items
     suggestIndex = 0
+    suggestAt = performance.now()
     placeSuggest(token)
   }
 
@@ -822,10 +845,16 @@
       case 'ArrowUp': suggestIndex = (suggestIndex - 1 + n) % n; revealSuggestion(); return true
       case 'PageDown': suggestIndex = Math.min(n - 1, suggestIndex + SUGGEST_ROWS); revealSuggestion(); return true
       case 'PageUp': suggestIndex = Math.max(0, suggestIndex - SUGGEST_ROWS); revealSuggestion(); return true
-      case 'Tab': acceptSuggestion(); return true
+      case 'Tab':
+        // A list older than the last key typed belongs to a shorter line:
+        // accepting \dt off the list for "\" sent "dt" after the "dt" already
+        // typed. Wait for the screen and a fresh list instead.
+        if (lastTypedAt >= suggestAt) { hideSuggest(); requestAnimationFrame(() => updateSuggest(true)); return true }
+        acceptSuggestion(); return true
       case 'Escape': hideSuggest(); return true
       case 'Enter':
-        if (e.shiftKey || suggestItems[suggestIndex]?.exact) { hideSuggest(); return false }
+        // Stale as above: the line as typed is what runs.
+        if (e.shiftKey || suggestItems[suggestIndex]?.exact || lastTypedAt >= suggestAt) { hideSuggest(); return false }
         acceptSuggestion()
         return true
     }
@@ -998,6 +1027,10 @@
    */
   async function remeasure() {
     if (!term || !termEl) return
+    // Hidden (a prewarmed dock, a background tab): measuring there is wasted,
+    // and each one re-measures every glyph. Done once when it is shown.
+    if (!termVisible()) { needsRemeasure = true; return }
+    needsRemeasure = false
     const { fontFamily, fontSize } = terminalFont(termEl)
     try { await document.fonts?.load(`${fontSize}px ${fontFamily}`) } catch { /* no FontFaceSet */ }
     if (!term) return
@@ -1007,9 +1040,20 @@
     fit()
   }
 
+  /** A re-measure skipped while hidden, owed on show (the show effect below). */
+  let needsRemeasure = false
+  /** On screen: a hidden terminal (display:none) has no boxes. */
+  function termVisible() {
+    return !!termEl && termEl.getClientRects().length > 0
+  }
+
   /** Font and colours from the editor setting and the app theme. */
   function applyAppearance() {
     if (!term || !termEl) return
+    // <html> attributes change often (theme, zoom, classes). A hidden terminal
+    // re-reading styles and re-measuring on each was most of the main-thread
+    // time after a connect. Showing it runs this again (the effect on `active`).
+    if (!termVisible()) return
     const { fontFamily, fontSize } = terminalFont(termEl)
     const fontChanged = term.options.fontFamily !== fontFamily || term.options.fontSize !== fontSize
     if (term.options.fontFamily !== fontFamily) term.options.fontFamily = fontFamily
@@ -1391,8 +1435,18 @@
     })
     themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
     // The editor font is a web font: measure the cells again once it is in.
-    void remeasure()
-    void document.fonts?.ready.then(() => void remeasure())
+    // Only if it was not in when xterm measured at open; then that measure was
+    // of the fallback. (Each re-measure toggles the font option twice, and each
+    // toggle measures every glyph.)
+    let fontLoadedAtOpen = false
+    try {
+      const { fontFamily, fontSize } = terminalFont(termEl)
+      fontLoadedAtOpen = !!document.fonts?.check(`${fontSize}px ${fontFamily}`)
+    } catch { /* no FontFaceSet: measure below as before */ }
+    if (!fontLoadedAtOpen) {
+      void remeasure()
+      void document.fonts?.ready.then(() => void remeasure())
+    }
 
     sync()
   })
@@ -1419,6 +1473,7 @@
       // background (prewarm) read them before it was laid out, fell back to
       // black, and stayed black on a light theme until the theme changed.
       applyAppearance()
+      if (needsRemeasure) void remeasure()
       // A hidden WebGL canvas can come back blank (the browser drops its
       // drawing buffer while it is display:none), and xterm only repaints
       // rows that change: draw every row again so it never shows empty.
@@ -1474,24 +1529,25 @@
        terminal (⌘J) has the same strip: its actions used to float over the
        output, on top of the install notice's button. -->
   <div class="studio-chrome flex h-8 shrink-0 items-center gap-2 border-b border-border/40 bg-panel ps-2 pe-1">
-    <!-- Client: a glyph with the status dot on its corner, the name, the version. -->
-    <span class="relative flex size-5 shrink-0 items-center justify-center rounded-md bg-muted/70 text-muted-foreground">
-      <SquareTerminal class="size-3 shrink-0" />
-      <span
-        class={['absolute -right-0.5 -bottom-0.5 size-2 rounded-full ring-2 ring-panel', statusDot]}
-        title={statusLabel || undefined}
-        aria-label={statusLabel || undefined}
-        role={statusLabel ? 'status' : undefined}
-      ></span>
-    </span>
+    <!-- Client: the database's own mark, the client's name with its status
+         dot, then the version. The dot sat on the corner of a generic
+         terminal glyph, where the pointer covered it and the glyph said
+         nothing about which database this was. -->
+    <DbIcon id={connection?.type || dbType} class="size-3.5 shrink-0 text-muted-foreground" />
     <span class="shrink-0 text-ui-xs font-medium text-foreground">{client?.name || 'Terminal'}</span>
+    <span
+      class={['size-1.5 shrink-0 rounded-full', statusDot]}
+      title={statusLabel || undefined}
+      aria-label={statusLabel || undefined}
+      role={statusLabel ? 'status' : undefined}
+    ></span>
     {#if shortVersion}
       <span class="shrink-0 rounded bg-muted/60 px-1 font-mono text-ui-3xs leading-4 text-muted-foreground tabular-nums" title={client?.version ?? ''}>{shortVersion}</span>
     {/if}
     {#if target}
       <span class="h-3.5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
       <span class="min-w-0 truncate font-mono text-ui-2xs" title={target}>
-        <span class="text-muted-foreground/60">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
+        <span class="text-muted-foreground">{targetParts.lead}</span><span class="text-muted-foreground">{targetParts.db}</span>
       </span>
     {/if}
     <div class="flex-1"></div>
@@ -1583,7 +1639,7 @@
          at the editor's size psql's tables read like a document. -->
     {#if findOpen}
       <div
-        class="absolute top-2 right-3 z-30 flex h-8 items-center gap-0.5 rounded-lg border border-border/60 bg-popover ps-2.5 pe-1 shadow-md"
+        class="absolute top-2 right-3 z-30 flex h-8 items-center gap-0.5 rounded-lg border border-border/80 bg-popover ps-2.5 pe-1 transition-colors focus-within:border-ring/70"
         role="search"
       >
         <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -1657,7 +1713,7 @@
       <div
         bind:this={termEl}
         class="size-full"
-        style="font-family: var(--editor-font-family, var(--font-mono)); font-size: calc({sqlEditorFontSize($appSqlEditor.textSize)} * 0.9);"
+        style="font-family: var(--terminal-font, var(--editor-font-family, var(--font-mono))); font-size: calc({sqlEditorFontSize($appSqlEditor.textSize)} * 0.9);"
       ></div>
     </div>
 
@@ -1727,7 +1783,7 @@
             </p>
             {#if !NON_SQL.has(dbType)}
             <Button size="sm" variant="outline" onclick={() => startBuiltinPrompt(`${client?.name ?? 'The client'} is not installed: using the built-in prompt. Install it for ${client?.name ?? 'its'} own commands.`)}>
-              Use the built-in SQL prompt
+              Use the built-in console
             </Button>
             {/if}
             {#if client?.hint}

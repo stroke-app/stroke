@@ -25,7 +25,7 @@
     empty = 'No results',
     ariaLabel = undefined,
     /** Extra classes for the trigger button (size/width live here). */
-    triggerClass = 'h-8 w-56',
+    triggerClass = 'h-8 w-56 shrink-0',
     contentClass = 'w-[var(--bits-popover-anchor-width)] min-w-[13rem]',
     searchThreshold = -1,
     align = 'start',

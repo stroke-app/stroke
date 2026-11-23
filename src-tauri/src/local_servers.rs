@@ -289,7 +289,7 @@ fn pg_target() -> Option<&'static str> {
 /// The newest build of a Postgres major ("16" → "16.11.0").
 async fn pg_release(major: &str) -> Result<String, String> {
     let url = "https://api.github.com/repos/theseus-rs/postgresql-binaries/releases?per_page=100";
-    let releases: Vec<serde_json::Value> = reqwest::Client::new()
+    let releases: Vec<serde_json::Value> = crate::proxy::http_builder(crate::proxy::Kind::App).build().map_err(|e| e.to_string())?
         .get(url)
         .header("user-agent", "stroke-desktop")
         .header("accept", "application/vnd.github+json")
@@ -332,7 +332,7 @@ async fn pg_install(app: &AppHandle, id: &str, major: &str) -> Result<PathBuf, S
     let version = pg_release(major).await?;
     let name = format!("postgresql-{version}-{target}.tar.gz");
     let base = format!("https://github.com/theseus-rs/postgresql-binaries/releases/download/{version}/{name}");
-    let client = reqwest::Client::builder().user_agent("stroke-desktop").build().map_err(|e| e.to_string())?;
+    let client = crate::proxy::http_builder(crate::proxy::Kind::App).user_agent("stroke-desktop").build().map_err(|e| e.to_string())?;
     let sum = client.get(format!("{base}.sha256")).send().await.and_then(|r| r.error_for_status()).map_err(|e| e.to_string())?
         .text().await.map_err(|e| e.to_string())?;
     let want = sum.split_whitespace().next().unwrap_or_default().to_ascii_lowercase();

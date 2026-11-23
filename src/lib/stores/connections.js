@@ -1,6 +1,8 @@
 import { invoke } from '@tauri-apps/api/core'
 import { saveSqlDraft, saveSqlTabs } from '$lib/stores/sql-draft.js'
 import { notifyLocalChange, recordDeletion } from '$lib/sync/changes.js'
+import { activeWorkspaceId, DEFAULT_WORKSPACE_ID } from '$lib/stores/workspaces.js'
+import { get } from 'svelte/store'
 
 const STORAGE_KEY = 'stroke:connections'
 /**
@@ -17,7 +19,7 @@ const LAST_ID_KEY  = 'stroke:last-connection-id'
 const DISCONNECTED_KEY = 'stroke:disconnected'
 
 /**
- * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'mongodb' | 'posthog'} DbType
+ * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'yugabytedb' | 'alloydb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'snowflake' | 'odbc' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'neo4j' | 'influxdb' | 'mongodb' | 'posthog'} DbType
  *
  * @typedef {{ host: string, port?: number, username: string, privateKeyPath?: string }} SshConfig
  *
@@ -80,8 +82,9 @@ export function newConnectionId() {
  */
 export function engineFamily(type) {
   if (type === 'mariadb') return 'mysql'
-  if (type === 'cockroachdb') return 'postgres'
+  if (type === 'cockroachdb' || type === 'yugabytedb' || type === 'alloydb') return 'postgres'
   if (type === 'valkey') return 'redis'
+  if (type?.startsWith('odbc-')) return 'odbc'
   return /** @type {DbType} */ (type ?? 'postgres')
 }
 
@@ -202,8 +205,8 @@ function saveDeletedIds(ids) {
 // at startup (or when the keychain is unavailable) secrets stay inline, exactly
 // as before: a failed keychain write can never lose a password.
 
-/** Fields that hold credentials. MongoDB's `uri` carries its password. */
-export const SECRET_FIELDS = ['password', 'apiToken', 'apiKey', 'authToken', 'secretAccessKey', 'sessionToken', 'uri']
+/** Fields that hold credentials. MongoDB's `uri` and an ODBC connection string can carry a password. */
+export const SECRET_FIELDS = ['password', 'token', 'apiToken', 'apiKey', 'authToken', 'secretAccessKey', 'sessionToken', 'uri', 'connectionString']
 
 /** @type {Map<string, Record<string, string>>} */
 let _secretCache = new Map()
@@ -315,7 +318,46 @@ function mirrorToDisk() {
  * current localStorage list seeds it. Outside Tauri (browser dev) or with an
  * unreadable file, localStorage stays the source.
  */
-export async function hydrateConnectionsFromDisk() {
+/** The keychain read started by hydrateConnectionsFromDisk; see secretsReady. */
+let _secretsPromise = Promise.resolve()
+
+/**
+ * Resolves once saved passwords have been read from the OS keychain. Startup
+ * does not wait for it (see hydrateConnectionsFromDisk); anything that is
+ * about to connect does, through withSecrets.
+ * @returns {Promise<void>}
+ */
+export function secretsReady() {
+  return _secretsPromise
+}
+
+/**
+ * A connection with its saved secrets filled in, once the keychain has
+ * answered. A connection read from the list before then has none, and would
+ * fail its login. Fields the connection already carries win.
+ * @template {{ id?: string }} T
+ * @param {T} conn
+ * @returns {Promise<T>}
+ */
+export async function withSecrets(conn) {
+  await _secretsPromise
+  const sec = conn && typeof conn.id === 'string' ? _secretCache.get(conn.id) : undefined
+  return sec ? { ...sec, ...conn } : conn
+}
+
+/**
+ * Load the saved list from its on-disk copy, then read the passwords from the
+ * OS keychain.
+ *
+ * `waitForSecrets: false` returns once the list is in and leaves the keychain
+ * read running (secretsReady). Startup uses it: the keychain answers over
+ * D-Bus on Linux and through the system on macOS and Windows, and it was
+ * measured taking 119ms, 1179ms, and once never answering, while the whole
+ * window waited for it before mounting anything. The list needs only the
+ * file; only a connect needs the passwords.
+ * @param {{ waitForSecrets?: boolean }} [opts]
+ */
+export async function hydrateConnectionsFromDisk({ waitForSecrets = true } = {}) {
   let seedFile = false
   try {
     const json = /** @type {string | null} */ (await invoke('connections_store_read'))
@@ -331,18 +373,42 @@ export async function hydrateConnectionsFromDisk() {
   } catch (err) {
     console.warn('Saved connections: using browser storage only.', err)
   } finally {
-    await hydrateConnectionSecrets()
-    if (seedFile) mirrorToDisk()
+    _secretsPromise = hydrateConnectionSecrets().then(() => {
+      if (seedFile) mirrorToDisk()
+    })
+    if (waitForSecrets) await _secretsPromise
   }
 }
 
 /**
- * @param {SavedConnection} conn
- * @param {{ revive?: boolean }} [opts] `revive` lets an explicit re-add (the
- *   Sample Database button) bring back an id that was deleted. Everything else
- *   that writes an existing connection back is a no-op for a deleted one.
+ * Where a connection is filed and how it looks, set by the person rather than
+ * by whatever dialled it. The one-click paths (a provider's database, a Docker
+ * container, a local server, D1) build a fresh row on every connect, so writing
+ * that row over the saved one dropped these and sent the connection back to
+ * the default workspace. A caller that names one of them (the edit form always
+ * does, even to clear it) sets it; one that leaves it out keeps the saved value.
  */
-export function upsertConnection(conn, { revive = false } = {}) {
+const FILING_FIELDS = /** @type {const} */ (['workspaceId', 'color', 'group'])
+
+/**
+ * The workspace a brand-new row lands in: the one on screen, so connecting to
+ * a provider's database from the "Work" workspace files it under Work.
+ * @returns {string | undefined}
+ */
+function workspaceForNew() {
+  const id = get(activeWorkspaceId)
+  return id && id !== DEFAULT_WORKSPACE_ID ? id : undefined
+}
+
+/**
+ * @param {SavedConnection} conn
+ * @param {{ revive?: boolean, exact?: boolean }} [opts] `revive` lets an
+ *   explicit re-add (the Sample Database button) bring back an id that was
+ *   deleted. Everything else that writes an existing connection back is a
+ *   no-op for a deleted one. `exact` stores the row as given, with no filing
+ *   kept or added: sync, whose record is the truth from another device.
+ */
+export function upsertConnection(conn, { revive = false, exact = false } = {}) {
   const deleted = loadDeletedIds()
   if (deleted.has(conn.id)) {
     if (!revive) {
@@ -359,8 +425,20 @@ export function upsertConnection(conn, { revive = false } = {}) {
     // A pin is set only through setConnectionMeta; a live copy written back
     // here (connect, database switch, edit) must not drop or revive it.
     const { pinned: _stale, ...rest } = conn
-    list[idx] = list[idx].pinned ? { ...rest, pinned: true } : rest
-  } else list.push(conn)
+    /** @type {SavedConnection} */
+    const next = list[idx].pinned ? { ...rest, pinned: true } : rest
+    if (!exact) {
+      const prev = /** @type {Record<string, any>} */ (list[idx])
+      for (const f of FILING_FIELDS) {
+        if (!(f in conn) && prev[f] != null) /** @type {Record<string, any>} */ (next)[f] = prev[f]
+      }
+    }
+    list[idx] = next
+  } else if (exact || 'workspaceId' in conn) list.push(conn)
+  else {
+    const ws = workspaceForNew()
+    list.push(ws ? { ...conn, workspaceId: ws } : conn)
+  }
   _persistFailed = !saveConnections(list)
   return list
 }

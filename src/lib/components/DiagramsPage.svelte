@@ -23,7 +23,7 @@
   import Search from '@lucide/svelte/icons/search'
   import PanelLeftClose from '@lucide/svelte/icons/panel-left-close'
   import PanelLeftOpen from '@lucide/svelte/icons/panel-left-open'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { focusTrap } from '$lib/actions/focus-trap.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
 
@@ -41,7 +41,7 @@
         description: path ? `Saved to ${path}` : `${filename} saved to your downloads`,
       })
     } catch (e) {
-      toast.error('Export failed', { description: String(e) })
+      toast.error('Export failed', { description: errorText(e) })
     }
   }
 
@@ -52,7 +52,7 @@
       if (!ok) return  // nothing rendered yet
       toast.success('Diagram copied as PNG')
     } catch (e) {
-      toast.error('Copy failed', { description: String(e) })
+      toast.error('Copy failed', { description: errorText(e) })
     }
   }
 
@@ -180,7 +180,7 @@
 
   /** @param {KeyboardEvent} e */
   function handleFullscreenKey(e) {
-    if (e.key === 'Escape') fullscreenCode = null
+    if (e.key === 'Escape' && !e.defaultPrevented) fullscreenCode = null
   }
 
   /** @type {import('./MermaidViewer.svelte').default | null} */
@@ -228,7 +228,7 @@
             type="text"
             placeholder="Search diagrams…"
             bind:value={searchQ}
-            class= "field-surface h-7 w-full bg-background/50 pl-6 pr-2 text-ui-xs text-foreground placeholder:text-muted-foreground focus:outline-none"
+            class="search-box no-field-frame h-7 w-full pl-6 pr-2 text-ui-xs"
           />
         </div>
       </div>
@@ -364,7 +364,7 @@
                 onclick={confirmDelete}
                 class="inline-flex h-7 items-center gap-1 rounded-md bg-destructive px-2 text-ui-3xs text-destructive-foreground hover:opacity-90"
               ><Check class="size-3 shrink-0" />Confirm</button>
-              <button
+              <button aria-label="Cancel delete" title="Cancel delete"
                 type="button"
                 onclick={() => confirmingDelete = false}
                 class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"

@@ -52,6 +52,19 @@
     ondragtabend = () => {},
   } = $props()
 
+  /** Titles that tabs from different databases share (two "orders" tables):
+   *  those tabs name their database after the title. */
+  const clashing = $derived.by(() => {
+    /** @type {Map<string, Set<string>>} */
+    const by = new Map()
+    for (const t of tabs) {
+      if (!t.connLabel) continue
+      const title = tabDisplayTitle(t)
+      by.set(title, (by.get(title) ?? new Set()).add(t.connLabel))
+    }
+    return new Set([...by].filter(([, dbs]) => dbs.size > 1).map(([title]) => title))
+  })
+
   // ── Pointer-based tab drag (HTML5 DnD is unreliable in Tauri's WebKit) ──────
   /** @type {{ id: string, startX: number, startY: number, active: boolean } | null} */
   let _tabDrag = null
@@ -101,10 +114,12 @@
     const el = scrollEl
     if (!el) return
     const _n = tabs.length
-    updateFades()
+    // In the frame, not now: read during the render it forced an early layout
+    // of the whole page (see Sidebar's scheduleMeasureTables).
+    const frame = requestAnimationFrame(updateFades)
     const ro = new ResizeObserver(updateFades)
     ro.observe(el)
-    return () => ro.disconnect()
+    return () => { cancelAnimationFrame(frame); ro.disconnect() }
   })
 
   /** A plain mouse wheel scrolls the strip sideways. @param {WheelEvent} e */
@@ -125,13 +140,19 @@
     return () => cancelAnimationFrame(raf)
   })
 
+  /** The tab the strip's right-click menu is for. */
+  let menuTabId = $state(/** @type {string | null} */ (null))
+  const menuTab = $derived(menuTabId ? tabs.find((t) => t.id === menuTabId) ?? null : null)
+
   /** @param {StudioTab} tab */
   function tabIcon(tab) {
     if (tab.kind === 'sql') return 'terminal'
     if (tab.kind === 'terminal') return 'square-terminal'
     if (tab.kind === 'table') {
       const entityKind = /** @type {any} */ (tab.state)?.tableKind
-      if (entityKind === 'view' || entityKind === 'materialized_view') return 'eye'
+      // The sidebar's marks: an eye for a view, layers for a materialized view.
+      if (entityKind === 'materialized_view') return 'layers'
+      if (entityKind === 'view') return 'eye'
       return 'table-2'
     }
     if (tab.kind === 'ai') return 'bot'
@@ -145,8 +166,33 @@
     if (tab.kind === 'license') return 'key-round'
     if (tab.kind === 'shortcuts') return 'keyboard'
     if (tab.kind === 'shares') return 'share-2'
+    if (tab.kind === 'queries') return 'history'
     if (tab.kind === 'migrations') return 'git-merge'
-    return 'file-text'
+    // The rest match the command palette's icon for the same page; they all
+    // fell through to a page icon, so a diagram looked like a notebook.
+    const PAGE_ICONS = /** @type {Record<string, string>} */ ({
+      erd: 'network',
+      diagrams: 'git-branch',
+      reltree: 'list-tree',
+      'schema-timeline': 'git-branch',
+      'data-diff': 'git-compare',
+      backup: 'archive',
+      json: 'braces',
+      charts: 'bar-chart-2',
+      dashboard: 'layout-dashboard',
+      logs: 'history',
+      insights: 'database',
+      advisor: 'shield-check',
+      objects: 'shapes',
+      'extension-detail': 'blocks',
+      ddl: 'file-code',
+      notebook: 'notebook-pen',
+      // A collection, a measurement, a label, a DynamoDB table: rows, like a table tab.
+      docs: 'table-2',
+      dynamodb: 'table-2',
+      redis: 'key-round',
+    })
+    return PAGE_ICONS[tab.kind] ?? 'file-text'
   }
 </script>
 
@@ -175,93 +221,106 @@
     onscroll={updateFades}
     onwheel={onStripWheel}
   >
+    <!-- One menu for the strip, told which tab was right-clicked: a menu per
+         tab mounted a bits-ui menu tree for every open tab, a dozen of them on
+         a restore. The trigger is display:contents, so the strip's layout is
+         the tabs'. -->
+    <ContextMenu.Root>
+      <ContextMenu.Trigger
+        class="contents"
+        oncontextmenu={(e) => {
+          const id = /** @type {HTMLElement | null} */ (/** @type {Element} */ (e.target).closest('[data-tab-id]'))?.dataset.tabId
+          menuTabId = id ?? null
+        }}
+      >
     {#each tabs as tab, i (tab.id)}
       {@const tabIconName = tabIcon(tab)}
       {@const active = tab.id === activeTabId}
+        <!-- Pointer handlers for drag and middle-click; the tab itself is the
+             role="tab" button inside. -->
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <div
+          data-tab-id={tab.id}
+          onpointerdown={(e) => tabPointerDown(e, tab.id)}
+          onpointerup={(e) => {
+            // Middle-click closes (pinned tabs stay protected, like the ✕ button)
+            if (e.button === 1 && !tab.pinned) { e.preventDefault(); onclose(tab.id) }
+          }}
+          class={cn(
+            // rem, not px: a px cap held less text at every zoom step up, and the
+            // floor keeps a short title from being squeezed to "New t…".
+            // A pill, not a folder tab: the active one is a soft lighter fill,
+            // the rest are just text until you hover them.
+            'group/tab relative flex h-7 min-w-24 max-w-50 shrink-0 items-stretch rounded-md transition-colors duration-100',
+            active
+              ? 'bg-sidebar-accent shadow-[inset_0_0_0_1px_var(--color-border)]'
+              : 'hover:bg-sidebar-accent/50',
+          )}
+        >
+          <!-- Tab button, font-medium on ALL states to prevent layout shift on activation -->
+          <button
+            type="button"
+            role="tab"
+            aria-selected={active}
+            title={tab.connLabel ? `${tabDisplayTitle(tab)} · ${tab.connLabel}` : tabDisplayTitle(tab)}
+            class={cn(
+              'flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left text-ui-xs leading-none transition-colors duration-100',
+              // Every tab keeps the close button's slot, shown or not, so a
+              // tab is the same width active, inactive and hovered: the
+              // overlaid button covered the title's end on hover and the
+              // tab grew when it became active.
+              'pr-1',
+              active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
+            )}
+            onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
+          >
+            <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
+            <span class="truncate">{tabDisplayTitle(tab)}{#if tab.connLabel && clashing.has(tabDisplayTitle(tab))}<span class="text-muted-foreground">{` · ${tab.connLabel}`}</span>{/if}</span>
+          </button>
 
-      <ContextMenu.Root>
-        <ContextMenu.Trigger>
-          {#snippet child({ props: ctxProps })}
-            <div
-              {...ctxProps}
-              onpointerdown={(e) => tabPointerDown(e, tab.id)}
-              onpointerup={(e) => {
-                // Middle-click closes (pinned tabs stay protected, like the ✕ button)
-                if (e.button === 1 && !tab.pinned) { e.preventDefault(); onclose(tab.id) }
-              }}
+          {#if tab.pinned}
+            <!-- Pinned: pin badge replaces close, click to unpin -->
+            <button
+              type="button"
               class={cn(
-                // rem, not px: a px cap held less text at every zoom step up, and the
-                // floor keeps a short title from being squeezed to "New t…".
-                // A pill, not a folder tab: the active one is a soft lighter fill,
-                // the rest are just text until you hover them.
-                'group/tab relative flex h-7 min-w-24 max-w-50 shrink-0 items-stretch rounded-md transition-colors duration-100',
-                active
-                  ? 'bg-sidebar-accent shadow-[inset_0_0_0_1px_var(--color-border)]'
-                  : 'hover:bg-sidebar-accent/50',
+                'hit-area mr-1 inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
+                'text-muted-foreground hover:bg-accent hover:text-foreground',
+                active ? 'opacity-100' : 'opacity-70 group-hover/tab:opacity-100',
               )}
+              title={$t('tabs.unpin')}
+              aria-label={$t('tabs.unpin')}
+              onclick={(e) => { e.stopPropagation(); onpintoggle(tab.id) }}
             >
-              <!-- Tab button, font-medium on ALL states to prevent layout shift on activation -->
-              <button
-                type="button"
-                role="tab"
-                aria-selected={active}
-                title={tab.connLabel ? `${tabDisplayTitle(tab)} · ${tab.connLabel}` : tabDisplayTitle(tab)}
-                class={cn(
-                  'flex min-w-0 flex-1 items-center gap-2 pl-2.5 text-left text-ui-xs leading-none transition-colors duration-100',
-                  // Every tab keeps the close button's slot, shown or not, so a
-                  // tab is the same width active, inactive and hovered: the
-                  // overlaid button covered the title's end on hover and the
-                  // tab grew when it became active.
-                  'pr-1',
-                  active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
-                )}
-                onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
-              >
-                <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
-                <span class="truncate">{tabDisplayTitle(tab)}</span>
-              </button>
+              <Icon name="pin" class="size-3 shrink-0 rotate-45" />
+            </button>
+          {:else}
+            <!-- Close button -->
+            <button
+              type="button"
+              class={cn(
+                'hit-area inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
+                'text-muted-foreground hover:bg-accent hover:text-foreground',
+                'mr-1',
+                active ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100',
+              )}
+              title={$t('tabs.close')}
+              aria-label={$t('tabs.close')}
+              onclick={(e) => { e.stopPropagation(); onclose(tab.id) }}
+            >
+              <Icon name="x" class="size-3 shrink-0" />
+            </button>
+          {/if}
 
-              {#if tab.pinned}
-                <!-- Pinned: pin badge replaces close, click to unpin -->
-                <button
-                  type="button"
-                  class={cn(
-                    'hit-area mr-1 inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
-                    'text-muted-foreground hover:bg-accent hover:text-foreground',
-                    active ? 'opacity-100' : 'opacity-70 group-hover/tab:opacity-100',
-                  )}
-                  title={$t('tabs.unpin')}
-                  aria-label={$t('tabs.unpin')}
-                  onclick={(e) => { e.stopPropagation(); onpintoggle(tab.id) }}
-                >
-                  <Icon name="pin" class="size-3 shrink-0 rotate-45" />
-                </button>
-              {:else}
-                <!-- Close button -->
-                <button
-                  type="button"
-                  class={cn(
-                    'hit-area inline-flex size-5 shrink-0 self-center items-center justify-center rounded-md transition-opacity duration-100',
-                    'text-muted-foreground hover:bg-accent hover:text-foreground',
-                    'mr-1',
-                    active ? 'opacity-100' : 'opacity-0 group-hover/tab:opacity-100 focus-visible:opacity-100',
-                  )}
-                  title={$t('tabs.close')}
-                  aria-label={$t('tabs.close')}
-                  onclick={(e) => { e.stopPropagation(); onclose(tab.id) }}
-                >
-                  <Icon name="x" class="size-3 shrink-0" />
-                </button>
-              {/if}
-
-            </div>
-          {/snippet}
-        </ContextMenu.Trigger>
-
-        {@const hasOtherClosable = tabs.some((t) => t.id !== tab.id && !t.pinned)}
-        {@const leftClosable = tabs.slice(0, i).filter((t) => !t.pinned)}
-        {@const rightClosable = tabs.slice(i + 1).filter((t) => !t.pinned)}
+        </div>
+    {/each}
+      </ContextMenu.Trigger>
         <ContextMenu.Content class="min-w-52">
+          {#if menuTab}
+          {@const tab = menuTab}
+          {@const i = tabs.findIndex((t) => t.id === tab.id)}
+          {@const hasOtherClosable = tabs.some((t) => t.id !== tab.id && !t.pinned)}
+          {@const leftClosable = tabs.slice(0, i).filter((t) => !t.pinned)}
+          {@const rightClosable = tabs.slice(i + 1).filter((t) => !t.pinned)}
           <ContextMenu.Item onSelect={() => onpintoggle(tab.id)}>
             {#if tab.pinned}
               <Icon name="pin-off" class="size-3.5 shrink-0" />
@@ -319,10 +378,34 @@
             Close All Tabs
             <ContextMenu.Shortcut command="tab.closeAll" />
           </ContextMenu.Item>
+          {/if}
         </ContextMenu.Content>
-      </ContextMenu.Root>
-    {/each}
+    </ContextMenu.Root>
   </div>
+  <!-- Tabs scrolled out of view fade at the edge, and a tab starting inside the
+       fade showed nothing at all, so the strip looked complete. While any are
+       hidden, this lists every open tab. -->
+  {#if fadeLeft || fadeRight}
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger
+        class="ml-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground"
+        title="All open tabs"
+        aria-label="All open tabs ({tabs.length})"
+      >
+        <Icon name="chevron-down" class="size-3.5 shrink-0" />
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Content align="end" class="app-scroll max-h-[min(70vh,28rem)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto">
+        {#each tabs as tab (tab.id)}
+          <DropdownMenu.Item onSelect={() => onselect(tab.id)}>
+            <Icon name={tabIcon(tab)} class="size-3.5 shrink-0 text-muted-foreground" />
+            <span data-slot="menu-label" class={cn('min-w-0 flex-1 truncate', tab.id === activeTabId && 'font-medium text-foreground')}>{tabDisplayTitle(tab)}</span>
+            {#if tab.connLabel}<span class="ml-auto max-w-24 shrink-0 truncate text-ui-2xs text-muted-foreground">{tab.connLabel}</span>{/if}
+            {#if tab.id === activeTabId}<Icon name="check" class="size-3.5 shrink-0" />{/if}
+          </DropdownMenu.Item>
+        {/each}
+      </DropdownMenu.Content>
+    </DropdownMenu.Root>
+  {/if}
   <!-- A grab handle that is always there, even with the strip full of tabs. -->
   <div class="h-full w-10 shrink-0" data-tauri-drag-region aria-hidden="true"></div>
 </header>

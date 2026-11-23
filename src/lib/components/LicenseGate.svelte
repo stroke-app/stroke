@@ -1,7 +1,7 @@
 <script>
   import { onMount } from 'svelte'
   import { isBlocked, refreshLicenseStatus } from '$lib/stores/license.js'
-  import TrialExpiredScreen from './TrialExpiredScreen.svelte'
+
   import SignInScreen from './SignInScreen.svelte'
   import { needsOnboarding, startAccountSync, account } from '$lib/stores/account.js'
 
@@ -70,7 +70,7 @@
   {/if}
 {:else if $isBlocked || holdGate}
   <!-- Trial over and no Pro on the account: the app is not rendered at all. -->
-  <TrialExpiredScreen onactivated={() => (holdGate = false)} />
+  {#await import('./TrialExpiredScreen.svelte') then { default: TrialExpiredScreen }}<TrialExpiredScreen onactivated={() => (holdGate = false)} />{/await}
 {:else}
   {@render children()}
 {/if}

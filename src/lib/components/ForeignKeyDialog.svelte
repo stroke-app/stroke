@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import FieldSelect from './FieldSelect.svelte';
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
@@ -19,7 +20,7 @@
     column = '',
     constraintName = /** @type {string|null} */ (null),
     existingFk = /** @type {string|null} */ (null),
-    tables = /** @type {{ name: string }[]} */ ([]),
+    tables = /** @type {{ name: string, kind?: string }[]} */ ([]),
     onrefresh = () => {},
   } = $props()
 
@@ -65,7 +66,7 @@
       open = false
       onrefresh()
     } catch (e) {
-      toast.error('Could not save foreign key', { description: String(e) })
+      toast.error('Could not save foreign key', { description: errorText(e) })
     } finally {
       saving = false
     }
@@ -82,7 +83,7 @@
       open = false
       onrefresh()
     } catch (e) {
-      toast.error('Could not remove foreign key', { description: String(e) })
+      toast.error('Could not remove foreign key', { description: errorText(e) })
     } finally {
       deleting = false
     }
@@ -166,7 +167,7 @@
                 class="w-full text-ui-xs"
                 bind:value={refTable}
                 placeholder="Select table…"
-                options={[{ value: '', label: 'Select table…' }, ...tables.map((t) => ({ value: t.name, label: t.name }))]}
+                options={[{ value: '', label: 'Select table…' }, ...tables.filter((t) => !t.kind || t.kind === 'table').map((t) => ({ value: t.name, label: t.name }))]}
               />
             </div>
           </div>

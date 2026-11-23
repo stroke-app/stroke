@@ -12,10 +12,44 @@
 
 /** @typedef {'auto' | 'always' | 'never'} QuoteMode */
 
+/**
+ * The active ODBC connection's identifier quote and naming, as its driver
+ * reported them on connect. One connection is active at a time, so one value.
+ */
+let odbc = { quote: '"', flat: false }
+
+/** @param {{ quote?: string | null, namespace?: string } | null | undefined} info */
+export function setOdbcDialect(info) {
+  odbc = { quote: info?.quote || '"', flat: info?.namespace === 'flat' }
+}
+
+/** The active Spanner database's dialect: GoogleSQL or PostgreSQL. */
+let spannerPg = false
+
+/** @param {string | null | undefined} dialect as connect_spanner_db returns it */
+export function setSpannerDialect(dialect) {
+  spannerPg = dialect === 'postgresql'
+}
+
+/** Whether the active Spanner database speaks PostgreSQL (double quotes, '' escapes). */
+export function spannerIsPg() {
+  return spannerPg
+}
+
+/** Whether the active ODBC database has no schemas (bare table names). */
+export function odbcFlat() {
+  return odbc.flat
+}
+
+/** The quote the active ODBC driver uses: `"`, `` ` `` or `[`. */
+export function odbcQuote() {
+  return odbc.quote
+}
+
 /** Engines that fold unquoted names to lower case. */
-const FOLDS_LOWER = new Set(['postgres', 'cockroachdb', 'redshift'])
+const FOLDS_LOWER = new Set(['postgres', 'cockroachdb', 'yugabytedb', 'alloydb', 'redshift'])
 /** Engines that fold unquoted names to upper case: `emp` means `EMP`. */
-const FOLDS_UPPER = new Set(['oracle'])
+const FOLDS_UPPER = new Set(['oracle', 'snowflake'])
 
 /** @param {string} list */
 const words = (list) => new Set(list.trim().split(/\s+/))
@@ -86,7 +120,7 @@ const ANY_RESERVED = new Set([...PG_RESERVED, ...MYSQL_RESERVED, ...MSSQL_RESERV
 /** @param {string | null | undefined} engine */
 function reservedFor(engine) {
   switch (engine) {
-    case 'postgres': case 'cockroachdb': case 'redshift': case 'duckdb': return PG_RESERVED
+    case 'postgres': case 'cockroachdb': case 'yugabytedb': case 'alloydb': case 'redshift': case 'duckdb': return PG_RESERVED
     case 'mysql': case 'mariadb': return MYSQL_RESERVED
     case 'mssql': return MSSQL_RESERVED
     case 'sqlite': case 'd1': case 'libsql': return SQLITE_RESERVED
@@ -96,8 +130,10 @@ function reservedFor(engine) {
 
 /** @param {string | null | undefined} engine */
 function quoteChars(engine) {
-  if (engine === 'mysql' || engine === 'mariadb') return ['`', '`']
+  if (engine === 'spanner' && spannerPg) return ['"', '"']
+  if (engine === 'mysql' || engine === 'mariadb' || engine === 'spanner' || engine === 'bigquery') return ['`', '`']
   if (engine === 'mssql') return ['[', ']']
+  if (engine === 'odbc') return odbc.quote === '[' ? ['[', ']'] : [odbc.quote, odbc.quote]
   return ['"', '"']
 }
 
@@ -128,7 +164,7 @@ export function quoteName(name, engine, mode = 'always') {
  * a MySQL database other than the connection's) would read a different table.
  */
 const DEFAULT_SCHEMA = /** @type {Record<string, string>} */ ({
-  postgres: 'public', cockroachdb: 'public', mssql: 'dbo', duckdb: 'main', sqlite: 'main', d1: 'main', libsql: 'main',
+  postgres: 'public', cockroachdb: 'public', yugabytedb: 'public', alloydb: 'public', snowflake: 'PUBLIC', mssql: 'dbo', duckdb: 'main', sqlite: 'main', d1: 'main', libsql: 'main',
 })
 
 /**
@@ -138,7 +174,9 @@ const DEFAULT_SCHEMA = /** @type {Record<string, string>} */ ({
  */
 export function tableRef({ schema, table, engine, mode = 'always', qualify = true }) {
   const t = quoteName(table, engine, mode)
-  if (!schema) return t
+  // Spanner's GoogleSQL tables outside a named schema sit in a schema with
+  // no name, which the catalog lists as `default`.
+  if (!schema || (engine === 'spanner' && schema === 'default') || (engine === 'odbc' && odbc.flat)) return t
   const e = String(engine ?? 'postgres')
   if (!qualify && DEFAULT_SCHEMA[e] === schema) return t
   return `${quoteName(schema, engine, mode)}.${t}`

@@ -49,10 +49,14 @@ export function providerOf(conn) {
   return null
 }
 
+import { ODBC_PRESETS, odbcDriverId } from '$lib/odbc-presets.js'
+
 /** @type {Record<string, string>} */
 const ENGINE_SHORT = {
   postgres: 'Postgres',
   cockroachdb: 'CockroachDB',
+  yugabytedb: 'YugabyteDB',
+  alloydb: 'AlloyDB',
   mysql: 'MySQL',
   mariadb: 'MariaDB',
   mssql: 'SQL Server',
@@ -70,10 +74,33 @@ const ENGINE_SHORT = {
   elasticsearch: 'Elasticsearch',
   opensearch: 'OpenSearch',
   cassandra: 'Cassandra',
+  scylladb: 'ScyllaDB',
   firestore: 'Firestore',
+  neo4j: 'Neo4j',
+  influxdb: 'InfluxDB',
+  spanner: 'Spanner',
+  bigquery: 'BigQuery',
+  snowflake: 'Snowflake',
+  odbc: 'ODBC',
+  ...Object.fromEntries(ODBC_PRESETS.map((p) => [`odbc-${p.id}`, p.label])),
   mongodb: 'MongoDB',
   d1: 'D1',
   posthog: 'HogQL',
+}
+
+/**
+ * The engine a saved connection shows as: its type, except a Cassandra
+ * connection made for ScyllaDB. ScyllaDB speaks CQL and runs on the Cassandra
+ * engine end to end, so the type stays `cassandra` and only the name and mark
+ * say ScyllaDB.
+ * @param {{ type?: string, flavor?: string } | null | undefined} c
+ * @returns {string}
+ */
+export function engineId(c) {
+  if (c?.type === 'cassandra' && c?.flavor === 'scylladb') return 'scylladb'
+  // ODBC connections show as the engine they reach: `odbc-db2`, `odbc-hana`.
+  if (c?.type === 'odbc') return odbcDriverId(/** @type {any} */ (c).preset)
+  return c?.type ?? ''
 }
 
 /** Short engine name for the list chip ("Postgres", "Redis"). @param {string | undefined} type */

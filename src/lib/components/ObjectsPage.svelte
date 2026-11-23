@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import { executeSql } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
   import Boxes from '@lucide/svelte/icons/boxes'
@@ -23,6 +24,8 @@
     onopen = () => {},
     /** Assigned here; the shell calls it for ⌘F. */
     focusSearch = $bindable(/** @type {() => void} */ (() => {})),
+    /** The connection listed. The page is kept across connections. */
+    connectionId = '',
   } = $props()
 
   /** @type {HTMLInputElement | null} */
@@ -284,6 +287,18 @@
     }
   }
 
+  // Kept across connections, the page listed the last database's tables,
+  // views and functions. A new connection empties every sub-tab, and the
+  // lazy load below reads the one on screen.
+  // svelte-ignore state_referenced_locally
+  let listedFor = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === listedFor) return
+    listedFor = id
+    for (const k of /** @type {SubTab[]} */ (Object.keys(slots))) slots[k] = { data: null, loading: false, error: '' }
+  })
+
   // Lazy-load the active sub-tab the first time it is shown.
   $effect(() => {
     const slot = slots[activeSub]
@@ -389,7 +404,7 @@
     <button
       type="button"
       class="mr-1 inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
-      title="Refresh (⌘R)"
+      title={`Refresh (${comboTitle('Mod+R')})`}
       onclick={refresh}
     >
       <RefreshCw class={cn('size-3.5', isLoading && 'animate-spin')} />
@@ -405,10 +420,10 @@
         Loading…
       {:else if objQuery.trim()}
         {rows.length} of {totalCount}
-        {activeSub === 'functions' && totalCount === 1 ? 'function' : activeSub}
+        {totalCount === 1 ? activeSub.slice(0, -1) : activeSub}
       {:else}
         {totalCount}
-        {activeSub === 'functions' && totalCount === 1 ? 'function' : activeSub}
+        {totalCount === 1 ? activeSub.slice(0, -1) : activeSub}
       {/if}
     </span>
     {#if currentSupported && totalCount > 0}
@@ -428,7 +443,7 @@
             // behind it is the page, and there is nothing to close.
             if (e.key === 'Escape' && objQuery) { e.preventDefault(); e.stopPropagation(); objQuery = '' }
           }}
-          class="field-surface h-7 w-full border-transparent bg-accent/40 pl-8 pr-7 text-ui-sm text-foreground placeholder:text-muted-foreground transition-colors focus:bg-input/30 focus:outline-none"
+          class="search-box no-field-frame h-7 w-full pl-8 pr-7 text-ui-sm"
         />
         {#if objQuery}
           <button

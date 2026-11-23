@@ -97,7 +97,13 @@
      `.dark` block below (toggled for every dark theme via classList) swaps in
      stronger black + a dim rim, since a light drop-shadow is nearly invisible
      on a dark surface and depth there comes from the rim highlight instead. */
-  --elevate-1: 0 1px 2px oklch(0 0 0 / 0.05), 0 1px 1px oklch(0 0 0 / 0.04);
+  /* Level 1 is an outline, not a shadow: things that sit in the page (a
+     selected segment, a raised chip, a card) get a crisp 1px hairline. Small
+     soft shadows rendered as a grey smudge on Linux and Windows, and against
+     a dark surface they did not show at all. Only what floats (menus,
+     popovers, dialogs: levels 2 and 3) keeps a real shadow. Tailwind's
+     `shadow-xs` and `shadow-sm` resolve to this too (@theme below). */
+  --elevate-1: 0 0 0 1px oklch(0 0 0 / 0.09);
   --elevate-2: 0 2px 5px -1px oklch(0 0 0 / 0.07), 0 6px 16px -3px oklch(0 0 0 / 0.09);
   --elevate-3: 0 10px 22px -6px oklch(0 0 0 / 0.11), 0 22px 52px -12px oklch(0 0 0 / 0.16);
   /* Top rim highlight - a 1px inner catch-light that gives raised surfaces a
@@ -136,7 +142,7 @@
   --warning-foreground: oklch(0.20 0.04 78);
   --info:               oklch(0.71 0.13 245);
   --info-foreground:    oklch(0.16 0.03 245);
-  --elevate-1: 0 1px 2px oklch(0 0 0 / 0.4), 0 1px 3px oklch(0 0 0 / 0.3);
+  --elevate-1: 0 0 0 1px oklch(1 0 0 / 0.09);
   --elevate-2: 0 2px 5px -1px oklch(0 0 0 / 0.45), 0 8px 20px -4px oklch(0 0 0 / 0.5);
   --elevate-3: 0 12px 28px -8px oklch(0 0 0 / 0.55), 0 28px 60px -16px oklch(0 0 0 / 0.62);
   --rim: inset 0 1px 0 0 oklch(1 0 0 / 0.055);
@@ -294,10 +300,10 @@ textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
 
 /* The search row at the top of a dropdown: borderless, with the hairline under
    it turning accent while you type in it. */
-[data-slot="menu-search"] {
+[data-slot="menu-search"]:not(.search-shell):not(:has(.search-box)) {
   border-bottom: 1px solid color-mix(in oklch, var(--border) 50%, transparent);
 }
-[data-slot="menu-search"]:focus-within {
+[data-slot="menu-search"]:not(.search-shell):not(:has(.search-box)):focus-within {
   border-bottom-color: var(--ring);
 }
 
@@ -424,6 +430,9 @@ html[data-os="linux"]   { --window-radius: 8px; }
 
 
 @theme inline {
+  /* In-page "shadows" are hairline outlines (see --elevate-1). */
+  --shadow-xs: var(--elevate-1);
+  --shadow-sm: var(--elevate-1);
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
@@ -490,6 +499,18 @@ html[data-os="linux"]   { --window-radius: 8px; }
     autocorrect: off;
     autocapitalize: off;
     spellcheck: false;
+  }
+
+  /* The window's chrome (title bar and its menus, tab strip, toolbars,
+     status bar) always reads in a proportional face, even when the app font
+     is all-monospace: the data keeps the chosen font, the frame around it
+     stays a desktop app's. In the base layer, so a `font-mono` utility inside
+     (a shortcut cap, a path) still wins. */
+  [data-studio-region="titlebar"],
+  [data-studio-region="statusbar"],
+  [data-studio-chrome],
+  .chrome-font {
+    font-family: var(--font-chrome, var(--font-sans));
   }
 
   html {
@@ -720,6 +741,24 @@ html[data-os="linux"]   { --window-radius: 8px; }
   ) {
     font-weight: 450;
     -webkit-font-smoothing: antialiased;
+  }
+
+  /* Appearance > Font smoothing > System: the OS's own text rendering instead
+     of the thin grayscale the app uses everywhere else (on a Mac, the heavier
+     default macOS smoothing). After every rule above that forces grayscale. */
+  html[data-smoothing='system'],
+  html[data-smoothing='system'] :is(
+    [data-slot='context-menu-content'],
+    [data-slot='dropdown-menu-content'],
+    [data-slot='select-content'],
+    [data-slot='dialog-content'],
+    [data-slot='popover-content'],
+    [role='dialog'],
+    [role='menu'],
+    [role='listbox']
+  ) {
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
   }
 
   /* Sonner - frosted notifications */
@@ -1125,6 +1164,15 @@ html[data-os="linux"]   { --window-radius: 8px; }
     will-change: scroll-position;
   }
 
+  /* The main grid doesn't bounce. Scrolling into an edge on macOS rubber-banded
+     the whole scroll container, header and columns included, a few pixels
+     down and sideways before springing back: a flicker at the top of the grid
+     on every scroll to the start. An embedded grid (AI chat results) keeps
+     `contain`, so scrolling past its edge still reaches the chat around it. */
+  [data-canvas-table="full"] {
+    overscroll-behavior: none;
+  }
+
   /* Minimal thin scrollbars - all platforms */
   :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto) {
     scrollbar-width: thin;
@@ -1327,6 +1375,52 @@ html[data-motion="reduced"] :is(*, *::before, *::after) {
 html[data-motion="reduced"] .animate-spin {
   animation-duration: 1.6s !important;
   animation-iteration-count: infinite !important;
+}
+
+/* ── Search fields ─────────────────────────────────────────────────────────
+   One look for every search box (DESIGN_SYSTEM.md, "Search fields"): an
+   outlined box over a faint fill, no shadow. A 1px outline reads as a field
+   on every platform; the fill alone vanished on light themes and drop shadows
+   rendered muddy on Linux and Windows. SearchField.svelte uses it, and so do
+   the hand-built filters that keep their own keyboard handling (the sidebar's).
+   In the components layer, so a size utility on one field still wins. */
+@layer components {
+  .search-box {
+    height: 2rem;
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+    background-color: color-mix(in oklab, var(--muted) 30%, transparent);
+    color: var(--foreground);
+    outline: none;
+    transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
+  }
+  .search-box::placeholder { color: var(--muted-foreground); }
+  .search-box:hover:not(:disabled):not(:focus) { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
+  /* Focus is one crisp accent edge, hovered or not: no halo outside it. A
+     halo beside a hover-gray border read as two outlines. */
+  .search-box:focus {
+    border-color: var(--ring);
+    background-color: color-mix(in oklab, var(--muted) 45%, transparent);
+    box-shadow: none;
+  }
+  .search-box:disabled { cursor: not-allowed; opacity: 0.4; }
+  .search-box::-webkit-search-cancel-button { display: none; }
+  /* The same box for a search built as a wrapper (icon, input, buttons in one
+     row): the wrapper carries the outline and lights up while the input has focus. */
+  .search-shell {
+    border-radius: var(--radius-lg);
+    border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+    background-color: color-mix(in oklab, var(--muted) 30%, transparent);
+    color: var(--foreground);
+    transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
+  }
+  .search-shell:hover:not(:focus-within) { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
+  .search-shell:focus-within {
+    border-color: var(--ring);
+    background-color: color-mix(in oklab, var(--muted) 45%, transparent);
+  }
+  .search-shell input { background: transparent; color: inherit; }
+  .search-shell input::placeholder { color: var(--muted-foreground); }
 }
 
 /* ── Hover-revealed row actions stay reachable by keyboard ───────────────────
@@ -1830,4 +1924,54 @@ html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog
 html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"])
   :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto):not(:is([role="dialog"], [role="alertdialog"]) *)::-webkit-scrollbar {
   display: none;
+}
+
+/* ── Switches: one geometry at every zoom ─────────────────────────────────────
+   The thumb is sized from the track's own height and slides by percentage, so
+   it stays centred and the gap stays even whatever the zoom. Switches used to
+   mix a pixel track (h-[18px], translate-x-[14px]) with a rem thumb that grew
+   with zoom, so zoomed in the thumb outgrew its track. */
+.app-switch {
+  position: relative;
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 1.25rem;
+  width: 2.25rem;
+  border-radius: 9999px;
+  background-color: color-mix(in oklab, var(--muted-foreground) 30%, transparent);
+  transition: background-color 150ms ease-out;
+}
+.app-switch[data-size='sm'] { height: 1rem; width: 1.75rem; }
+.app-switch[aria-checked='true'],
+.app-switch[data-state='checked'] { background-color: var(--primary); }
+.app-switch:disabled { opacity: 0.5; cursor: not-allowed; }
+.app-switch:focus-visible { outline: 2px solid var(--ring); outline-offset: 1px; }
+.app-switch-thumb {
+  position: absolute;
+  top: 0.125rem;
+  bottom: 0.125rem;
+  left: 0.125rem;
+  aspect-ratio: 1;
+  border-radius: 9999px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
+  pointer-events: none;
+  transition: left 160ms cubic-bezier(0.23, 1, 0.32, 1), transform 160ms cubic-bezier(0.23, 1, 0.32, 1);
+}
+.app-switch[aria-checked='true'] .app-switch-thumb,
+.app-switch[data-state='checked'] .app-switch-thumb {
+  left: calc(100% - 0.125rem);
+  transform: translateX(-100%);
+  /* The token made to contrast with --primary: a near-white accent hid a
+     white knob. */
+  background: var(--primary-foreground);
+}
+
+/* A dialog is h-fit (fixed, inset-0, m-auto). WebKit sizes a flex-1 child of
+   it from its 0% basis, to nothing: Import data showed a sliver of its drop
+   zone. Chrome reads that basis as the content. Starting from the content
+   gives both the same dialog, and min-h-0 still lets the body shrink and
+   scroll once the dialog reaches its max height. */
+[data-slot="dialog-content"] > .flex-1 {
+  flex-basis: auto;
 }

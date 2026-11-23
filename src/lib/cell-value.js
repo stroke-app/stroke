@@ -49,8 +49,11 @@ export function oversizeCellText(over) {
   // value costs a full detoast of it. The cell says what is there and how big;
   // the dock loads it when someone opens it.
   if (!over.preview) return `${formatByteSize(over.bytes)} ${over.dataType || 'value'}`
-  const head = over.preview.length > 200 ? over.preview.slice(0, 200) + '…' : over.preview
-  return `[${over.dataType || 'value'} · ${formatByteSize(over.bytes)}, truncated] ${head}`
+  // The value first: a grid cell shows about forty characters, and with the
+  // label in front all of them said "[jsonb · 15 KB, truncated]". The size
+  // follows (and the cell's Load button says the rest is not here).
+  const head = over.preview.length > 200 ? over.preview.slice(0, 200) : over.preview
+  return `${head}… (${formatByteSize(over.bytes)} ${over.dataType || 'value'})`
 }
 
 /**
@@ -173,6 +176,19 @@ export function getColumnEnumValues(col) {
 export function isBooleanType(dataType) {
   const t = normalizedType(dataType)
   return t === 'boolean' || t === 'bool'
+}
+
+/**
+ * A boolean column's value as `true`/`false`. SQLite, libSQL and D1 store a
+ * boolean as 0 or 1; shown raw it reads as a number, and a true/false picker
+ * given "0" matches none of its options. Anything else comes back unchanged.
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+export function asBooleanValue(value) {
+  if (value === 0 || value === '0') return false
+  if (value === 1 || value === '1') return true
+  return value
 }
 
 /**

@@ -17,6 +17,14 @@
    * @typedef {{ table: string, schema: string, count: number, columns: any[], sampleRow: any[] | null, tableKind?: string }} SearchHit
    */
 
+  /** "3 tables", or "2 tables and 1 view" when the list has views in it. @param {any[]} list */
+  function relationCount(list) {
+    const views = list.filter((t) => /view/.test(t.tableKind ?? t.kind ?? '')).length
+    const n = list.length - views
+    const tablesPart = `${n} table${n === 1 ? '' : 's'}`
+    return views ? `${tablesPart} and ${views} view${views === 1 ? '' : 's'}` : tablesPart
+  }
+
   let {
     /** @type {TableInfo[]} */
     tables = [],
@@ -29,6 +37,8 @@
     onopentable = (tableName, searchTerm, inSchema) => {},
     /** Assigned here; the shell calls it for ⌘F. */
     focusSearch = $bindable(/** @type {() => void} */ (() => {})),
+    /** The connection searched. The page is kept across connections. */
+    connectionId = '',
   } = $props()
 
   let query = $state('')
@@ -55,6 +65,28 @@
   let selected = $state(-1)
   /** @type {HTMLInputElement | null} */
   let inputEl = $state(null)
+
+  // Kept across connections, the page showed the last database's matches
+  // ("products · Hammer" over a database with no products table), and opening
+  // one looked for that table here. Results and the per-schema table lists
+  // go when the connection does; the query stays, to run again.
+  // svelte-ignore state_referenced_locally
+  let searchedOn = connectionId
+  $effect(() => {
+    const id = connectionId
+    if (id === searchedOn) return
+    searchedOn = id
+    untrack(() => {
+      searchGeneration++
+      searching = false
+      results = []
+      searched = false
+      failed = 0
+      selected = -1
+      progress = { done: 0, total: 0 }
+      schemaTables.clear()
+    })
+  })
 
   $effect(() => {
     // Selects as well as focuses, so ⌘F on a page that already has a query
@@ -299,8 +331,8 @@
     <div class="mx-auto w-full max-w-3xl">
       <div
         class={cn(
-          'flex h-11 items-center gap-2 rounded-lg bg-muted/50 ps-3.5 pe-1.5 transition-colors focus-within:bg-muted/70',
-          regexError && 'bg-destructive/8',
+          'search-shell flex h-11 items-center gap-2 ps-3.5 pe-1.5',
+          regexError && 'border-destructive/50 bg-destructive/8',
         )}
       >
         <Search class="size-4 shrink-0 text-muted-foreground" />
@@ -388,10 +420,11 @@
         {:else if searched && results.length}
           <span><span class="font-medium text-foreground">{totalMatches.toLocaleString()}</span> {totalMatches === 1 ? 'match' : 'matches'} in <span class="font-medium text-foreground">{results.length}</span> of {progress.total} tables</span>
         {:else if !query.trim()}
-          {#if !canScope}<span>{tables.length} tables in {schema}</span>{/if}
+          {#if !canScope}<span>{relationCount(tables)} in {schema}</span>{/if}
         {/if}
-        {#if failed && !searching}
-          <span class="text-warning">· {failed} table{failed === 1 ? '' : 's'} couldn't be searched</span>
+        {#if failed && !searching && query.trim()}
+          <!-- The dot separates it from a results line; alone it led with one. -->
+          <span class="text-warning">{searched && results.length ? '· ' : ''}{failed} table{failed === 1 ? '' : 's'} couldn't be searched</span>
         {/if}
         {#if results.length && !searching}
           <span class="ms-auto hidden items-center gap-1 sm:flex"><Kbd combo="ArrowUp" /><Kbd combo="ArrowDown" /> move <Kbd combo="Enter" /> open</span>
@@ -430,8 +463,8 @@
                   <div class="ms-8.5 flex min-w-0 flex-wrap gap-x-4 gap-y-1">
                     {#each cells as c (c.name)}
                       <span class="flex min-w-0 max-w-[30ch] items-baseline gap-1.5">
-                        <span class={cn('shrink-0 text-ui-3xs', c.hit ? 'text-foreground/80' : 'text-muted-foreground/70')}>{c.name}</span>
-                        <span class={cn('min-w-0 truncate font-mono text-ui-2xs', c.isNull ? 'text-muted-foreground/60' : 'text-foreground/75')}>
+                        <span class={cn('shrink-0 text-ui-3xs', c.hit ? 'text-foreground/80' : 'text-muted-foreground')}>{c.name}</span>
+                        <span class={cn('min-w-0 truncate font-mono text-ui-2xs', c.isNull ? 'text-muted-foreground' : 'text-foreground/75')}>
                           {#each marked(c.text) as part, pi (pi)}{#if part.m}<mark class="rounded-sm bg-warning/25 px-px text-foreground">{part.t}</mark>{:else}{part.t}{/if}{/each}
                         </span>
                       </span>

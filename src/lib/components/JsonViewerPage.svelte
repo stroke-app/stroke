@@ -8,10 +8,13 @@
   import ResizeHandle from './ResizeHandle.svelte'
   import { loadLayout, saveLayout } from '$lib/stores/layout.js'
   import Copy from '@lucide/svelte/icons/copy'
+  import Share2 from '@lucide/svelte/icons/share-2'
+  import { requestShare } from '$lib/share-flow.js'
   import CheckCheck from '@lucide/svelte/icons/check-check'
   import Braces from '@lucide/svelte/icons/braces'
   import Wand2 from '@lucide/svelte/icons/wand-2'
   import Trash2 from '@lucide/svelte/icons/trash-2'
+  import { layoutJsonText } from '$lib/json-layout.js'
   import { evalJsonPath, getCompletionItems, applyCompletion, describeResult } from '$lib/jsonpath.js'
 
   let { active = false } = $props()
@@ -154,6 +157,13 @@
     })
   }
 
+  /** Share the query's result when there is one, else the whole document. */
+  function handleShare() {
+    const p = jsonPath.trim()
+    if (pathResult?.ok) requestShare({ kind: 'json', title: `JSON ${p}`, value: pathResult.value })
+    else if (parsedJson !== null) requestShare({ kind: 'json', title: 'JSON', value: parsedJson })
+  }
+
   function handleCopyInput() {
     navigator.clipboard.writeText(rawJson).then(() => {
       copiedInput = true
@@ -184,6 +194,16 @@
 
   /** Typing in the input: the header follows at once, the parse 250ms after it stops. @param {string} val */
   function onInput(val) {
+    // JSON pasted into an empty input as one long line (a cell, an API
+    // response, a log entry) is laid out at once instead of sitting on one
+    // line until Format is found.
+    if (!rawJson.trim() && val.length > 60 && !val.includes('\n')) {
+      const pretty = layoutJsonText(val)
+      if (pretty !== null) {
+        setInput(pretty)
+        return
+      }
+    }
     rawJson = val
     // Debounce the expensive parse so it runs at most once per 250ms
     // instead of on every single keystroke. For a 500kb JSON file this
@@ -229,7 +249,7 @@
           {#if copiedInput}<CheckCheck class="size-3 shrink-0 text-success" />{:else}<Copy class="size-3 shrink-0" />{/if}
           Copy
         </button>
-        <button type="button"
+        <button aria-label="Clear input" title="Clear input" type="button"
           class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
           onclick={clearInput}
         ><Trash2 class="size-3 shrink-0" /></button>
@@ -299,6 +319,14 @@
         {:else}
           <Copy class="size-3 shrink-0" />Copy result
         {/if}
+      </button>
+      <button type="button"
+        class="inline-flex items-center gap-1 rounded-md px-2 py-0.5 font-mono text-ui-2xs transition-colors {parsedJson !== null ? 'text-muted-foreground hover:bg-muted hover:text-foreground' : 'cursor-default text-muted-foreground'}"
+        disabled={parsedJson === null}
+        title="Share as an encrypted link: the result, or the whole document"
+        onclick={handleShare}
+      >
+        <Share2 class="size-3 shrink-0" />Share
       </button>
     </div>
   </div>

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { marked } from 'marked'
-import { safeRawHtml, isSafeHref } from './markdown-safe.js'
+import { safeRawHtml, isSafeHref, unfenceProse } from './markdown-safe.js'
 
 describe('safeRawHtml', () => {
   it('passes attribute-free inline formatting tags', () => {
@@ -55,5 +55,28 @@ describe('renderSafeMarkdown', () => {
     expect(html).not.toContain('<img')
     expect(html).not.toContain('href="javascript')
     expect(html).toContain('href="https://a.b"')
+  })
+})
+
+describe('unfenceProse', () => {
+  it('turns a sentence that opens with a fence back into prose', () => {
+    const md = 'Since this chat is read & write, schema changes still go in a\n```sql block for you to run. I can open the statement in the editor.\n\nTwo things I need from you:\n1. What should it contain?'
+    const out = unfenceProse(md)
+    expect(out).toContain('still go in a `sql` block for you to run. I can open the statement in the editor.')
+    expect(marked.parse(out)).not.toContain('<pre')
+  })
+
+  it('keeps real fences, with or without options', () => {
+    for (const md of ['```sql\nselect 1\n```', '```js title=a.js\nx()\n```', '~~~\nplain\n~~~']) expect(unfenceProse(md)).toBe(md)
+  })
+
+  it('leaves lines inside a real fence alone', () => {
+    const md = '```md\n```sql block for you to run. I can open it.\n```'
+    expect(unfenceProse(md)).toBe(md)
+  })
+
+  it('starts a new line when the previous one is a list item or blank', () => {
+    expect(unfenceProse('- one\n```sql block for you to run now')).toBe('- one\n`sql` block for you to run now')
+    expect(unfenceProse('```sql block for you to run now')).toBe('`sql` block for you to run now')
   })
 })

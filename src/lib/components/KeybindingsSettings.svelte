@@ -223,7 +223,7 @@
         type="search"
         placeholder="Search by command or key"
         aria-label="Search keybindings"
-        class="no-field-frame h-8 w-full rounded-full bg-muted/50 pl-8 pr-3 text-ui-xs text-foreground outline-none placeholder:text-muted-foreground focus:bg-muted/70"
+        class="search-box no-field-frame h-8 w-full pl-8 pr-3 text-ui-xs"
       />
     </div>
     {#if overrideCount > 0}

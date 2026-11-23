@@ -313,21 +313,32 @@ jobs:
         run: |
           set -euo pipefail
           BASE="https://github.com/${GITHUB_REPOSITORY}/releases/download/nightly"
+          # The updater downloads a copy named for this build. Every nightly
+          # reuses the plain names, so an app reading the new latest.json
+          # could be served last night's file under the same URL (mid-upload,
+          # or from GitHub's download cache) and fail its signature check. A
+          # name no earlier build used can only be this build's file.
+          TAG=$(printf '%s' "$VERSION" | tr -c 'A-Za-z0-9.-' '-')
+          for f in stroke-nightly_aarch64.app.tar.gz stroke-nightly_x64.app.tar.gz stroke-nightly_amd64.AppImage \
+                   stroke-nightly_amd64.deb stroke-nightly_x86_64.pkg.tar.zst stroke-nightly_x64-setup.exe; do
+            cp "out/$f" "out/${f/stroke-nightly_/stroke-nightly_${TAG}_}"
+          done
           git fetch -q origin master || true
           STABLE=$(git show origin/master:src-tauri/tauri.conf.json 2>/dev/null | node -e "let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{try{console.log(JSON.parse(s).version)}catch{console.log('')}})")
-          VERSION="$VERSION" BASE="$BASE" STABLE="$STABLE" node -e "
+          VERSION="$VERSION" BASE="$BASE" TAG="$TAG" STABLE="$STABLE" node -e "
             const fs = require('fs')
-            const { VERSION, BASE } = process.env
+            const { VERSION, TAG } = process.env
+            const BASE = process.env.BASE + '/stroke-nightly_' + TAG + '_'
             const sig = (f) => fs.readFileSync('out/' + f, 'utf8').trim()
             const platforms = {
-              'darwin-aarch64': { url: BASE + '/stroke-nightly_aarch64.app.tar.gz', signature: sig('stroke-nightly_aarch64.app.tar.gz.sig') },
-              'darwin-x86_64':  { url: BASE + '/stroke-nightly_x64.app.tar.gz',     signature: sig('stroke-nightly_x64.app.tar.gz.sig') },
-              'linux-x86_64':   { url: BASE + '/stroke-nightly_amd64.AppImage',      signature: sig('stroke-nightly_amd64.AppImage.sig') },
+              'darwin-aarch64': { url: BASE + 'aarch64.app.tar.gz', signature: sig('stroke-nightly_aarch64.app.tar.gz.sig') },
+              'darwin-x86_64':  { url: BASE + 'x64.app.tar.gz',     signature: sig('stroke-nightly_x64.app.tar.gz.sig') },
+              'linux-x86_64':   { url: BASE + 'amd64.AppImage',      signature: sig('stroke-nightly_amd64.AppImage.sig') },
               // Linux packages update from the app too, each from its own entry:
               // a .deb through pkexec dpkg, an Arch install through pkexec pacman.
-              'linux-x86_64-deb':    { url: BASE + '/stroke-nightly_amd64.deb',            signature: sig('stroke-nightly_amd64.deb.sig') },
-              'linux-x86_64-pacman': { url: BASE + '/stroke-nightly_x86_64.pkg.tar.zst',   signature: sig('stroke-nightly_x86_64.pkg.tar.zst.sig') },
-              'windows-x86_64': { url: BASE + '/stroke-nightly_x64-setup.exe',       signature: sig('stroke-nightly_x64-setup.exe.sig') },
+              'linux-x86_64-deb':    { url: BASE + 'amd64.deb',            signature: sig('stroke-nightly_amd64.deb.sig') },
+              'linux-x86_64-pacman': { url: BASE + 'x86_64.pkg.tar.zst',   signature: sig('stroke-nightly_x86_64.pkg.tar.zst.sig') },
+              'windows-x86_64': { url: BASE + 'x64-setup.exe',       signature: sig('stroke-nightly_x64-setup.exe.sig') },
             }
             // The changelog since the last stable release, in CHANGELOG.md's own
             // format: the update window parses it into New / Improved / Fixed.
@@ -338,7 +349,9 @@ jobs:
               const start = cl.indexOf('## [')
               const end = stable ? cl.indexOf('## [' + stable + ']') : -1
               const body = start === -1 ? '' : cl.slice(start, end > start ? end : undefined).trim()
-              if (body) notes = body.slice(0, 60000)
+              // Plain titles: apps before 3.6.5 print markdown bold as asterisks,
+              // and newer ones read `Title - text` without them (splitEntry).
+              if (body) notes = body.replace(/\*\*([^*\n]+)\*\*/g, '\$1').slice(0, 60000)
             } catch {}
             fs.writeFileSync('out/latest.json', JSON.stringify({ version: VERSION, notes, pub_date: new Date().toISOString(), platforms }, null, 2))
           "
@@ -382,13 +395,16 @@ jobs:
           # from ever becoming the repo's "latest" release.
           gh release delete nightly --repo "$GITHUB_REPOSITORY" --cleanup-tag --yes 2>/dev/null || true
           git push origin ":refs/tags/nightly" 2>/dev/null || true
-          gh release create nightly out/* \
+          # The feed goes up last, so it never names a file that isn't there.
+          mapfile -t FILES < <(ls out/* | grep -v '/latest.json$')
+          gh release create nightly "${FILES[@]}" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SHA" \
             --title "Stroke Nightly ${VERSION}" \
             --notes-file notes.md \
             --prerelease \
             --latest=false
+          gh release upload nightly out/latest.json --repo "$GITHUB_REPOSITORY"
           echo "✅ Published Stroke Nightly ${VERSION}"
 
   # Arch: refresh stroke-nightly-bin on the AUR with this build. Skipped

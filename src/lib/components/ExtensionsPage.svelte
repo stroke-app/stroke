@@ -1,4 +1,5 @@
 <script>
+  import { errorText } from '$lib/utils.js'
   import SelectMenu from "./SelectMenu.svelte";
   import SearchField from './SearchField.svelte'
   import { untrack } from "svelte";
@@ -138,7 +139,7 @@
       const installed = await installExternalPlugin(picked);
       toast.success(`Installed ${installed.name}`, { description: "Turn it on to start using it." });
     } catch (e) {
-      toast.error("Could not install that folder", { description: String(e) });
+      toast.error("Could not install that folder", { description: errorText(e) });
     } finally {
       installing = false;
     }
@@ -157,7 +158,7 @@
       await uninstallExternalPlugin(p.id);
       toast.success(`Removed ${p.name}`);
     } catch (e) {
-      toast.error(`Could not remove ${p.name}`, { description: String(e) });
+      toast.error(`Could not remove ${p.name}`, { description: errorText(e) });
     }
   }
 
@@ -358,45 +359,32 @@
     "h-7 w-[12rem] justify-between gap-2 border-border/70 bg-background px-2.5 text-ui-xs font-normal shadow-none";
   const ruleInput =
 "field-surface h-7 min-w-0 bg-background px-2.5 font-mono text-ui-xs text-foreground outline-none";
+
+  /** The plugin API guide: docs/PLUGIN_API.md on GitHub, since an install has no docs folder. */
+  async function openPluginGuide() {
+    const url = 'https://github.com/stroke-app/stroke/blob/nightly/docs/PLUGIN_API.md'
+    try {
+      const { openUrl } = await import('@tauri-apps/plugin-opener')
+      await openUrl(url)
+    } catch {
+      window.open(url, '_blank', 'noopener,noreferrer')
+    }
+  }
 </script>
 
 <!-- Compact Linear/Resend-style toggle -->
 {#snippet toggle(on, onclick, label)}
+  <!-- The shared switch (app.css .app-switch): one geometry at every zoom. The
+       before: pseudo-element widens the hit area without moving neighbours. -->
   <button
     type="button"
     role="switch"
     aria-label={label}
     aria-checked={on}
     {onclick}
-    class={cn(
-      // before: expands the hit area beyond the 18px visual without moving neighbors
-      "group/toggle relative inline-flex h-[18px] w-8 shrink-0 cursor-pointer items-center rounded-full before:absolute before:-inset-1 before:content-[''] focus-visible:ring-2 focus-visible:ring-ring/18 focus-visible:outline-none",
-      "transition-[background-color] duration-150",
-      // Inset rim defines the pill edge on dark surfaces; inner shadow gives the
-      // trough depth so the knob reads as sitting *in* the track, not on it.
-      "shadow-[inset_0_0_0_1px_rgba(255,255,255,0.07),inset_0_1px_2px_rgba(0,0,0,0.2)]",
-      // The theme's own accent, not `success`. Green is this app's word for "that
-      // operation worked"; twenty switches, twenty icons and a count badge all
-      // wearing it made the page read as a status board and left the theme's
-      // accent unused on the one page built entirely out of on/off. The knob
-      // swaps to `primary-foreground`, which is the token guaranteed to contrast
-      // with `primary` - that pairing is what the near-white Studio accent broke
-      // when the knob was hard-coded white.
-      on ? "bg-primary" : "bg-muted-foreground/25 hover:bg-muted-foreground/35",
-    )}
+    class="app-switch cursor-pointer before:absolute before:-inset-1 before:content-['']"
   >
-    <span
-      class={cn(
-        // iOS-style press feedback: the knob stretches along the travel axis
-        // while staying anchored to its end of the track.
-        "pointer-events-none block h-3.5 w-3.5 rounded-full",
-        on ? "bg-primary-foreground" : "bg-white",
-        "shadow-[0_1px_2px_rgba(0,0,0,0.28),0_0_1px_rgba(0,0,0,0.16)]",
-        "transition-[translate,width] duration-[180ms] ease-[cubic-bezier(0.23,1,0.32,1)]",
-        "group-active/toggle:w-4",
-        on ? "translate-x-4 group-active/toggle:translate-x-3.5" : "translate-x-0.5",
-      )}
-    ></span>
+    <span class="app-switch-thumb"></span>
   </button>
 {/snippet}
 
@@ -446,7 +434,7 @@
               aria-pressed={show === v}
               class={cn(
                 "inline-flex h-full items-center gap-1.5 rounded-sm px-2.5 text-ui-xs transition-colors",
-                show === v ? "bg-background text-foreground shadow-sm ring-1 ring-border/50" : "text-muted-foreground hover:text-foreground",
+                show === v ? "bg-background text-foreground ring-1 ring-border/50" : "text-muted-foreground hover:text-foreground",
               )}
               onclick={() => (show = /** @type {'all' | 'on'} */ (v))}
             >
@@ -485,8 +473,8 @@
           {#if $externalPlugins.length === 0}
             <div class="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg bg-muted/25 px-4 py-3">
               <p class="min-w-0 flex-1 text-ui-xs text-muted-foreground text-pretty">
-                No plugins yet. A plugin is a folder with a <code class="font-mono text-foreground/80">manifest.json</code> and one script; see
-                <code class="font-mono text-foreground/80">docs/PLUGIN_API.md</code>.
+                No plugins yet. A plugin is a folder with a <code class="font-mono text-foreground/80">manifest.json</code> and one script; see the
+                <button type="button" class="text-foreground underline decoration-border underline-offset-2 transition-colors hover:decoration-foreground" onclick={() => void openPluginGuide()}>plugin guide</button>.
               </p>
               {#if pluginsDir}
                 <button
@@ -542,7 +530,7 @@
                       </span>
                     {/if}
                   </div>
-                  <div class="absolute right-3 top-2.5 flex h-[18px] items-center">
+                  <div class="absolute right-3 top-2.5 flex h-[1.125rem] items-center">
                     {#if p.loadable}
                       {@render toggle(on, () => void setExternalEnabled(p.id, !on), `Toggle ${p.name}`)}
                     {:else}
@@ -791,7 +779,7 @@
                       {#if it.country && it.country !== it.label}
                         <span class="shrink-0 truncate text-ui-3xs text-muted-foreground">{it.country}</span>
                       {/if}
-                      <span class="ml-1 shrink-0 font-mono text-ui-3xs text-muted-foreground/80">{timeZoneOffsetLabel(it.value)}</span>
+                      <span class="ml-1 shrink-0 font-mono text-ui-3xs text-muted-foreground">{timeZoneOffsetLabel(it.value)}</span>
                       {#if it.value === (c.timeZone ?? "local")}<Check class="size-3.5 shrink-0 text-primary" />{/if}
                     {/snippet}
                   </SearchableMenu>

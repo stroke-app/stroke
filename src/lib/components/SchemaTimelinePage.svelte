@@ -15,7 +15,7 @@
   import Ellipsis from '@lucide/svelte/icons/ellipsis'
   import { onMount } from 'svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import FileCode from '@lucide/svelte/icons/file-code'
@@ -123,7 +123,7 @@
       await navigator.clipboard.writeText(migrationScript)
       toast.success('Migration copied')
     } catch (e) {
-      toast.error('Could not copy', { description: String(e) })
+      toast.error('Could not copy', { description: errorText(e) })
     }
   }
   const totalChanges = $derived(
@@ -538,45 +538,54 @@
           {@const tableCount = Object.values(snap.tables ?? {}).flat().length}
           {@const displayName = snap.title || shortName(snap.connectionLabel)}
 
+          <!-- One row per snapshot: the title gets the full width; a lettered
+               badge says which side it is (A the baseline, B the comparison);
+               Base and Compare sit on the date line, shown on hover or focus. -->
           <div class={cn(
-            'group mb-0.5 rounded-lg px-2.5 py-2 transition-colors',
+            'group mb-1 rounded-lg px-2.5 py-2 transition-colors focus-within:bg-accent/50',
             isActive ? 'bg-accent' : 'hover:bg-accent/50',
           )}>
             <div class="flex min-w-0 items-center gap-2">
-              <span class="min-w-0 flex-1 truncate text-ui-xs font-medium text-foreground" title={snap.connectionLabel}>
+              <span
+                class={cn(
+                  'flex size-5 shrink-0 items-center justify-center rounded-full text-ui-3xs font-bold',
+                  isBefore ? 'bg-warning/20 text-warning' : isAfter ? 'bg-info/20 text-info' : 'border border-border/70 text-transparent',
+                )}
+                aria-label={isBefore ? 'Baseline' : isAfter ? 'Compared' : undefined}
+              >{isBefore ? 'A' : isAfter ? 'B' : ''}</span>
+              <span class="min-w-0 flex-1 truncate text-ui-sm font-medium text-foreground" title={snap.title ? `${snap.title} · ${snap.connectionLabel}` : snap.connectionLabel}>
                 {displayName}
               </span>
-              <!-- Base / Compare: one small two-part control. The picked side
-                   stays lit; both show on hover. -->
-              <div class={cn('flex shrink-0 items-center rounded-md border border-border/60 bg-background/60 p-px', !isActive && 'hidden group-hover:flex')}>
+              <button
+                type="button"
+                onclick={() => remove(snap.id)}
+                class="flex size-6 shrink-0 items-center justify-center rounded-md text-transparent transition-colors group-hover:text-muted-foreground group-focus-within:text-muted-foreground hover:bg-muted hover:!text-destructive"
+                aria-label="Delete snapshot"
+                title="Delete snapshot"
+              >
+                <X class="size-3.5 shrink-0" />
+              </button>
+            </div>
+            <div class="mt-1 flex min-w-0 items-center gap-1.5 ps-7 text-ui-2xs text-muted-foreground">
+              <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
+              <span aria-hidden="true">·</span>
+              <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
+              <span class="ms-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                 <button
                   type="button"
                   onclick={() => { beforeId = snap.id }}
-                  class={cn('h-5 rounded-sm px-1.5 text-ui-3xs font-medium transition-colors', isBefore ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
-                  title="Use as the baseline"
+                  class={cn('h-5 rounded px-1.5 font-medium transition-colors', isBefore ? 'text-warning' : 'hover:bg-muted hover:text-foreground')}
+                  title="Use as the baseline (A)"
                   aria-pressed={isBefore}
                 >Base</button>
                 <button
                   type="button"
                   onclick={() => { afterId = snap.id }}
-                  class={cn('h-5 rounded-sm px-1.5 text-ui-3xs font-medium transition-colors', isAfter ? 'bg-foreground text-background' : 'text-muted-foreground hover:text-foreground')}
-                  title="Compare against the baseline"
+                  class={cn('h-5 rounded px-1.5 font-medium transition-colors', isAfter ? 'text-info' : 'hover:bg-muted hover:text-foreground')}
+                  title="Compare against the baseline (B)"
                   aria-pressed={isAfter}
                 >Compare</button>
-              </div>
-              <button
-                type="button"
-                onclick={() => remove(snap.id)}
-                class="flex size-5 shrink-0 items-center justify-center rounded text-transparent group-hover:text-muted-foreground hover:!text-destructive"
-                aria-label="Delete snapshot"
-              >
-                <X class="size-3 shrink-0" />
-              </button>
-            </div>
-            <div class="mt-0.5 flex items-center gap-1.5 text-ui-2xs text-muted-foreground">
-              <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
-              <span aria-hidden="true">·</span>
-              <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
+              </span>
             </div>
           </div>
         {/each}
@@ -720,13 +729,13 @@
     role="presentation"
     onclick={(e) => { if (e.target === e.currentTarget) captureOpen = false }}
   >
-    <div class="flex w-[460px] flex-col overflow-hidden rounded-2xl border border-border/60 bg-popover elevate-3-rim">
+    <div class="flex w-[28.75rem] flex-col overflow-hidden rounded-2xl border border-border/60 bg-popover elevate-3-rim">
 
       <!-- Modal header -->
       <div class="flex shrink-0 items-center gap-2.5 px-5 pt-5 pb-4">
         <Camera class="size-4 shrink-0 text-foreground/40" />
         <p class="flex-1 text-ui-sm font-semibold text-foreground/85">New snapshot</p>
-        <button
+        <button aria-label="Close" title="Close"
           onclick={() => { captureOpen = false }}
           class="rounded p-1 text-muted-foreground hover:text-foreground"
         >
@@ -1037,8 +1046,8 @@
               {@const parts = selectedDdlDiff?.words.get(line)}
               {@const tone = line.type === 'add' ? 'success' : line.type === 'remove' ? 'destructive' : ''}
               <tr class={cn(tone === 'success' && 'bg-success/[0.07]', tone === 'destructive' && 'bg-destructive/[0.07]')}>
-                <td class={cn('w-11 select-none py-0 pr-2 pl-3 text-right text-ui-3xs tabular-nums text-muted-foreground/60', tone && 'shadow-[inset_2px_0_0_var(--accent-bar)]')} style={tone ? `--accent-bar: var(--${tone})` : ''}>{line.lineA ?? ''}</td>
-                <td class="w-10 select-none py-0 pr-2 text-right text-ui-3xs tabular-nums text-muted-foreground/60">{line.lineB ?? ''}</td>
+                <td class={cn('w-11 select-none py-0 pr-2 pl-3 text-right text-ui-3xs tabular-nums text-muted-foreground', tone && 'shadow-[inset_2px_0_0_var(--accent-bar)]')} style={tone ? `--accent-bar: var(--${tone})` : ''}>{line.lineA ?? ''}</td>
+                <td class="w-10 select-none py-0 pr-2 text-right text-ui-3xs tabular-nums text-muted-foreground">{line.lineB ?? ''}</td>
                 <td class={cn('w-5 select-none text-center', tone === 'success' ? 'text-success' : tone === 'destructive' ? 'text-destructive' : 'text-transparent')}>{line.type === 'add' ? '+' : line.type === 'remove' ? '−' : ' '}</td>
                 <td class={cn('py-0 pr-4 pl-1', tone ? 'text-foreground' : 'text-muted-foreground')}>
                   <span class="whitespace-pre">{#if parts}{#each parts as p, k (k)}{#if p.changed}<mark class={cn('rounded-sm px-px text-inherit', tone === 'success' ? 'bg-success/25' : 'bg-destructive/25')}>{p.text}</mark>{:else}{p.text}{/if}{/each}{:else}{line.content}{/if}</span>

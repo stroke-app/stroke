@@ -61,6 +61,84 @@ pub fn parse_link(link: &str) -> Option<OpenRequest> {
     Some(OpenRequest { uri, name })
 }
 
+/// Where shared studios open. A debug build takes `STROKE_STUDIO_URL` (a local
+/// stroke-web) so the relay can be tested without stroke.click.
+fn studio_base() -> String {
+    #[cfg(debug_assertions)]
+    if let Ok(u) = std::env::var("STROKE_STUDIO_URL") {
+        if !u.trim().is_empty() {
+            return u.trim().trim_end_matches('/').to_string();
+        }
+    }
+    "https://stroke.click/studio".to_string()
+}
+
+/// `stroke://studio?relay=<room>&key=<key>[&open=<schema.table>]`: a shared web
+/// studio (what `npx strokedb --share` and its MCP server print for an AI agent
+/// on another machine). Returns the stroke.click page to open, built here from
+/// checked parts: a link can only ever point a window at the studio itself.
+pub fn parse_studio_link(link: &str) -> Option<String> {
+    let url = Url::parse(link.trim()).ok()?;
+    if !SCHEMES.contains(&url.scheme()) {
+        return None;
+    }
+    let action = url.host_str().unwrap_or_else(|| url.path().trim_matches('/'));
+    if action != "studio" {
+        return None;
+    }
+    let b64u = |s: &str, min: usize, max: usize| {
+        (min..=max).contains(&s.len()) && s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+    };
+    let (mut relay, mut key, mut open) = (None, None, None);
+    for (k, v) in url.query_pairs() {
+        match &*k {
+            "relay" => relay = Some(v.to_string()),
+            "key" => key = Some(v.to_string()),
+            "open" => open = Some(v.to_string()),
+            _ => {}
+        }
+    }
+    let relay = relay.filter(|r| b64u(r, 22, 64))?;
+    let key = key.filter(|k| b64u(k, 43, 43))?;
+    // Room and key are base64url, safe in a fragment as they are.
+    let mut frag = format!("relay={relay}&key={key}");
+    if let Some(t) = open.filter(|t| !t.is_empty() && t.len() <= 200 && !t.chars().any(char::is_control)) {
+        frag.push_str("&open=");
+        frag.push_str(&urlencoding::encode(&t));
+    }
+    Some(format!("{}#{frag}", studio_base()))
+}
+
+/// Show a shared studio in a window of its own, one per room: a second link to
+/// the same room (an agent opening another table) reuses it. The page is a
+/// remote one with no access to the app's commands.
+pub fn open_studio_window(app: &AppHandle, page: &str) {
+    let Ok(target) = Url::parse(page) else { return };
+    // The room is base64url (checked in parse_studio_link), fine in a label.
+    let room: String = target
+        .fragment()
+        .and_then(|f| f.split('&').find_map(|kv| kv.strip_prefix("relay=")))
+        .unwrap_or_default()
+        .chars()
+        .take(16)
+        .collect();
+    let label = format!("studio-{room}");
+    if let Some(w) = app.get_webview_window(&label) {
+        let _ = w.navigate(target);
+        let _ = w.unminimize();
+        let _ = w.set_focus();
+        return;
+    }
+    let built = tauri::WebviewWindowBuilder::new(app, &label, tauri::WebviewUrl::External(target))
+        .title("Stroke \u{b7} Shared studio")
+        .inner_size(1280.0, 820.0)
+        .min_inner_size(640.0, 420.0)
+        .build();
+    if let Err(e) = built {
+        log::warn!("Could not open the shared studio: {e}");
+    }
+}
+
 /// One command-line argument: a `stroke://` link, a connection URL, or a path to
 /// a database file. Flags (and macOS's `-psn_…`) are not connections.
 pub fn parse_arg(arg: &str, cwd: &Path) -> Option<OpenRequest> {
@@ -121,6 +199,27 @@ pub fn take_open_request(state: tauri::State<'_, LaunchState>) -> Option<OpenReq
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn studio_link_builds_the_studio_page() {
+        let room = "AbCdEfGhIjKlMnOpQrStUv";
+        let key = "k".repeat(43);
+        let page = parse_studio_link(&format!("stroke://studio?relay={room}&key={key}&open=public.users")).unwrap();
+        assert_eq!(page, format!("https://stroke.click/studio#relay={room}&key={key}&open=public.users"));
+        assert!(parse_studio_link(&format!("stroke-nightly:studio?relay={room}&key={key}")).is_some());
+    }
+
+    #[test]
+    fn studio_link_rejects_bad_parts() {
+        let key = "k".repeat(43);
+        assert_eq!(parse_studio_link(&format!("stroke://studio?relay=short&key={key}")), None);
+        assert_eq!(parse_studio_link("stroke://studio?relay=AbCdEfGhIjKlMnOpQrStUv&key=nope"), None);
+        assert_eq!(parse_studio_link(&format!("stroke://studio?relay=AbCdEfGhIjKlMnOp%2FrStUv&key={key}")), None);
+        assert_eq!(parse_studio_link(&format!("https://studio?relay=AbCdEfGhIjKlMnOpQrStUv&key={key}")), None);
+        // A control character in the table is dropped, not passed to the page.
+        let page = parse_studio_link(&format!("stroke://studio?relay=AbCdEfGhIjKlMnOpQrStUv&key={key}&open=a%0Ab")).unwrap();
+        assert!(!page.contains("open="));
+    }
 
     #[test]
     fn link_with_url_and_name() {

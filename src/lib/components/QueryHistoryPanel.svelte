@@ -1,4 +1,5 @@
 <script>
+  import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
   import { onDestroy, onMount, tick } from 'svelte'
   import History from '@lucide/svelte/icons/history'
@@ -9,8 +10,8 @@
   import X from '@lucide/svelte/icons/x'
   import BarChart2 from '@lucide/svelte/icons/bar-chart-2'
   import Star from '@lucide/svelte/icons/star'
-  import CircleAlert from '@lucide/svelte/icons/circle-alert'
   import { cn } from '$lib/utils.js'
+  import { cleanErrorMessage } from '$lib/sql-error-range.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import {
     clearQueryHistory,
@@ -97,10 +98,11 @@
         .sort((a, b) => Number(!!b.favorite) - Number(!!a.favorite))
         .map((e) => ({
           id: e.id, kind: /** @type {const} */ ('history'), label: oneLine(e.sql), detail: '',
-          meta: [relativeTime(e.executedAt), e.queryMs ? `${e.queryMs}ms` : '', (e.runCount ?? 1) > 1 ? `${e.runCount}×` : ''].filter(Boolean).join(' · '),
+          meta: [relativeTime(e.executedAt), e.queryMs ? `${e.queryMs}ms` : e.queryMs === 0 ? '<1ms' : '', (e.runCount ?? 1) > 1 ? `${e.runCount}×` : ''].filter(Boolean).join(' · '),
           sql: e.sql, starred: !!e.favorite, entry: e,
           // A failed run is listed with its error, and loads and runs like any other.
-          error: e.success === false ? (e.error || 'Failed') : undefined,
+          // Without the backend's wrapping: the row is already marked as failed.
+          error: e.success === false ? (cleanErrorMessage(e.error ?? '') || 'Failed') : undefined,
         }))
     }
     if (view === 'saved') {
@@ -123,7 +125,7 @@
 
   const EMPTY = {
     history: { Icon: History, title: 'No queries run yet', hint: `${modKey}↵ runs the editor` },
-    saved: { Icon: Bookmark, title: 'No saved queries', hint: `${modKey}S in the editor saves it` },
+    saved: { Icon: Bookmark, title: 'No saved queries', hint: `${comboTitle('Mod+S')} in the editor saves it` },
     charts: { Icon: BarChart2, title: 'No saved charts', hint: 'Save one from the Chart view of a result' },
   }
 
@@ -232,7 +234,7 @@
         placeholder={view === 'history' ? 'Search history…' : view === 'saved' ? 'Search saved queries…' : 'Search saved charts…'}
         aria-label={view === 'history' ? 'Search history' : view === 'saved' ? 'Search saved queries' : 'Search saved charts'}
         aria-controls="query-list"
-        class="peer field-surface h-7 w-full min-w-0 bg-input/30 pl-7 pr-6 font-mono text-ui-xs outline-none placeholder:font-sans placeholder:text-muted-foreground [&::-webkit-search-cancel-button]:hidden"
+        class="peer search-box no-field-frame h-7 w-full min-w-0 pl-7 pr-6 font-mono text-ui-xs placeholder:font-sans"
       />
       <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
       {#if filter}
@@ -244,9 +246,13 @@
         ><X class="size-3 shrink-0" /></button>
       {/if}
     </div>
-    <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
-      {filter ? `${rows.length} of ${total}` : total}
-    </span>
+    <!-- A count with its noun ("12 queries"); a bare "0" sat beside an empty
+         list that already says it is empty. -->
+    {#if filter || total > 0}
+      <span class="whitespace-nowrap font-mono text-ui-2xs tabular-nums text-muted-foreground">
+        {filter ? `${rows.length} of ${total}` : `${total} ${view === 'charts' ? (total === 1 ? 'chart' : 'charts') : total === 1 ? 'query' : 'queries'}`}
+      </span>
+    {/if}
     {#if view === 'history' && history.some((e) => !e.favorite)}
       <button
         type="button"
@@ -277,26 +283,38 @@
           data-row={i}
           role="option"
           aria-selected={on}
-          class={cn('group/row flex h-8 items-center gap-2 pl-3 pr-1.5', on ? 'bg-accent/60' : 'hover:bg-muted/50')}
+          class={cn('group/row mx-1.5 flex items-center gap-2 rounded-lg py-2 pl-3 pr-1.5', on ? 'bg-accent/60' : 'hover:bg-muted/50')}
         >
+          <!-- Two lines: what ran (or the saved name), then when, how long and
+               how often, with a failure's message in full width under it. -->
           <button
             type="button"
             tabindex="-1"
-            class="flex h-full min-w-0 flex-1 items-center gap-3 text-left"
+            class="flex min-w-0 flex-1 items-start gap-2.5 text-left"
             title={row.error ? `${row.sql}\n\nFailed: ${row.error}` : row.sql}
             onclick={() => { cursor = i; load(row) }}
           >
             {#if row.kind === 'history'}
-              {#if row.error}<CircleAlert class="size-3.5 shrink-0 text-destructive" aria-label="Failed" />{/if}
-              <span class="min-w-0 flex-1 truncate font-mono text-ui-xs text-foreground/90">{row.label}</span>
-              {#if row.error}
-                <span class="min-w-0 max-w-[35%] shrink truncate text-ui-2xs text-destructive">{row.error}</span>
-              {/if}
+              <span class={cn('mt-[3px] size-2 shrink-0 rounded-full', row.error ? 'bg-destructive' : 'bg-success/70')} aria-label={row.error ? 'Failed' : 'Ran'}></span>
+              <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span class="truncate font-mono text-ui-xs text-foreground/90">{row.label}</span>
+                <span class="flex min-w-0 items-center gap-1.5 text-ui-2xs text-muted-foreground">
+                  <span class="shrink-0 tabular-nums">{row.meta}</span>
+                  {#if row.error}
+                    <span aria-hidden="true">·</span>
+                    <span class="min-w-0 truncate text-destructive">{row.error}</span>
+                  {/if}
+                </span>
+              </span>
             {:else}
-              <span class="min-w-0 max-w-[40%] shrink-0 truncate text-ui-xs text-foreground">{row.label}</span>
-              <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs text-muted-foreground">{row.detail}</span>
+              <span class="flex min-w-0 flex-1 flex-col gap-0.5">
+                <span class="flex min-w-0 items-baseline gap-2">
+                  <span class="truncate text-ui-sm font-medium text-foreground">{row.label}</span>
+                  {#if row.meta}<span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">{row.meta}</span>{/if}
+                </span>
+                <span class="truncate font-mono text-ui-2xs text-muted-foreground">{row.detail}</span>
+              </span>
             {/if}
-            <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{row.meta}</span>
           </button>
           <div class="flex shrink-0 items-center gap-0.5">
             <button

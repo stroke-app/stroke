@@ -18,7 +18,7 @@
     backupOverview, backupLoadError, runningJobId, refreshBackupJobs, saveBackupJob, patchBackupJob,
     deleteBackupJob, saveS3Keys, s3KeysRegion, describeCron, formatBytes, SCHEDULE_DRIVERS,
   } from '$lib/stores/scheduled-backups.js'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import CalendarClock from '@lucide/svelte/icons/calendar-clock'
   import Cloud from '@lucide/svelte/icons/cloud'
   import HardDrive from '@lucide/svelte/icons/hard-drive'
@@ -188,7 +188,7 @@
 
   /** @param {() => Promise<unknown>} fn @param {string} failMsg */
   async function act(fn, failMsg) {
-    try { await fn() } catch (err) { toast.error(failMsg, { description: String(err) }) }
+    try { await fn() } catch (err) { toast.error(failMsg, { description: errorText(err) }) }
   }
 
   let confirmDelete = $state(/** @type {string|null} */ (null))
@@ -309,7 +309,7 @@
                   <span class="text-muted-foreground">Never run</span>
                 {/if}
                 {#if job.enabled && job.next_run_at}
-                  <span class="block text-muted-foreground/70 tabular-nums">Next {when(job.next_run_at)}</span>
+                  <span class="block text-muted-foreground tabular-nums">Next {when(job.next_run_at)}</span>
                 {/if}
               </div>
               <div class="flex shrink-0 items-center">

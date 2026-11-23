@@ -177,6 +177,10 @@ pub async fn import_rows(
             Err("Importing rows is not supported for ClickHouse. Use INSERT INTO … in the SQL console.".into())
         }
         ActiveConnection::Posthog(_) => Err("PostHog is read-only: its data comes from HogQL queries.".into()),
+        c @ (ActiveConnection::Spanner(_) | ActiveConnection::Bigquery(_) | ActiveConnection::Snowflake(_) | ActiveConnection::Odbc(_)) => {
+            let eng = super::backup::SqlEngine::of(&c).ok_or("Not an API engine")?;
+            import_api(&app, &eng, schema.as_deref(), &table, &columns, &rows, &opts).await
+        }
         ActiveConnection::Redis(_) => Err("Importing rows is not supported on Redis".into()),
         ActiveConnection::Dynamodb(_) | ActiveConnection::Doc(_) => Err("Importing rows is not supported on DynamoDB".into()),
     }?;
@@ -201,6 +205,91 @@ pub async fn import_rows(
 /// Postgres and MySQL both cap a statement's parameters at 65535, so a wide
 /// table needs a smaller batch than a narrow one or the statement is rejected
 /// outright.
+/// Spanner, BigQuery, Snowflake and ODBC: INSERTs written in the engine's own
+/// literal syntax, typed by the table's columns, run batch by batch. These
+/// commit each statement on its own, so "all or nothing" stops at the first
+/// failed batch and says how many rows already went in, rather than claiming a
+/// rollback it cannot make.
+async fn import_api(
+    app: &AppHandle,
+    eng: &super::backup::SqlEngine,
+    schema: Option<&str>,
+    table: &str,
+    columns: &[String],
+    rows: &[Vec<Value>],
+    opts: &ImportOptions,
+) -> Result<ImportRowsResult, String> {
+    if opts.conflict != ConflictMode::Error {
+        return Err(format!(
+            "{} imports insert new rows only for now: skipping or updating on a conflict needs a MERGE this import doesn't write yet",
+            eng.label()
+        ));
+    }
+    let schema = match schema.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(s) => s.to_string(),
+        None => eng.schemas().await?.into_iter().next().unwrap_or_default(),
+    };
+    let structure = eng.columns(&schema, table).await?;
+    let types: Vec<String> = columns
+        .iter()
+        .map(|c| structure.iter().find(|s| &s.name == c).map(|s| s.data_type.clone()).ok_or_else(|| format!("{table} has no column named {c}")))
+        .collect::<Result<_, _>>()?;
+    let style = eng.style();
+    let target = eng.table_ref(&schema, table);
+    let col_sql = columns.iter().map(|c| eng.quote(c)).collect::<Vec<_>>().join(", ");
+    let lits = |row: &Vec<Value>| -> String {
+        row.iter().zip(&types).map(|(v, t)| super::backup::value_lit(v, t, style)).collect::<Vec<_>>().join(", ")
+    };
+    let per_batch = opts.batch_size.clamp(1, 200);
+    let mut inserted = 0usize;
+    let mut errors: Vec<RowError> = Vec::new();
+    for (batch_no, batch) in rows.chunks(per_batch).enumerate() {
+        if is_cancelled() { break; }
+        let base = batch_no * per_batch;
+        let values: Vec<String> = batch.iter().map(lits).collect();
+        match eng.exec(&super::backup::insert_stmt(&target, &col_sql, &values, style)).await {
+            Ok(()) => inserted += batch.len(),
+            Err(batch_err) => {
+                if opts.abort_on_error {
+                    return Ok(ImportRowsResult {
+                        inserted,
+                        failed: 1,
+                        skipped: rows.len() - inserted,
+                        cancelled: false,
+                        rolled_back: false,
+                        errors: vec![RowError {
+                            row: base + 1,
+                            message: format!(
+                                "{batch_err} (rows {}-{}). {} commits each batch, so the {inserted} row(s) before these stay imported.",
+                                base + 1,
+                                base + batch.len(),
+                                eng.label()
+                            ),
+                        }],
+                    });
+                }
+                for (i, row) in batch.iter().enumerate() {
+                    if is_cancelled() { break; }
+                    match eng.exec(&super::backup::insert_stmt(&target, &col_sql, &[lits(row)], style)).await {
+                        Ok(()) => inserted += 1,
+                        Err(e) => errors.push(RowError { row: base + i + 1, message: e }),
+                    }
+                }
+            }
+        }
+        emit_progress(app, (inserted + errors.len()).min(rows.len()), rows.len());
+    }
+    let cancelled = is_cancelled();
+    Ok(ImportRowsResult {
+        skipped: rows.len().saturating_sub(inserted + errors.len()),
+        inserted,
+        failed: errors.len(),
+        cancelled,
+        rolled_back: false,
+        errors,
+    })
+}
+
 fn rows_per_batch(requested: usize, columns: usize) -> usize {
     let cap = if columns == 0 { 1 } else { 65535 / columns.max(1) };
     requested.clamp(1, cap.max(1))

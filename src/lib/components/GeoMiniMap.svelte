@@ -269,7 +269,7 @@
 </script>
 
 <div bind:this={host} class={cn('relative overflow-hidden rounded-md border border-border/40', extraClass)} style="height:{height}px">
-  <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
+  <!-- svelte-ignore a11y_no_noninteractive_element_interactions, a11y_no_interactive_element_to_noninteractive_role -->
   <canvas
     bind:this={canvas}
     role="img"

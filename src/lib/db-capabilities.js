@@ -8,7 +8,7 @@
  * no triggers." These flags let the UI say *why* a section is empty ("Triggers
  * require PostgreSQL") and let callers skip pointless round-trips entirely.
  *
- * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'oracle'|'redis'|'dynamodb'|'couchdb'|'elasticsearch'|'opensearch'|'cassandra'|'firestore'|'mongodb'|'posthog'} Engine
+ * @typedef {'postgres'|'mysql'|'sqlite'|'d1'|'libsql'|'clickhouse'|'duckdb'|'mssql'|'oracle'|'spanner'|'bigquery'|'snowflake'|'odbc'|'redis'|'dynamodb'|'couchdb'|'elasticsearch'|'opensearch'|'cassandra'|'firestore'|'neo4j'|'influxdb'|'mongodb'|'posthog'} Engine
  */
 
 /**
@@ -18,9 +18,9 @@
  */
 const SUPPORT = {
   // Index introspection has a backend branch for every engine.
-  indexes:   new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql', 'oracle']),
+  indexes:   new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql', 'oracle', 'spanner']),
   // Views are derived from table `kind`, available wherever tables are listed.
-  views:     new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql', 'oracle', 'posthog']),
+  views:     new Set(['postgres', 'mysql', 'sqlite', 'd1', 'libsql', 'clickhouse', 'duckdb', 'mssql', 'oracle', 'spanner', 'bigquery', 'snowflake', 'odbc', 'posthog']),
   // PostgreSQL-only introspection (pg_catalog / pg_proc / pg_policy …).
   triggers:  new Set(['postgres']),
   sequences: new Set(['postgres']),
@@ -57,6 +57,8 @@ const SUPPORT = {
 const ENGINE_ALIAS = {
   mariadb: 'mysql',
   cockroachdb: 'postgres',
+  yugabytedb: 'postgres',
+  alloydb: 'postgres',
 }
 
 /** @param {string | null | undefined} engine */
@@ -92,6 +94,8 @@ const ENGINE_LABEL = /** @type {Record<string, string>} */ ({
   oracle: 'Oracle',
   mariadb: 'MariaDB',
   cockroachdb: 'CockroachDB',
+  yugabytedb: 'YugabyteDB',
+  alloydb: 'AlloyDB',
   redis: 'Redis',
   valkey: 'Valkey',
   dynamodb: 'DynamoDB',
@@ -99,7 +103,14 @@ const ENGINE_LABEL = /** @type {Record<string, string>} */ ({
   elasticsearch: 'Elasticsearch',
   opensearch: 'OpenSearch',
   cassandra: 'Cassandra',
+  scylladb: 'ScyllaDB',
   firestore: 'Firestore',
+  neo4j: 'Neo4j',
+  influxdb: 'InfluxDB',
+  spanner: 'Spanner',
+  bigquery: 'BigQuery',
+  snowflake: 'Snowflake',
+  odbc: 'ODBC',
   mongodb: 'MongoDB',
 })
 
@@ -127,7 +138,7 @@ export function unsupportedReason(featureLabel, feature) {
  * this set.
  * @type {Set<string>}
  */
-export const KEY_VALUE_ENGINES = new Set(['redis', 'dynamodb', 'couchdb', 'cassandra', 'firestore', 'mongodb', 'elasticsearch', 'opensearch'])
+export const KEY_VALUE_ENGINES = new Set(['redis', 'dynamodb', 'couchdb', 'cassandra', 'firestore', 'mongodb', 'elasticsearch', 'opensearch', 'neo4j', 'influxdb'])
 
 /** @param {string | null | undefined} engine */
 export function isKeyValue(engine) {

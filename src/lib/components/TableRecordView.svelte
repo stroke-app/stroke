@@ -2,7 +2,7 @@
   import FieldSelect from './FieldSelect.svelte';
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
-  import { cn } from '$lib/utils.js'
+  import { cn, errorText } from '$lib/utils.js'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { formatCellValue, anyDisplayExtEnabled } from '$lib/plugins/registry.js'
   import { pluginState } from '$lib/stores/plugins.js'
@@ -14,6 +14,7 @@
   import {
     isEditableType,
     isBooleanType,
+    asBooleanValue,
     getColumnEnumValues,
     valueToEditString,
     parseCellInput,
@@ -49,6 +50,10 @@
     /** @type {((detail: { rowIdx: number, colIdx: number, value: unknown }) => Promise<void>) | null} */
     onsave = null,
     readonly = false,
+    /** Load a cell the grid fetched as a size (a wide column's preview). @type {((detail: { rowIdx: number, colIdx: number }) => Promise<void>) | null} */
+    onloadvalue = null,
+    /** Bumped when a row changes in place (a loaded value): rows is not reactive per cell. */
+    dataVersion = 0,
   } = $props()
 
   // svelte-ignore state_referenced_locally - the initial index deliberately
@@ -177,7 +182,21 @@
   }
   const extOn = $derived.by(() => { void $pluginState; return anyDisplayExtEnabled() })
 
+  /** Past this, a value is shown cut (the field shows three lines anyway). */
+  const DISPLAY_MAX = 4000
+  /**
+   * Past this, a value is not edited in a field: a textarea handed megabytes
+   * does not paint. The table's cell panel (Space) edits values of any size.
+   */
+  const INLINE_EDIT_MAX = 64 * 1024
+
+  /** @param {number} n */
+  function sizeText(n) {
+    return n >= 1024 * 1024 ? `${(n / 1024 / 1024).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`
+  }
+
   const fields = $derived.by(() => {
+    void dataVersion
     if (columns.length === 0 || rows.length === 0) return []
     const row = rows[idx] ?? []
     const canEdit = !!onsave && primaryKey.length > 0 && !readonly
@@ -185,16 +204,19 @@
     const out = []
     columns.forEach((col, i) => {
       if (hiddenColumns.has(col.name)) return
-      const raw = normalizeCellValue(row[i])
       const dataType = col.dataType ?? col.data_type ?? ''
+      const raw = isBooleanType(dataType) ? asBooleanValue(normalizeCellValue(row[i])) : normalizeCellValue(row[i])
       const normalType = normalizeColumnType(dataType)
       const enumValues = getColumnEnumValues(col)
       const isPk = pkSet.has(col.name)
       // Same rules as the row inspector: PKs, non-editable types and truncated
       // oversize cells stay read-only.
-      const editable = canEdit && !isPk && isEditableType(dataType) && !oversizeCellInfo(raw)
+      const over = oversizeCellInfo(raw)
       const isNull = raw === null
       const isEmpty = typeof raw === 'string' && raw === ''
+      const full = isNull ? 'NULL' : isEmpty ? 'EMPTY' : formatNormalValue(raw)
+      const tooBig = full.length > INLINE_EDIT_MAX
+      const editable = canEdit && !isPk && isEditableType(dataType) && !over && !tooBig
       out.push({
         colIdx: i,
         name: col.name,
@@ -202,8 +224,11 @@
         raw,
         isNull,
         isEmpty,
-        displayValue: isNull ? 'NULL' : isEmpty ? 'EMPTY' : formatNormalValue(raw),
-        initialEditStr: valueToEditString(raw),
+        displayValue: full.length > DISPLAY_MAX ? `${full.slice(0, DISPLAY_MAX)}…` : full,
+        tooltip: full.length > 600 ? `${full.slice(0, 600)}…` : full,
+        oversize: !!over,
+        bigNote: tooBig ? `${sizeText(full.length)} · too large to edit here, Space in the table opens it in full` : '',
+        initialEditStr: editable ? valueToEditString(raw) : '',
         editable,
         isPk,
         isBoolean: isBooleanType(dataType),
@@ -212,7 +237,7 @@
         isJsonType: normalType.startsWith('json'),
         // Precomputed: this used to run a /\n/g match per field on every
         // render, allocating an array each time just to count lines.
-        textRows: Math.min(8, Math.max(2, (valueToEditString(raw).match(/\n/g)?.length ?? 0) + 1)),
+        textRows: editable ? Math.min(8, Math.max(2, (valueToEditString(raw).match(/\n/g)?.length ?? 0) + 1)) : 2,
         nullable: col.nullable !== false,
         hint: hintFor(raw, dataType, col.name, i, row),
       })
@@ -229,6 +254,21 @@
         )
       : fields,
   )
+
+  /** @type {Record<number, boolean>} */
+  let loadingFields = $state({})
+  /** Fetch a previewed value whole; the shell swaps it into the row. @param {number} colIdx */
+  async function loadField(colIdx) {
+    if (!onloadvalue || loadingFields[colIdx]) return
+    loadingFields = { ...loadingFields, [colIdx]: true }
+    try {
+      await onloadvalue({ rowIdx: idx, colIdx })
+    } catch (e) {
+      toast.error('Could not load the value', { description: errorText(e) })
+    } finally {
+      loadingFields = { ...loadingFields, [colIdx]: false }
+    }
+  }
 
   // ── Field editing (mirrors RowDetailPanel) ────────────────────────────────
   /** @type {Record<number, boolean>} */
@@ -298,7 +338,7 @@
     try {
       await onsave({ rowIdx: idx, colIdx, value })
     } catch (e) {
-      toast.error(`Failed to save ${col.name}`, { description: String(e) })
+      toast.error(`Failed to save ${col.name}`, { description: errorText(e) })
     } finally {
       savingFields = { ...savingFields, [colIdx]: false }
     }
@@ -429,7 +469,7 @@
         aria-label="Search fields"
         bind:value={fieldSearch}
         onkeydown={(e) => { if (e.key === 'Escape' && fieldSearch) { e.preventDefault(); e.stopPropagation(); fieldSearch = '' } }}
-        class="field-surface h-8 w-full min-w-0 pl-8 pr-7 text-ui-sm text-foreground shadow-none outline-none placeholder:text-muted-foreground"
+        class="search-box no-field-frame h-8 w-full min-w-0 pl-8 pr-7 text-ui-sm"
       />
       {#if fieldSearch}
         <button type="button" class="hit-area absolute right-1.5 inline-flex size-5 items-center justify-center rounded-sm text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Clear search" onclick={() => (fieldSearch = '')}>
@@ -467,7 +507,7 @@
         <div class="mb-1 flex items-center gap-2 px-3 py-1.5">
           <Icon name="columns-3" class="size-4 shrink-0 text-muted-foreground" />
           <h3 class="text-ui-sm text-muted-foreground">{fieldSearch ? 'Matching fields' : 'Fields'}</h3>
-          <span class="text-ui-sm tabular-nums text-muted-foreground/70">{filteredFields.length}{fieldSearch ? ` of ${fields.length}` : ''}</span>
+          <span class="text-ui-sm tabular-nums text-muted-foreground">{filteredFields.length}{fieldSearch ? ` of ${fields.length}` : ''}</span>
           <span class="ml-2 h-px flex-1 bg-border/50" aria-hidden="true"></span>
         </div>
         <!-- A label/value list, not a form. Every value used to sit in its own
@@ -487,7 +527,7 @@
                 {#if field.isPk}
                   <Icon name="key-round" class="size-3 shrink-0 self-center text-warning" aria-label="Primary key" />
                 {/if}
-                <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground/70">{field.dataType}</span>
+                <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground">{field.dataType}</span>
               </dt>
 
               <dd class="relative min-w-0">
@@ -551,10 +591,10 @@
                     class={cn(
                       'w-full rounded-sm border border-transparent px-1.5 py-0.5 font-mono text-ui-xs leading-5',
                       field.editable && 'cursor-text hover:border-field-border hover:bg-background/40',
-                      field.isNull || field.isEmpty ? 'text-muted-foreground/70' : 'text-foreground',
+                      field.isNull || field.isEmpty ? 'text-muted-foreground' : 'text-foreground',
                       field.isMultiline ? 'line-clamp-3 break-all whitespace-pre-wrap' : 'line-clamp-2 break-all',
                     )}
-                    title={field.displayValue}
+                    title={field.tooltip}
                     onclick={() => { if (field.editable) editingIdx = field.colIdx }}
                     onkeydown={(e) => {
                       if (!field.editable) return
@@ -563,6 +603,19 @@
                       editingIdx = field.colIdx
                     }}
                   >{#if field.isNull}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">NULL</span>{:else if field.isEmpty}<span class="rounded-sm bg-muted/60 px-1 text-ui-2xs">empty</span>{:else}{field.displayValue}{/if}{#if field.hint}<span class="ml-2 font-sans text-ui-2xs text-muted-foreground" title={field.hint}>{field.hint}</span>{/if}</div>
+                  {#if field.oversize && onloadvalue}
+                    <button
+                      type="button"
+                      class="mt-1 inline-flex h-6 items-center gap-1 rounded-md border border-border/60 px-2 font-sans text-ui-2xs text-foreground transition-colors hover:bg-muted/50 disabled:opacity-50 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring"
+                      disabled={loadingFields[field.colIdx]}
+                      onclick={() => void loadField(field.colIdx)}
+                    >
+                      <Icon name={loadingFields[field.colIdx] ? 'loader-2' : 'download'} class={cn('size-3 shrink-0', loadingFields[field.colIdx] && 'animate-spin')} />
+                      Load value
+                    </button>
+                  {:else if field.bigNote}
+                    <p class="mt-0.5 font-sans text-ui-3xs text-muted-foreground">{field.bigNote}</p>
+                  {/if}
                 {/if}
 
                 {#if savingFields[field.colIdx]}
@@ -605,7 +658,7 @@
             <p class="px-3 py-10 text-center text-ui-sm text-muted-foreground">No fields match "{fieldSearch}"</p>
           {/if}
         </dl>
-        <p class="mt-4 flex select-none flex-wrap items-center justify-center gap-x-3 gap-y-1 text-ui-xs text-muted-foreground/80">
+        <p class="mt-4 flex select-none flex-wrap items-center justify-center gap-x-3 gap-y-1 text-ui-xs text-muted-foreground">
           <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">←</kbd> <kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">→</kbd> records</span>
           {#if onsave && !readonly}
             <span>Click a value to edit</span>

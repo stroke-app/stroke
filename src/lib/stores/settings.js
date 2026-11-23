@@ -1,3 +1,4 @@
+import { setDisplayZone } from '$lib/timezone.js'
 import { applyCustomTheme, applyNoise, customTheme, customIsGlass } from '$lib/stores/custom-theme.js'
 import { applyImportedTheme } from '$lib/stores/imported-themes.js'
 import { writable, get } from 'svelte/store'
@@ -12,6 +13,7 @@ import {
 } from '$lib/themes/registry.js'
 import { zoomState, ZOOM_MIN, ZOOM_MAX } from '$lib/stores/canvas-zoom.svelte.js'
 import { detectOs } from '$lib/platform.js'
+import { DEFAULT_FONT_SETTINGS, normalizeFontSettings, faceStack } from '$lib/fonts.js'
 import { notifyLocalChange } from '$lib/sync/changes.js'
 import {
   UI_TYPE_SCALE,
@@ -108,7 +110,41 @@ const markQualifyDefaultApplied = () => {
 /** @typedef {'claude' | 'geist' | 'serif' | 'apple' | 'inter' | 'mono' | 'fira' | 'plex' | 'space' | 'source'} FontId */
 /** @typedef {'regular' | 'light' | 'bold'} IconStyleId */
 /** @typedef {'lucide' | 'hugeicons' | 'phosphor'} IconSetId */
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, zebraRows: boolean, showRowNumbers: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null }} AppSettings */
+/**
+ * Proxy by kind of traffic (Settings > Network, src-tauri/src/proxy.rs).
+ * @typedef {{ mode: 'system' | 'custom' | 'off', url: string }} ProxyRule
+ * @typedef {{ app: ProxyRule, ai: ProxyRule, database: ProxyRule, ssh: ProxyRule }} ProxySettings
+ */
+export const PROXY_KINDS = /** @type {const} */ (['app', 'ai', 'database', 'ssh'])
+/** @returns {ProxySettings} */
+export function defaultProxy() {
+  return { app: { mode: 'system', url: '' }, ai: { mode: 'system', url: '' }, database: { mode: 'system', url: '' }, ssh: { mode: 'system', url: '' } }
+}
+/** @param {any} raw @returns {ProxySettings} */
+export function normalizeProxy(raw) {
+  const out = defaultProxy()
+  if (!raw || typeof raw !== 'object') return out
+  for (const k of PROXY_KINDS) {
+    const r = raw[k]
+    if (!r || typeof r !== 'object') continue
+    const mode = r.mode === 'custom' || r.mode === 'off' ? r.mode : 'system'
+    out[k] = { mode, url: typeof r.url === 'string' ? r.url.trim() : '' }
+  }
+  return out
+}
+let _proxySent = ''
+/** Hand the proxy settings to the backend when they change. @param {ProxySettings | undefined} proxy */
+function pushProxySettings(proxy) {
+  const p = normalizeProxy(proxy)
+  const key = JSON.stringify(p)
+  if (key === _proxySent) return
+  _proxySent = key
+  void import('@tauri-apps/api/core')
+    .then(({ invoke }) => invoke('proxy_set', { settings: p }))
+    .catch((e) => { _proxySent = ''; console.warn('proxy settings not applied:', e) })
+}
+
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, displayTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null, proxy: ProxySettings, fonts: import('$lib/fonts.js').FontSettings }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -132,7 +168,9 @@ const DEFAULT_ZOOM = 1
  * follow the sans.
  * `reading` (optional) sets `--reading-font` for long prose (the AI chat);
  * without it prose follows the sans.
- * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string, keywords?: string[] }>}
+ * `chrome` (optional) sets `--font-chrome` for the window's chrome (title bar,
+ * menus, tabs, toolbars, status bar); without it the chrome follows the sans.
+ * @type {Record<FontId, { label: string, description: string, sans: string, mono: string, heading?: string, reading?: string, chrome?: string, keywords?: string[] }>}
  */
 const IS_MAC = typeof navigator !== 'undefined' && detectOs() === 'macos'
 const IS_WINDOWS = typeof navigator !== 'undefined' && detectOs() === 'windows'
@@ -188,9 +226,12 @@ export const FONT_PRESETS = {
     description: 'All-monospace terminal feel',
     sans: '"JetBrains Mono Variable", ui-monospace, monospace',
     mono: '"JetBrains Mono Variable", ui-monospace, monospace',
-    // Chrome and data stay monospace; paragraphs of chat prose read badly
-    // set that way, so they take a proportional face.
+    // Data and panels stay monospace. Paragraphs of chat prose read badly set
+    // that way, and so did the window's chrome: menus, tabs and the status bar
+    // in a terminal face made the app look unfinished. Both take a
+    // proportional face.
     reading: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
+    chrome: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
   },
   // The four below also ship with the app (fontsource imports in app.css).
   fira: {
@@ -564,6 +605,8 @@ export const DEFAULT_SETTINGS = {
   socketTimeoutMs: DEFAULT_SOCKET_TIMEOUT_MS,
   maxAllowedPacket: DEFAULT_MAX_ALLOWED_PACKET,
   sessionTimezone: DEFAULT_SESSION_TIMEZONE,
+  // Shown in UTC unless chosen otherwise: what the grid always did.
+  displayTimezone: 'utc',
   vimMode: false,
   cmdkAiEnabled: false,
   // Soft-wrap in every JSON viewer. Off by default: unwrapped keeps the
@@ -579,10 +622,12 @@ export const DEFAULT_SETTINGS = {
   // (Was `panelMotion`, on by default; renamed so every install starts off.)
   animatePanels: false,
   quitGuard: true,
+  reopenTabs: true,
   multiConnection: false,
   studioShare: false,
   // Labs: a database switch folds the tree to the new database's tables.
   treeFocusOnSwitch: false,
+  boringConnectionBar: false,
   // SQL formatter preferences. Defaults live with the formatter (format-sql.js)
   // so there is one source for what a valid option set is.
   sqlFormat: { ...SQL_FORMAT_DEFAULTS },
@@ -591,11 +636,16 @@ export const DEFAULT_SETTINGS = {
   // Defaults for new share links (share-flow.js normalizes them). Null: the
   // built-in ones. Kept here, not in a key of its own, so they sync.
   shareDefaults: null,
+  proxy: defaultProxy(),
+  // One face per surface (Appearance > Separate fonts) and the text smoothing.
+  fonts: { ...DEFAULT_FONT_SETTINGS },
   // Independent of the grid-style preset: two of those presets (Striped, Dots)
   // shade alternate rows as part of their look, and this turns the same shading
   // on for any of the others without changing the separators you picked.
   zebraRows: false,
   showRowNumbers: false,
+  // The "referenced by" columns: one per table whose foreign key points here.
+  showRelationColumns: true,
   showMenuBar: true,
   numberGrouping: false,
   imagePreview: true,
@@ -707,11 +757,15 @@ export const appZebraRows = writable(false)
 /** Row-number gutter in the data grid. Off by default: it is a reading aid, not
  *  data, and it costs horizontal space on every table. */
 export const appRowNumbers = writable(false)
+/** Show the grid's "referenced by" columns (tables whose foreign keys point at this one). */
+export const appRelationColumns = writable(true)
 /** File/Edit/View/Tools/Help in the title bar. On by default; off gives the
  *  window title bar back to the drag region and the tab strip. */
 export const appMenuBar = writable(true)
 /** Grid value rendering - read by the canvas renderer on every paint. */
 export const appNumberGrouping = writable(false)
+/** Zone absolute timestamps are shown in: 'utc', 'auto' (this computer's) or an IANA name. */
+export const appDisplayTimezone = writable('utc')
 /** Fetch and draw thumbnails for image-URL cells. Off also stops the FETCH. */
 export const appImagePreview = writable(true)
 /** Whether a click on a URL cell leaves the app to open it. */
@@ -749,6 +803,8 @@ export const appSidebarStyle = writable(/** @type {SidebarStyleId} */ ('classic'
 
 /** Reactive: AI chat opens as a tab, chats in the sidebar (beta), instead of AI mode. */
 export const appAiInTab = writable(false)
+/** Labs: saved connections in one folder per database kind. */
+export const appBoringConnectionBar = writable(false)
 
 /** Whether the agent transcript shows a card per executed query. */
 export const appAgentQueryCards = writable(false)
@@ -954,6 +1010,8 @@ export function loadSettings() {
       typeof parsed.sessionTimezone === 'string' && parsed.sessionTimezone.trim()
         ? parsed.sessionTimezone.trim()
         : DEFAULT_SESSION_TIMEZONE
+    const displayTimezone =
+      typeof parsed.displayTimezone === 'string' && parsed.displayTimezone.trim() ? parsed.displayTimezone.trim() : 'utc'
     const vimMode = parsed.vimMode === true
     // Absent means on: only an explicit false opts out.
     const telemetry = parsed.telemetry !== false
@@ -974,11 +1032,15 @@ export function loadSettings() {
     const motion = normalizeMotion(parsed.motion)
     const animatePanels = parsed.animatePanels === true
     const quitGuard = parsed.quitGuard !== false
+    const reopenTabs = parsed.reopenTabs !== false
     const multiConnection = parsed.multiConnection === true
     const studioShare = parsed.studioShare === true
     const treeFocusOnSwitch = parsed.treeFocusOnSwitch === true
+    const boringConnectionBar = parsed.boringConnectionBar === true
     const sqlFormat = normalizeSqlFormat(parsed.sqlFormat)
     const sqlEditor = normalizeSqlEditor(parsed.sqlEditor)
+    const proxy = normalizeProxy(parsed.proxy)
+    const fonts = normalizeFontSettings(parsed.fonts)
     const shareDefaults = parsed.shareDefaults && typeof parsed.shareDefaults === 'object' && !Array.isArray(parsed.shareDefaults) ? parsed.shareDefaults : null
     if (!qualifyDefaultApplied()) {
       sqlEditor.qualifySchema = false
@@ -986,6 +1048,7 @@ export function loadSettings() {
     }
     const zebraRows = parsed.zebraRows === true
     const showRowNumbers = parsed.showRowNumbers === true
+    const showRelationColumns = parsed.showRelationColumns !== false
     const showMenuBar = parsed.showMenuBar !== false
     const numberGrouping = parsed.numberGrouping === true
     // Both default ON - this is what the grid already did - so an absent key must
@@ -1020,7 +1083,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards === true
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, multiConnection, studioShare, treeFocusOnSwitch, zebraRows, showRowNumbers, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, displayTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults, proxy, fonts }
     // A migrated value is saved at once, or the next launch reads the old one.
     if (settingsMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
@@ -1051,6 +1114,39 @@ export function saveSettings(settings) {
 // unconditional store.set() re-notifies every subscriber - that was the
 // Settings-page lag. Guard every write so only
 // values that actually changed touch the DOM or notify subscribers.
+/**
+ * Separate fonts: a face of its own for the interface, the SQL editor, the
+ * grid, the AI chat and the terminal, over the preset's two. Off, or a surface
+ * left on "Theme font", and the surface follows the preset as before. Also the
+ * text smoothing: grayscale (thin, the app's look) or the OS default.
+ * @param {HTMLElement} root
+ * @param {import('$lib/fonts.js').FontSettings} fonts
+ * @param {{ sans: string, mono: string, reading?: string, chrome?: string }} preset
+ */
+function applyFontSurfaces(root, fonts, preset) {
+  const pick = (/** @type {string} */ id) => (fonts.separate ? faceStack(id) : null)
+  const ui = pick(fonts.ui)
+  if (ui) {
+    setStyleVar(root, '--font-sans', ui)
+    // The chrome and headings go with the interface face.
+    setStyleVar(root, '--font-chrome', ui)
+    setStyleVar(root, '--heading-font', ui)
+  }
+  setStyleVar(root, '--reading-font', pick(fonts.chat) ?? ui ?? preset.reading ?? preset.sans)
+  // Unset, each falls back where it always did: the editor to its own code
+  // face (app.css), the grid to the preset's mono, the terminal to the editor.
+  setOrClearVar(root, '--editor-font-family', pick(fonts.code))
+  setOrClearVar(root, '--grid-font', pick(fonts.grid))
+  setOrClearVar(root, '--terminal-font', pick(fonts.terminal))
+  setAttr(root, 'data-smoothing', fonts.smoothing === 'system' ? 'system' : null)
+}
+
+/** @param {HTMLElement} el @param {string} prop @param {string | null} value */
+function setOrClearVar(el, prop, value) {
+  if (value) setStyleVar(el, prop, value)
+  else if (el.style.getPropertyValue(prop)) el.style.removeProperty(prop)
+}
+
 /** @param {HTMLElement} el @param {string} prop @param {string} value */
 function setStyleVar(el, prop, value) {
   if (el.style.getPropertyValue(prop) !== value) el.style.setProperty(prop, value)
@@ -1252,7 +1348,9 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStyleVar(root, '--font-mono', FONT_PRESETS[font].mono)
   setStyleVar(root, '--heading-font', FONT_PRESETS[font].heading ?? FONT_PRESETS[font].sans)
   setStyleVar(root, '--reading-font', FONT_PRESETS[font].reading ?? FONT_PRESETS[font].sans)
+  setStyleVar(root, '--font-chrome', FONT_PRESETS[font].chrome ?? FONT_PRESETS[font].sans)
   setStore(appFont, font)
+  applyFontSurfaces(root, normalizeFontSettings(settings.fonts), FONT_PRESETS[font])
 
   // AI/agent chat typography - consumed by the chat surfaces (AiMarkdown, code blocks).
   const chatFont = AGENT_FONT_SIZES.includes(settings.agentChatFontSize) ? settings.agentChatFontSize : DEFAULT_AGENT_CHAT_FONT
@@ -1302,8 +1400,12 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   if (JSON.stringify(get(appSqlEditor)) !== JSON.stringify(sqlEditor)) appSqlEditor.set(sqlEditor)
   setStore(appZebraRows, settings.zebraRows === true)
   setStore(appRowNumbers, settings.showRowNumbers === true)
+  setStore(appRelationColumns, settings.showRelationColumns !== false)
   setStore(appMenuBar, settings.showMenuBar !== false)
   setStore(appNumberGrouping, settings.numberGrouping === true)
+  setStore(appDisplayTimezone, settings.displayTimezone || 'utc')
+  setDisplayZone(settings.displayTimezone || 'utc')
+  pushProxySettings(settings.proxy)
   setStore(appImagePreview, settings.imagePreview !== false)
   setStore(appOpenUrlsOnClick, settings.openUrlsOnClick !== false)
   setStore(appHighlightActiveRow, settings.highlightActiveRow !== false)
@@ -1317,6 +1419,7 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   setStore(appLiveMode, settings.liveModeEnabled === true)
   setStore(appSidebarStyle, settings.sidebarStyle === 'tree' ? 'tree' : 'classic')
   setStore(appAiInTab, settings.aiInTab === true)
+  setStore(appBoringConnectionBar, settings.boringConnectionBar === true)
   setStore(appAgentQueryCards, settings.agentShowQueryCards === true)
   setStore(appAgentWebAccess, settings.agentWebAccess === true)
   setStore(appTableAlign, TABLE_ALIGN_IDS.includes(settings.tableTextAlign) ? settings.tableTextAlign : DEFAULT_TABLE_ALIGN)
@@ -1486,22 +1589,28 @@ export function updateSettings(patch) {
   return next
 }
 
+/**
+ * Counts zoom gestures (in, out, reset), so the zoom pill shows for those and
+ * only those. The zoom value itself is re-applied by every settings change
+ * and every sync, which is why the pill used to appear at launch and at
+ * random.
+ */
+export const zoomGesture = writable(0)
+
 export function increaseZoom() {
   const current = loadSettings()
   const idx = ZOOM_STEPS.indexOf(current.zoom)
-  if (idx < ZOOM_STEPS.length - 1) {
-    return updateSettings({ zoom: ZOOM_STEPS[idx + 1] })
-  }
-  return current
+  const next = idx < ZOOM_STEPS.length - 1 ? updateSettings({ zoom: ZOOM_STEPS[idx + 1] }) : current
+  zoomGesture.update((n) => n + 1)
+  return next
 }
 
 export function decreaseZoom() {
   const current = loadSettings()
   const idx = ZOOM_STEPS.indexOf(current.zoom)
-  if (idx > 0) {
-    return updateSettings({ zoom: ZOOM_STEPS[idx - 1] })
-  }
-  return current
+  const next = idx > 0 ? updateSettings({ zoom: ZOOM_STEPS[idx - 1] }) : current
+  zoomGesture.update((n) => n + 1)
+  return next
 }
 
 export function resetZoom() {
@@ -1511,7 +1620,9 @@ export function resetZoom() {
   // still magnified with no way back, and Cmd+0 is the one gesture that has to
   // always mean "put it back".
   resetWebviewZoom()
-  return updateSettings({ zoom: DEFAULT_ZOOM })
+  const next = updateSettings({ zoom: DEFAULT_ZOOM })
+  zoomGesture.update((n) => n + 1)
+  return next
 }
 
 /** Cycle only through themes of the same darkness as the current theme. */

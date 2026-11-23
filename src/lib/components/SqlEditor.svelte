@@ -19,10 +19,11 @@
   import { EditorView, Decoration, ViewPlugin, GutterMarker, WidgetType, gutter, hoverTooltip, keymap, drawSelection, highlightWhitespace } from '@codemirror/view'
   import { indentUnit, foldable, foldEffect, unfoldEffect, foldedRanges, syntaxTree } from '@codemirror/language'
   import { insertNewlineKeepIndent } from '@codemirror/commands'
-  import { snippet, completionStatus, hasNextSnippetField, hasPrevSnippetField } from '@codemirror/autocomplete'
+  import { snippet, completionStatus, hasNextSnippetField, hasPrevSnippetField, closeCompletion } from '@codemirror/autocomplete'
   import { wantsTerminator } from '$lib/sql-terminator.js'
   import { IS_MAC } from '$lib/shortcuts.js'
   import CodeEditor from './CodeEditor.svelte'
+  import { stepOverParen } from '$lib/cm-step-over-paren.js'
   import { AlertCircleIcon, Alert02Icon, ArrowDown01Icon, ArrowRight01Icon } from '@hugeicons/core-free-icons'
   import { hugeSvg } from '$lib/cm-huge-icon.js'
   import { formatSql } from '$lib/format-sql.js'
@@ -87,6 +88,13 @@
     onchange = undefined,
     /** @type {(actions: { format: () => Promise<void> }) => void} */
     onactionsready = undefined,
+    /**
+     * A shared studio's console binding (share-console.js): edits go to
+     * everyone on the link and their cursors show here. Added only while the
+     * editor holds that document's text.
+     * @type {import('@codemirror/state').Extension | null}
+     */
+    collab = null,
   } = $props()
 
   /** @type {HTMLDivElement | null} */
@@ -285,7 +293,7 @@
 
   // Query languages that aren't SQL: the SQL lint and formatter would mark
   // valid statements as errors (db.users.find(...)) or rewrite them.
-  const NOT_SQL = new Set(['redis', 'valkey', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'firestore'])
+  const NOT_SQL = new Set(['redis', 'valkey', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'firestore', 'neo4j', 'influxdb'])
   const isSql = $derived(!NOT_SQL.has(dialect))
 
   /** @param {import('@codemirror/state').EditorState} state */
@@ -954,6 +962,8 @@
       // a finished statement in by a level, which read as a stray indent.
       ...(o.smartIndent ? [] : [Prec.high(keymap.of([{ key: 'Enter', run: insertNewlineKeepIndent, shift: insertNewlineKeepIndent }]))]),
       ...(o.autoClose ? [] : [Prec.high(noAutoClose)]),
+      // A completed function call's ) is stepped over, not doubled (see the module).
+      stepOverParen,
       ...(o.activeLine ? [] : [noActiveLine]),
       ...(o.whitespace ? [highlightWhitespace()] : []),
       // drawSelection takes the lowest blink rate it is given: 0 holds it still.
@@ -1243,8 +1253,11 @@
       zIndex: '1',
     },
     // After a statement that ran: its time and what came back.
+    // One unit when the line wraps: "573ms · 0" stayed on the line and "rows"
+    // went to the next.
     '.cm-sql-run-info': {
       marginLeft: '1.5ch',
+      whiteSpace: 'nowrap',
       fontFamily: 'var(--font-sans)',
       fontSize: 'var(--fs-xs)',
       color: 'var(--success)',
@@ -1289,7 +1302,7 @@
     ...editingExtensions($appSqlEditor),
     ...(onlens && !readOnly && $appSqlEditor.codeLens === 'current' ? [lensRoom] : []),
   ])
-  const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), appKeys, ...baseExtensions, ...editing])
+  const extensions = $derived([...(vimExtension ? [Prec.highest(vimExtension)] : []), appKeys, ...baseExtensions, ...editing, ...(collab ? [collab] : [])])
 
   $effect(() => {
     if (!$appVimMode) { vimExtension = null; return }
@@ -1457,6 +1470,10 @@
 
   /** Spinner in the glyph gutter while statement(s) run. @param {string | null} [ranStatement] */
   export function markRunning(ranStatement = null) {
+    // A run started from the keyboard left the completion list open over the
+    // statement it ran; it belongs to the typing, and the typing is done.
+    const v = editorRef?.getView?.()
+    if (v) closeCompletion(v)
     markRun('running', ranStatement)
   }
 

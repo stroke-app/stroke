@@ -13,6 +13,7 @@
  *   toast.dismiss(id?)        - dismiss one, or all when id is omitted
  *   toast.getActiveToasts()   - current toasts (reactive read)
  */
+import { errorDuration } from '$lib/toast-durations.js'
 
 let counter = 0
 const DEFAULT_DURATION = 4500
@@ -20,8 +21,8 @@ const DEFAULT_DURATION = 4500
 /**
  * @typedef {'success' | 'error' | 'info' | 'warning' | 'message' | 'loading'} ToastType
  * @typedef {{ label: string, onClick: () => void }} ToastAction
- * @typedef {{ id: number, type: ToastType, title: string, description: string, action?: ToastAction, code?: boolean, progress?: number | null }} Toast
- * @typedef {{ description?: string, duration?: number, action?: ToastAction, code?: boolean, progress?: number | null }} ToastOptions
+ * @typedef {{ id: number, type: ToastType, title: string, description: string, action?: ToastAction, code?: boolean, progress?: number | null, key?: string }} Toast
+ * @typedef {{ description?: string, duration?: number, action?: ToastAction, code?: boolean, progress?: number | null, key?: string }} ToastOptions
  */
 
 class ToastStore {
@@ -47,14 +48,43 @@ class ToastStore {
    * @param {ToastOptions} [opts]
    */
   #add(type, title, opts = {}) {
-    const id = ++counter
     // A loading toast stays until it is updated to its outcome.
-    const duration = opts.duration ?? (type === 'loading' ? Infinity : DEFAULT_DURATION)
+    // An error stays long enough to read (errorDuration).
+    const duration = opts.duration ?? (type === 'loading' ? Infinity : type === 'error' ? errorDuration(title, opts) : DEFAULT_DURATION)
+    // The same message again while it is still up (a double-click, a key
+    // held down) restarts its timer instead of stacking a copy under it.
+    const text = String(title ?? '')
+    // A keyed toast replaces the one up under the same key, whatever it said:
+    // a failure that repeats (a connect retried) is one toast that updates, not
+    // a pile, even when it carries an action.
+    const keyed = opts.key ? this.toasts.find((t) => t.key === opts.key) : undefined
+    if (keyed) {
+      const old = this.#timers.get(keyed.id)
+      if (old) { clearTimeout(old.handle); this.#timers.delete(keyed.id) }
+      /** @type {Toast} */
+      const next = { id: keyed.id, type, title: text, description: opts.description ?? '', key: opts.key }
+      if (opts.action) next.action = opts.action
+      if (opts.code) next.code = true
+      this.toasts = this.toasts.map((t) => (t.id === keyed.id ? next : t))
+      this.#schedule(keyed.id, duration)
+      return keyed.id
+    }
+    const same = type !== 'loading' && !opts.action && opts.progress == null
+      ? this.toasts.find((t) => t.type === type && t.title === text && (t.description ?? '') === (opts.description ?? '') && !t.action && t.progress == null)
+      : undefined
+    if (same) {
+      const old = this.#timers.get(same.id)
+      if (old) { clearTimeout(old.handle); this.#timers.delete(same.id) }
+      this.#schedule(same.id, duration)
+      return same.id
+    }
+    const id = ++counter
     /** @type {Toast} */
     const entry = { id, type, title: String(title ?? ''), description: opts.description ?? '' }
     if (opts.action) entry.action = opts.action
     if (opts.code) entry.code = true
     if (opts.progress != null) entry.progress = opts.progress
+    if (opts.key) entry.key = opts.key
     // newest first; immutable reassignment keeps the read-side reactive
     this.toasts = [entry, ...this.toasts]
     this.#schedule(id, duration)
@@ -90,7 +120,7 @@ class ToastStore {
     if (prev.type === 'loading' && next.type !== 'loading') {
       const old = this.#timers.get(id)
       if (old) { clearTimeout(old.handle); this.#timers.delete(id) }
-      this.#schedule(id, duration ?? DEFAULT_DURATION)
+      this.#schedule(id, duration ?? (next.type === 'error' ? errorDuration(next.title, next) : DEFAULT_DURATION))
     }
     return true
   }
