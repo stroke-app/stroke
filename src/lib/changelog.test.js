@@ -4,6 +4,7 @@ import {
   parseChangelog,
   parseReleases,
   releasesBetween,
+  mergeReleases,
   splitInlineCode,
   splitInlineMarks,
   splitEntry,
@@ -111,6 +112,40 @@ describe('releasesBetween', () => {
     const { releases } = releasesBetween(CHANGELOG, '2.2.4-nightly.202611150642', '2.3.0-nightly.202611150842')
     expect(releases.map((r) => r.version)).toEqual(['2.3.0', '2.2.5'])
     expect(releasesBetween(CHANGELOG, '2.3.0-nightly.1', '2.3.0-nightly.2').releases).toEqual([])
+  })
+})
+
+describe('releasesBetween with merge', () => {
+  it('keeps one block per version while the range fits the limit', () => {
+    const { releases, versions } = releasesBetween(CHANGELOG, '2.2.4', '2.3.0', 8, { merge: true })
+    expect(releases.map((r) => r.version)).toEqual(['2.3.0', '2.2.5'])
+    expect(versions).toBe(2)
+  })
+
+  it('merges a range longer than the limit into one release, nothing left out', () => {
+    const { releases, omitted, versions } = releasesBetween(CHANGELOG, '2.0.0', '2.3.0', 2, { merge: true })
+    expect(omitted).toBe(0)
+    expect(versions).toBe(4)
+    expect(releases).toHaveLength(1)
+    expect(releases[0].version).toBe('2.3.0')
+    expect(releases[0].sections.map((s) => [s.title, s.type, s.items])).toEqual([
+      ['Sidebar', 'feature', ['Objects tab', 'Sort tables by creation time']],
+      ['fix', 'fix', ['`Esc` ends an AI reply', 'Shortcuts fire once', 'Older fix']],
+      ['change', 'change', ['Faster startup']],
+    ])
+  })
+})
+
+describe('mergeReleases', () => {
+  it('puts a kind\'s own items before its sub-sections', () => {
+    const merged = mergeReleases([
+      { version: '3.1.0', date: '', sections: [{ title: 'Performance', group: 'Changes', type: 'change', items: ['Fast'] }] },
+      { version: '3.0.1', date: '', sections: [{ title: 'Changes', group: 'Changes', type: 'change', items: ['Plain'] }] },
+    ])
+    expect(merged.sections.map((s) => [s.title, s.items])).toEqual([
+      ['change', ['Plain']],
+      ['Performance', ['Fast']],
+    ])
   })
 })
 

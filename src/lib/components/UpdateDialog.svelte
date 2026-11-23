@@ -138,7 +138,7 @@
    * The update's notes as releases: Nightly's feed carries CHANGELOG.md
    * sections for several versions (## [x.y.z]); a stable release carries one
    * version's sections without the heading.
-   * @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number }}
+   * @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number, versions?: number }}
    */
   const notes = $derived.by(() => {
     const many = parseReleases(releaseNotes)
@@ -146,7 +146,7 @@
       // The feed carries the whole recent changelog. Only what this install
       // has not got yet: the versions after the running one, up to the update.
       if (appVersion) {
-        const between = releasesInRange(many, appVersion, updateVersion, 8)
+        const between = releasesInRange(many, appVersion, updateVersion, 8, { merge: true })
         if (between.releases.length) return between
       }
       const own = many.filter((r) => r.version === updateVersion.replace(/-.*$/, ''))
@@ -215,6 +215,8 @@
     /** @type {import('$lib/changelog.js').ChangelogRelease[]} */
     releases: [],
     omitted: 0,
+    /** Versions the notes cover (several merged into one release on a long jump). */
+    versions: 0,
     /** @type {import('$lib/whats-new.js').Highlight[]} */
     highlights: [],
   })
@@ -247,7 +249,7 @@
     const base = current.replace(/-.*$/, '')
     const [maj, min] = base.split('.').map(Number)
     const previous = min > 0 ? `${maj}.${min - 1}.99` : `${Math.max(0, maj - 1)}.99.99`
-    /** @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number }} */
+    /** @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number, versions?: number }} */
     let notes = { releases: [], omitted: 0 }
     try {
       const { default: markdown } = await import('../../../CHANGELOG.md?raw')
@@ -277,11 +279,12 @@
     }
     if (!previous || previous === current) return
 
-    /** @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number }} */
+    /** @type {{ releases: import('$lib/changelog.js').ChangelogRelease[], omitted: number, versions?: number }} */
     let notes = { releases: [], omitted: 0 }
     try {
       const { default: markdown } = await import('../../../CHANGELOG.md?raw')
-      notes = releasesBetween(markdown, previous, current, 8)
+      // A long jump (stable to stable) as one merged list: see releasesInRange.
+      notes = releasesBetween(markdown, previous, current, 8, { merge: true })
     } catch (e) {
       console.error('[updater] changelog unavailable:', e)
     }
@@ -522,6 +525,7 @@
   previous={whatsNew.previous}
   releases={whatsNew.releases}
   omitted={whatsNew.omitted}
+  versions={whatsNew.versions}
   highlights={whatsNew.highlights}
   onaction={onwhatsnewaction}
   onfullchangelog={() => void openChangelog('whats-new')}

@@ -123,14 +123,15 @@ export function parseReleases(markdown) {
 /**
  * The releases someone skipped over by updating from `previous` to `current`:
  * every version in (previous, current], newest first, up to `limit` of them.
- * `omitted` counts the older ones left out.
+ * `omitted` counts the older ones left out; `versions` counts them all.
  * @param {string} markdown CHANGELOG.md
  * @param {string} previous @param {string} current
  * @param {number} [limit]
- * @returns {{ releases: ChangelogRelease[], omitted: number }}
+ * @param {{ merge?: boolean }} [opts] see releasesInRange
+ * @returns {{ releases: ChangelogRelease[], omitted: number, versions: number }}
  */
-export function releasesBetween(markdown, previous, current, limit = 5) {
-  return releasesInRange(parseReleases(markdown), previous, current, limit)
+export function releasesBetween(markdown, previous, current, limit = 5, opts = {}) {
+  return releasesInRange(parseReleases(markdown), previous, current, limit, opts)
 }
 
 /**
@@ -146,20 +147,64 @@ export function changelogVersion(v) {
 
 /**
  * Releases in (previous, current], newest first, up to `limit`.
+ *
+ * With `merge`, a range longer than `limit` comes back as ONE release holding
+ * every change in it instead of the newest `limit` versions. An update from
+ * stable 3.0.0 to 3.7.5 spans 66 versions: the newest 8 were 21 small fixes,
+ * and the features people were getting (shared studios, new engines,
+ * languages) sat behind "And 58 earlier releases in the full changelog".
  * @param {ChangelogRelease[]} all
  * @param {string} previous @param {string} current
  * @param {number} [limit]
- * @returns {{ releases: ChangelogRelease[], omitted: number }}
+ * @param {{ merge?: boolean }} [opts]
+ * @returns {{ releases: ChangelogRelease[], omitted: number, versions: number }}
  */
-export function releasesInRange(all, previous, current, limit = 5) {
+export function releasesInRange(all, previous, current, limit = 5, { merge = false } = {}) {
   const from = changelogVersion(previous)
   const to = changelogVersion(current)
-  if (!(compareVersions(to, from) > 0)) return { releases: [], omitted: 0 }
+  if (!(compareVersions(to, from) > 0)) return { releases: [], omitted: 0, versions: 0 }
   const inRange = all
     .filter((r) => r.sections.length > 0)
     .filter((r) => compareVersions(r.version, from) > 0 && compareVersions(r.version, to) <= 0)
     .sort((a, b) => compareVersions(b.version, a.version))
-  return { releases: inRange.slice(0, limit), omitted: Math.max(0, inRange.length - limit) }
+  if (merge && inRange.length > limit) return { releases: [mergeReleases(inRange)], omitted: 0, versions: inRange.length }
+  return { releases: inRange.slice(0, limit), omitted: Math.max(0, inRange.length - limit), versions: inRange.length }
+}
+
+/** Order of the merged sections by kind: what's new first. */
+const KIND_ORDER = /** @type {ChangeType[]} */ (['feature', 'fix', 'change', 'other'])
+
+/**
+ * Several releases as one, named for the newest: every section's items under
+ * one section per kind (New, Fixed, Improved), and one per sub-section
+ * (#### Performance) within its kind, newest items first.
+ * @param {ChangelogRelease[]} releases newest first
+ * @returns {ChangelogRelease}
+ */
+export function mergeReleases(releases) {
+  /** @type {Map<string, ChangelogSection>} */
+  const byKey = new Map()
+  for (const r of releases) {
+    for (const s of r.sections) {
+      const sub = s.title !== s.group
+      // Top-level sections merge by kind ("Bug Fixes" and "Fixes" are both
+      // Fixed); a sub-section by its kind and its own title.
+      const key = sub ? `${s.type}\u0000${s.title}` : s.type
+      let m = byKey.get(key)
+      if (!m) {
+        m = sub ? { title: s.title, group: `${s.type}`, type: s.type, items: [] } : { title: s.type, group: s.type, type: s.type, items: [] }
+        byKey.set(key, m)
+      }
+      m.items.push(...s.items)
+    }
+  }
+  const sections = [...byKey.values()].sort((a, b) => {
+    const k = KIND_ORDER.indexOf(a.type) - KIND_ORDER.indexOf(b.type)
+    if (k) return k
+    // Within a kind, its own items before its sub-sections.
+    return Number(a.title !== a.group) - Number(b.title !== b.group)
+  })
+  return { version: releases[0]?.version ?? '', date: releases[0]?.date ?? '', sections }
 }
 
 /**
