@@ -4493,7 +4493,7 @@
                   bind:open={enginePickerOpen}
                   items={engineItems}
                   placeholder="Search databases…"
-                  contentClass="w-[26rem]"
+                  contentClass="w-72"
                   align="start"
                   onselect={(it) => pickEngine(it.value)}
                 >
@@ -4513,23 +4513,23 @@
                         {editingId ? name || activeDriver.label : activeDriver.label}
                       </span>
                       {#if activeDriver.beta}
-                        <span class="shrink-0 rounded-sm bg-primary/10 px-1 text-ui-3xs font-medium text-primary">Beta</span>
+                        <span class="shrink-0 text-ui-3xs text-muted-foreground">Beta</span>
                       {/if}
                       <Icon name="chevron-down" class="size-3.5 shrink-0 text-muted-foreground" />
                     </button>
                   {/snippet}
                   {#snippet item(it)}
                     <DbIcon id={it.value} class={cn("size-4 shrink-0", engineTint(it.value))} />
-                    <!-- No category per row: "Hosting providers" printed down five
-                         rows in a row was noise beside names that already say what
-                         they are. The category still matches in search (keywords). -->
-                    <span class="min-w-0 shrink-0 truncate">{it.label}</span>
+                    <!-- The name and nothing else. Each row used to carry its
+                         one-line blurb and a blue Beta chip too, and thirty rows
+                         of three texts read as clutter. The blurb (and the
+                         category) still match in search and show on hover. -->
+                    <span class="min-w-0 flex-1 truncate" title={it.desc}>{it.label}</span>
                     {#if it.beta}
-                      <span class="shrink-0 rounded-sm bg-primary/10 px-1 text-ui-3xs font-medium text-primary">Beta</span>
+                      <span class="shrink-0 text-ui-3xs text-muted-foreground">Beta</span>
                     {/if}
-                    <span class="min-w-0 flex-1 truncate text-ui-3xs text-muted-foreground">{it.desc}</span>
                     {#if it.value === dbType}
-                      <Icon name="check" class="size-3.5 shrink-0 text-primary" />
+                      <Icon name="check" class="size-3.5 shrink-0 text-muted-foreground" />
                     {/if}
                   {/snippet}
                 </SearchableMenu>
