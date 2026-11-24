@@ -524,12 +524,9 @@ html[data-os="linux"]   { --window-radius: 8px; }
        grayscale strokes can pick Grayscale in Settings -> Appearance. */
     -webkit-font-smoothing: auto;
     -moz-osx-font-smoothing: auto;
-    /* optimizeLegibility: proper kerning + shaping so UI text stays smooth and
-       crisp at every zoom level (optimizeSpeed skips shaping and looks rough,
-       especially scaled down). The perf-sensitive data grid opts back into
-       optimizeSpeed via a scoped rule (.studio-data-table) so large grids don't
-       pay the shaping cost on every cell. */
-    text-rendering: optimizeLegibility;
+    /* auto: lets WebKit/Blink use the fast ASCII text path while font-kerning
+       and font-feature-settings below still apply kerning cleanly. */
+    text-rendering: auto;
     /* font-synthesis and text-size-adjust omitted: font-synthesis:none can trigger
        a WebKit font assertion on Linux startup; text-size-adjust is a no-op on desktop. */
   }
@@ -1817,13 +1814,14 @@ html:not(.dark) .key-well:focus-within { box-shadow: inset 0 0 0 1px var(--ring)
 
 /* Linux (WebKitGTK) can draw a scroll area's scrollbar on its own layer, above
    everything, so the sidebar's bar showed through Settings and other dialogs.
-   While a dialog is open, the scrollbars behind it are hidden; the dialog's
-   own keep working. */
-html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"])
+   Driven by `html[data-dialog-open]` (set while a DialogContent is drawn)
+   instead of a root `:has()` selector, which made WebKitGTK invalidate styles
+   across the entire DOM on every unrelated mutation. */
+html[data-os="linux"][data-dialog-open]
   :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto):not(:is([role="dialog"], [role="alertdialog"]) *) {
   scrollbar-width: none;
 }
-html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"])
+html[data-os="linux"][data-dialog-open]
   :is(.app-scroll, .overflow-auto, .overflow-y-auto, .overflow-x-auto):not(:is([role="dialog"], [role="alertdialog"]) *)::-webkit-scrollbar {
   display: none;
 }

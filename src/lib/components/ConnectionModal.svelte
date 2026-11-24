@@ -93,6 +93,7 @@
   import { ScrollArea } from "$lib/components/ui/scroll-area/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
   import { Dialog as DialogPrimitive } from "bits-ui";
+  import { beginDialogOpen, endDialogOpen } from "$lib/dialog-open.js";
   import ResizeHandle from "./ResizeHandle.svelte";
   import { cn } from "$lib/utils.js";
   import { IS_MAC, comboTitle } from '$lib/shortcuts.js';
@@ -3416,6 +3417,14 @@
       /* browser/non-Tauri env */
     }
   }
+  // Same open-dialog marker as ui/dialog's DialogContent: set while the
+  // dialog element is drawn, so app.css can hide the scrollbars behind it.
+  let dialogContentEl = $state(/** @type {HTMLElement | null} */ (null));
+  $effect(() => {
+    if (!dialogContentEl) return;
+    beginDialogOpen();
+    return () => endDialogOpen();
+  });
 </script>
 
 <!-- ⌘R / Ctrl+R rescans what's running locally while the dialog is open. The
@@ -3949,6 +3958,7 @@
       class="fixed inset-x-0 z-50 bg-black/65 data-open:animate-in data-closed:animate-out data-open:fade-in-0 data-closed:fade-out-0 ease-out duration-150"
     />
     <DialogPrimitive.Content
+      bind:ref={dialogContentEl}
       data-connection-modal
       style={modalInset}
       class="fixed inset-x-0 z-50 flex bg-background text-foreground outline-none data-open:animate-in data-closed:animate-out data-open:fade-in-0 data-closed:fade-out-0 data-open:zoom-in-[0.98] data-closed:zoom-out-[0.98] ease-out duration-200"

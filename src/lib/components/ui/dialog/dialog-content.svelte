@@ -5,6 +5,7 @@
 	import { cn } from "$lib/utils.js";
 	import X from '@lucide/svelte/icons/x';
 	import { installFocusTracker, getLastExternalFocus } from "$lib/focus-tracker.js";
+	import { beginDialogOpen, endDialogOpen } from "$lib/dialog-open.js";
 
 	let {
 		ref = $bindable(null),
@@ -35,6 +36,15 @@
 	// returns focus to a Dialog.Trigger automatically, but programmatically-opened
 	// dialogs (no trigger) would otherwise drop focus to <body>.
 	installFocusTracker();
+
+	// This wrapper mounts with its Dialog.Root, open or not, so the marker
+	// follows the content element instead: bits-ui sets `ref` while the dialog
+	// is drawn and back to null when it closes.
+	$effect(() => {
+		if (!ref) return;
+		beginDialogOpen();
+		return () => endDialogOpen();
+	});
 
 	/** @param {Event} e */
 	function handleCloseAutoFocus(e) {
