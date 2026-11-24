@@ -3430,7 +3430,7 @@
        replying says so in place of its time, so you can read a table while it
        works and see when it is done. -->
   {#if aiInTab && aiChatId && lowerReady}
-    <div class="flex max-h-[40%] shrink-0 flex-col pt-2">
+    <div class="flex max-h-[40%] shrink-0 flex-col border-t border-sidebar-border/50">
       <div class="flex h-9 shrink-0 items-center gap-1 pr-2 pl-4">
         <button
           type="button"
@@ -3654,11 +3654,15 @@
 {/snippet}
 
 {#snippet connectionsSection()}
+  <!-- Connections (and Chats above it) each start on a hairline, the same one
+       as above the footer, instead of 8px of space: folded, the headers
+       floated under the table list with uneven gaps and nothing marking where
+       the list ended. -->
   <!-- Connections, pinned to the sidebar's foot (T3's "Settled" pattern): a
        header that folds the list away, quiet rows with the engine and when you
        last used it, "Show more", and a hover card with the details. -->
   {#if wsConnections.length && lowerReady}
-    <div class="flex max-h-[45%] shrink-0 flex-col pt-2">
+    <div class="flex max-h-[45%] shrink-0 flex-col border-t border-sidebar-border/50">
       <button
         type="button"
         class="flex h-9 shrink-0 items-center gap-2 px-4 text-ui-sm text-foreground/80 hover:text-foreground"
