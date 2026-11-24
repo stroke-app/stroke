@@ -28,7 +28,7 @@
 			// there, so a 100ms slide meant the panel was still moving into place
 			// when the eye had already arrived: that is what reads as "the menu
 			// lagged", and nothing about it was actually slow.
-			"data-closed:animate-out data-closed:fade-out-0 border border-border/70 bg-popover text-popover-foreground min-w-36 max-w-(--menu-max-w) rounded-menu p-1 elevate-2-rim duration-75 z-50 overflow-x-hidden overflow-y-auto outline-none",
+			"data-closed:animate-out data-closed:fade-out-0 border border-border/70 bg-popover text-popover-foreground min-w-36 max-w-(--menu-max-w) rounded-menu p-1 elevate-2-rim duration-75 z-[60] overflow-x-hidden overflow-y-auto outline-none",
 			className
 		)}
 		{...restProps}

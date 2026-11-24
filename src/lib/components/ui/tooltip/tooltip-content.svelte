@@ -19,7 +19,7 @@
 		{side}
 		{sideOffset}
 		class={cn(
-			" data-closed:animate-out data-closed:fade-out-0 [transform-origin:var(--bits-floating-transform-origin)] ease-out duration-75 z-50 rounded-lg border border-border/60 bg-popover px-2.5 py-1.5 text-ui-xs elevate-2-rim outline-none",
+			" data-closed:animate-out data-closed:fade-out-0 [transform-origin:var(--bits-floating-transform-origin)] ease-out duration-75 z-[60] rounded-lg border border-border/60 bg-popover px-2.5 py-1.5 text-ui-xs elevate-2-rim outline-none",
 			className
 		)}
 		{...restProps}
