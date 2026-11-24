@@ -58,6 +58,7 @@
   import Sidebar from './Sidebar.svelte'
   import TabBar from './TabBar.svelte'
   import PaneLayout from './PaneLayout.svelte'
+  import ResizeHandle from './ResizeHandle.svelte'
   import * as PaneTree from '$lib/pane-layout.js'
   import TabLoading from './TabLoading.svelte'
   import TableToolbar from './TableToolbar.svelte'
@@ -296,7 +297,10 @@
     findForeignKeyForColumn,
     normalizeForeignKeys,
   } from '$lib/foreign-key-nav.js'
-  import { loadLayout, saveLayout, sidebarSideStore, setSidebarSide } from '$lib/stores/layout.js'
+  import {
+    loadLayout, saveLayout, sidebarSideStore, setSidebarSide,
+    TERMINAL_DOCK_MIN, TERMINAL_DOCK_DEFAULT, TERMINAL_DOCK_CONTENT_MIN, clampTerminalDockHeight,
+  } from '$lib/stores/layout.js'
   import {
     getLastConnection,
     withSecrets,
@@ -3956,34 +3960,35 @@ let rowSearch = $state('')
     window.addEventListener('stroke:redis-nav', on)
     return () => window.removeEventListener('stroke:redis-nav', on)
   })
-  /** Drag the hairline to resize; the height is kept across launches. @param {PointerEvent} e */
-  function startTerminalDockResize(e) {
-    e.preventDefault()
-    const startY = e.clientY
-    const startH = terminalDockHeight
-    const max = Math.max(160, window.innerHeight - 220)
-    // One layout per frame at most: pointermove fires faster than the display,
-    // and every height change re-lays the page above and the terminal below.
-    let frame = 0
-    let nextH = startH
-    /** @param {PointerEvent} ev */
-    const move = (ev) => {
-      nextH = Math.round(Math.min(max, Math.max(120, startH + (startY - ev.clientY))))
-      // Straight to the element: no app state change per frame, just one style write.
-      if (!frame) frame = requestAnimationFrame(() => { frame = 0; if (terminalDockEl) terminalDockEl.style.height = `${nextH}px` })
-    }
-    const up = () => {
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      cancelAnimationFrame(frame)
-      terminalDockHeight = nextH
-      document.documentElement.removeAttribute('data-resizing')
-      saveLayout({ terminalDockHeight })
-    }
-    // The terminal holds its grid while this is set and refits once at the end.
-    document.documentElement.setAttribute('data-resizing', 'terminal-dock')
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
+  let terminalDockDragStartH = 0
+  let terminalDockDragMaxH = 0
+  let terminalDockPendingH = 0
+
+  function beginTerminalDockResize() {
+    const parentH = terminalDockEl?.parentElement?.clientHeight || window.innerHeight
+    terminalDockDragStartH = terminalDockEl ? Math.round(terminalDockEl.getBoundingClientRect().height) : terminalDockHeight
+    terminalDockDragMaxH = Math.max(TERMINAL_DOCK_MIN, parentH - TERMINAL_DOCK_CONTENT_MIN)
+    terminalDockPendingH = terminalDockDragStartH
+  }
+
+  /** @param {number} dy */
+  function resizeTerminalDock(dy) {
+    terminalDockPendingH = Math.round(Math.min(terminalDockDragMaxH, Math.max(TERMINAL_DOCK_MIN, terminalDockDragStartH + dy)))
+    // Straight to the element: no Svelte state write per frame, just one style write.
+    if (terminalDockEl) terminalDockEl.style.height = `${terminalDockPendingH}px`
+  }
+
+  function finishTerminalDockResize() {
+    terminalDockHeight = terminalDockPendingH
+    if (terminalDockEl) terminalDockEl.style.height = `${terminalDockHeight}px`
+    saveLayout({ terminalDockHeight })
+  }
+
+  function resetTerminalDockHeight() {
+    const parentH = terminalDockEl?.parentElement?.clientHeight || window.innerHeight
+    terminalDockHeight = clampTerminalDockHeight(TERMINAL_DOCK_DEFAULT, parentH)
+    if (terminalDockEl) terminalDockEl.style.height = `${terminalDockHeight}px`
+    saveLayout({ terminalDockHeight })
   }
   createCommandHotkey('view.terminalDock', (e) => {
     if (!connection) return
@@ -12670,12 +12675,20 @@ let rowSearch = $state('')
            actions float at the top-right of the terminal itself. -->
       <div
         bind:this={terminalDockEl}
-        class={!terminalDockShown ? 'hidden' : terminalDockOverlay ? 'absolute inset-x-0 bottom-0 z-20 flex flex-col border-t border-border/60 bg-panel will-change-transform' : 'relative flex shrink-0 flex-col border-t border-border/60 bg-panel'}
+        class={!terminalDockShown ? 'hidden' : terminalDockOverlay ? 'absolute inset-x-0 bottom-0 z-20 flex max-h-[calc(100%-7.5rem)] flex-col bg-panel will-change-transform' : 'relative flex max-h-[calc(100%-7.5rem)] shrink-0 flex-col bg-panel'}
         style:height="{terminalDockHeight}px"
         inert={!terminalDockOpen || undefined}
       >
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
-        <div class="absolute inset-x-0 -top-1 z-10 h-2 cursor-row-resize" onpointerdown={startTerminalDockResize}></div>
+        <div class="absolute inset-x-0 top-0 z-20">
+          <ResizeHandle
+            axis="y"
+            edge="start"
+            onresizestart={beginTerminalDockResize}
+            onresize={resizeTerminalDock}
+            onresizeend={finishTerminalDockResize}
+            onreset={resetTerminalDockHeight}
+          />
+        </div>
         <div class="absolute inset-0 flex flex-col">
           <svelte:boundary failed={tabError}>
             {#await import('./TerminalPage.svelte')}<TabLoading />{:then { default: TerminalPage }}

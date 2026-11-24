@@ -1,6 +1,7 @@
 <script>
   import Self from './PaneLayout.svelte'
   import { cn } from '$lib/utils.js'
+  import { beginPanelResize, endPanelResize } from '$lib/panel-motion.js'
 
   /** @typedef {import('$lib/pane-layout.js').PaneNode} PaneNode */
   /** @typedef {import('$lib/pane-layout.js').GroupNode} GroupNode */
@@ -29,11 +30,18 @@
   /** @param {PointerEvent} e */
   function startResize(e) {
     if (!splitEl || node.type !== 'split') return
+    if (e.button !== 0) return
     e.preventDefault()
+    const el = /** @type {HTMLElement} */ (e.currentTarget)
+    try { el.setPointerCapture(e.pointerId) } catch { /* synthetic or detached pointer */ }
     const rect = splitEl.getBoundingClientRect()
     const horizontal = node.dir === 'row'
     const splitId = node.id
+    const bodyClass = horizontal ? 'is-resizing-x' : 'is-resizing-y'
+    document.body.classList.add(bodyClass)
+    beginPanelResize('pane')
     let raf = 0
+    let ended = false
     /** @type {number | null} */
     let pendingPct = null
     const flush = () => {
@@ -51,19 +59,27 @@
       // grid) can't stall the drag - the splitter stays glued to the pointer.
       if (!raf) raf = requestAnimationFrame(flush)
     }
-    const up = () => {
+    /** @param {PointerEvent} ev */
+    const up = (ev) => {
+      if (ended) return
+      ended = true
       if (raf) cancelAnimationFrame(raf)
       raf = 0
       if (pendingPct != null) onresize(splitId, [pendingPct, 100 - pendingPct])
-      window.removeEventListener('pointermove', move)
-      window.removeEventListener('pointerup', up)
-      document.body.style.userSelect = ''
-      document.body.style.cursor = ''
+      document.body.classList.remove(bodyClass)
+      try {
+        if (el.hasPointerCapture?.(ev.pointerId)) el.releasePointerCapture(ev.pointerId)
+      } catch { /* already released */ }
+      el.removeEventListener('pointermove', move)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', up)
+      el.removeEventListener('lostpointercapture', up)
+      endPanelResize()
     }
-    document.body.style.userSelect = 'none'
-    document.body.style.cursor = horizontal ? 'col-resize' : 'row-resize'
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
+    el.addEventListener('pointermove', move)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', up)
+    el.addEventListener('lostpointercapture', up)
   }
 
   /** Position/size of the drop-hint overlay for a given edge (translucent preview). */

@@ -634,9 +634,11 @@ html[data-os="linux"]   { --window-radius: 8px; }
 
   /* Lock cursor globally while drag is active so it never flickers mid-drag */
   body.is-resizing-x,
-  body.is-resizing-x * { cursor: col-resize !important; }
+  body.is-resizing-x * { cursor: col-resize !important; user-select: none !important; -webkit-user-select: none !important; }
   body.is-resizing-y,
-  body.is-resizing-y * { cursor: row-resize !important; }
+  body.is-resizing-y * { cursor: row-resize !important; user-select: none !important; -webkit-user-select: none !important; }
+  /* Skip xterm hit-testing while dragging any panel resize handle */
+  html[data-resizing] .xterm { pointer-events: none !important; }
 
   /* An open modal dialog locks `pointer-events: none` on <body> (bits-ui), and
      only the dialog's own content/overlay opt back in. Dialogs that inset

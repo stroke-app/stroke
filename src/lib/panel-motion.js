@@ -107,3 +107,38 @@ export function slidePanel(el, edge, open) {
   })
 }
 
+export const PANEL_RESIZE_END_EVENT = 'stroke:panel-resize-end'
+
+let activeResizes = 0
+
+/**
+ * Mark an active pointer-driven panel drag so heavy panes (xterm.js, data grid)
+ * avoid per-frame refits and buffer reallocations while the handle moves.
+ * @param {string} [kind]
+ */
+export function beginPanelResize(kind = 'panel') {
+  activeResizes++
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('data-resizing', kind)
+  }
+}
+
+/**
+ * End a pointer-driven panel drag once the final size has been committed to
+ * the DOM, and notify listeners so deferred refits land in the same release.
+ */
+export function endPanelResize() {
+  activeResizes = Math.max(0, activeResizes - 1)
+  if (activeResizes > 0) return
+  if (typeof document !== 'undefined') {
+    document.documentElement.removeAttribute('data-resizing')
+  }
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent(PANEL_RESIZE_END_EVENT))
+  }
+}
+
+/** Whether any pointer-driven panel drag is currently in progress. */
+export function isPanelResizing() {
+  return activeResizes > 0 || (typeof document !== 'undefined' && document.documentElement.hasAttribute('data-resizing'))
+}

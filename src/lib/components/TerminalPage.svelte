@@ -55,6 +55,7 @@
   import { suggest, keystrokesFor } from '$lib/terminal-complete.js'
   import { lineEditorFor, clearLineKeys, consoleKeystrokes, consoleInput, consoleClearCommand } from '$lib/terminal-keys.js'
   import { wantsTerminator } from '$lib/sql-terminator.js'
+  import { isPanelResizing, PANEL_RESIZE_END_EVENT } from '$lib/panel-motion.js'
   import ArrowDown from '@lucide/svelte/icons/arrow-down'
 
   let {
@@ -556,16 +557,24 @@
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let resizeSendTimer
   let lastSent = ''
+  function sendResizeNow() {
+    clearTimeout(resizeSendTimer)
+    resizeSendTimer = undefined
+    if (!term) return
+    const key = `${term.cols}x${term.rows}`
+    if (key === lastSent) return
+    sendResize()
+  }
   /** The PTY hears about a new size once, after it stops changing. */
   function sendResizeSoon() {
     clearTimeout(resizeSendTimer)
     resizeSendTimer = setTimeout(() => {
-      if (!term) return
+      resizeSendTimer = undefined
+      if (!term || isPanelResizing()) return
       const key = `${term.cols}x${term.rows}`
       if (key === lastSent) return
-      lastSent = key
       sendResize()
-    }, 140)
+    }, 120)
   }
 
   // Keystroke-to-echo latency, written to the app log every 40 keys: the number
@@ -966,9 +975,45 @@
 
   // ── Terminal ───────────────────────────────────────────────────────────────
 
-  function fit() {
-    if (!fitAddon || !termEl || termEl.clientWidth === 0) return
-    try { fitAddon.fit() } catch { /* not laid out yet */ }
+  /**
+   * Size xterm's grid to its container without `FitAddon.fit()`'s forced
+   * `getComputedStyle()` layout flushes or pre-resize `_renderService.clear()`
+   * blank flash.
+   * @param {number} [width]
+   * @param {number} [height]
+   * @returns {boolean} true if cols or rows changed
+   */
+  function fit(width, height) {
+    if (!term || !fitAddon || !termEl) return false
+    const w = Math.floor(width ?? termEl.clientWidth)
+    const h = Math.floor(height ?? termEl.clientHeight)
+    if (w <= 0 || h <= 0) return false
+    let cols = 0
+    let rows = 0
+    const dims = /** @type {any} */ (term)._core?._renderService?.dimensions
+    const cellW = dims?.css?.cell?.width
+    const cellH = dims?.css?.cell?.height
+    if (cellW > 0 && cellH > 0) {
+      const scrollbarW = term.options.scrollback === 0 ? 0 : (term.options.overviewRuler?.width || 14)
+      cols = Math.max(2, Math.floor((w - scrollbarW) / cellW))
+      rows = Math.max(1, Math.floor(h / cellH))
+    } else {
+      try {
+        const proposed = fitAddon.proposeDimensions()
+        if (!proposed || isNaN(proposed.cols) || isNaN(proposed.rows)) return false
+        cols = proposed.cols
+        rows = proposed.rows
+      } catch {
+        return false
+      }
+    }
+    if (cols === term.cols && rows === term.rows) return false
+    try {
+      term.resize(cols, rows)
+      return true
+    } catch {
+      return false
+    }
   }
 
   // ── Renderer ───────────────────────────────────────────────────────────────
@@ -1316,7 +1361,12 @@
   let resizeObserver = null
   /** @type {MutationObserver | null} */
   let themeObserver = null
-  let fitFrame = 0
+  /** @type {(() => void) | null} */
+  let removeResizeEndListener = null
+  let lastObservedW = 0
+  let lastObservedH = 0
+  let pendingFit = false
+  let lastWindowResizeAt = 0
 
   onMount(() => {
     if (!termEl) return
@@ -1399,27 +1449,72 @@
     term.onResize(() => sendResizeSoon())
     fit()
 
-    // Native behaviour: the grid reflows with the panel on every frame, so the
-    // text never stretches or gets cut while dragging. What used to flicker was
-    // the client redrawing its prompt on each PTY resize; that is now sent
-    // once the size settles (sendResizeSoon), not per frame.
-    // While a panel is dragged, refit a few times a second (and once at the
-    // end) instead of every frame: each fit re-lays every row of the grid, and
-    // doing that per frame is what made the drag feel heavy.
-    let lastFitAt = 0
-    resizeObserver = new ResizeObserver(() => {
-      cancelAnimationFrame(fitFrame)
+    // Schedule a fit in a macrotask (outside rAF / ResizeObserver): xterm's
+    // WebGL handleResize clears the canvas and queues RenderDebouncer on the
+    // next rAF, so running term.resize() before rAF lets xterm repaint in the
+    // very same frame with zero blank flash.
+    /** @param {number} [delayMs] */
+    const scheduleFit = (delayMs = 0) => {
       clearTimeout(fitTimer)
-      if (document.documentElement.hasAttribute('data-resizing')) {
-        // A drag keeps the WebGL renderer: switching to the DOM one while the
-        // edge moved drew the same font heavier and wider, so the text changed
-        // weight under the pointer and changed back when it was let go.
-        const since = performance.now() - lastFitAt
-        if (since > 50) { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }
-        fitTimer = setTimeout(() => { lastFitAt = performance.now(); fitFrame = requestAnimationFrame(fit) }, 50)
+      fitTimer = setTimeout(() => {
+        fitTimer = undefined
+        if (!term || !termEl || isPanelResizing()) return
+        pendingFit = false
+        fit()
+        if (!webgl) enableGpuSoon(0)
+      }, delayMs)
+    }
+
+    const onPanelResizeEnd = () => {
+      if (!pendingFit || !term || !termEl) return
+      pendingFit = false
+      clearTimeout(fitTimer)
+      fitTimer = undefined
+      const w = Math.floor(termEl.clientWidth)
+      const h = Math.floor(termEl.clientHeight)
+      if (w > 0 && h > 0) {
+        lastObservedW = w
+        lastObservedH = h
+      }
+      if (fit(w, h)) sendResizeNow()
+      if (!webgl) enableGpuSoon(0)
+    }
+    window.addEventListener(PANEL_RESIZE_END_EVENT, onPanelResizeEnd)
+    removeResizeEndListener = () => window.removeEventListener(PANEL_RESIZE_END_EVENT, onPanelResizeEnd)
+
+    resizeObserver = new ResizeObserver((entries) => {
+      const rect = entries[entries.length - 1]?.contentRect
+      const w = rect ? Math.floor(rect.width) : (termEl?.clientWidth ?? 0)
+      const h = rect ? Math.floor(rect.height) : (termEl?.clientHeight ?? 0)
+      if (w <= 0 || h <= 0) {
+        lastObservedW = 0
+        lastObservedH = 0
         return
       }
-      fitFrame = requestAnimationFrame(() => { fit(); if (!webgl) enableGpuSoon(0) })
+      if (w === lastObservedW && h === lastObservedH) return
+      lastObservedW = w
+      lastObservedH = h
+      hideSuggest()
+
+      // Active panel drag (dock, sidebar, AI panel, split pane): hold the
+      // rendered grid and canvas completely untouched while the pointer moves
+      // so dragging stays at 60/120fps on Linux, Windows and macOS, then refit
+      // once on release (`onPanelResizeEnd`).
+      if (isPanelResizing()) {
+        pendingFit = true
+        clearTimeout(fitTimer)
+        fitTimer = undefined
+        return
+      }
+
+      // Non-drag resize: a single layout transition (panel toggle, maximize,
+      // tab switch) fits immediately; a continuous stream of OS window-drag
+      // events debounces until the drag settles so window resizing never
+      // stalls on repeated WebGL/DOM reallocations or scrollback reflow.
+      const now = performance.now()
+      const continuous = now - lastWindowResizeAt < 120
+      lastWindowResizeAt = now
+      scheduleFit(continuous ? 100 : 0)
     })
     resizeObserver.observe(termEl)
     // Theme, font preset and zoom all land as attributes on <html>.
@@ -1490,9 +1585,12 @@
 
   onDestroy(() => {
     generation++
-    cancelAnimationFrame(fitFrame)
+    clearTimeout(fitTimer)
+    clearTimeout(resizeSendTimer)
     cancelAnimationFrame(suggestFrame)
     clearTimeout(webglTimer)
+    removeResizeEndListener?.()
+    removeResizeEndListener = null
     resizeObserver?.disconnect()
     disableGpu()
     themeObserver?.disconnect()
@@ -1709,10 +1807,10 @@
         {/if}
       </div>
     {/if}
-    <div class="absolute inset-x-0 bottom-0 pt-2 pr-1 pb-1 pl-3" style:top={showInstallNotice ? `${installNoticeH}px` : '0'}>
+    <div class="absolute inset-x-0 bottom-0 overflow-hidden pt-2 pr-1 pb-1 pl-3" style:top={showInstallNotice ? `${installNoticeH}px` : '0'}>
       <div
         bind:this={termEl}
-        class="size-full"
+        class="size-full overflow-hidden [contain:strict]"
         style="font-family: var(--terminal-font, var(--editor-font-family, var(--font-mono))); font-size: calc({sqlEditorFontSize($appSqlEditor.textSize)} * 0.9);"
       ></div>
     </div>
