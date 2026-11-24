@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.7.9] - 2026-11-24
+
+### Changes
+- **Stroke Nightly's title bar** - The night sky behind the title bar and the line along the top of the window are gone. Nightly now says "Stroke Nightly" in the title bar instead, where Stable says "Stroke".
+
+
 ## [3.7.8] - 2026-11-24
 
 ### Bug Fixes
