@@ -275,7 +275,7 @@
             onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
           >
             <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
-            <span class="truncate">{tabDisplayTitle(tab)}{#if tab.connLabel && clashing.has(tabDisplayTitle(tab))}<span class="text-muted-foreground">{` · ${tab.connLabel}`}</span>{/if}</span>
+            <span class="truncate leading-normal">{tabDisplayTitle(tab)}{#if tab.connLabel && clashing.has(tabDisplayTitle(tab))}<span class="text-muted-foreground">{` · ${tab.connLabel}`}</span>{/if}</span>
           </button>
 
           {#if tab.pinned}

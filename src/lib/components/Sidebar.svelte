@@ -2682,7 +2682,7 @@
                               aria-label={isCurrent ? `${db.label}, current database` : `Switch to ${db.label}`}
                             >
                               <Icon name="database" class="size-4 shrink-0 text-muted-foreground" />
-                              <span class="min-w-0 truncate text-ui-sm leading-4">{@render hl(db.label)}</span>
+                              <span class="min-w-0 truncate text-ui-sm leading-4 -my-1 py-1">{@render hl(db.label)}</span>
                               {#if isCurrent}
                                 <Icon name="check" class="size-3 shrink-0 text-success" />
                               {/if}
@@ -2800,7 +2800,7 @@
                         {:else}
                           <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground" />
                         {/if}
-                        <span class="min-w-0 truncate text-ui-sm leading-4">{@render hl(item.table)}</span>
+                        <span class="min-w-0 truncate text-ui-sm leading-4 -my-1 py-1">{@render hl(item.table)}</span>
                         <button
                           type="button"
                           tabindex="-1"
@@ -2917,7 +2917,7 @@
                               <Icon name="square" class={cn("absolute inset-0 size-4 text-muted-foreground opacity-0 group-hover/sel:opacity-100", selecting && "opacity-100")} />
                             {/if}
                           </span>
-                          <span class="min-w-0 truncate text-ui-sm leading-4">{@render hl(tableName)}</span>
+                          <span class="min-w-0 truncate text-ui-sm leading-4 -my-1 py-1">{@render hl(tableName)}</span>
                           {#if showRowCount}
                           <span class="shrink-0 text-right font-mono text-ui-2xs leading-4 tabular-nums text-muted-foreground">
                             {formatTableRowCount(_rowCountByName.get(tableName))}
@@ -3154,7 +3154,7 @@
                         {/if}
                       </span>
                       <span class="flex min-w-0 items-center gap-1.5">
-                        <span class="min-w-0 truncate text-ui-sm leading-4">{@render hl(table.name)}</span>
+                        <span class="min-w-0 truncate text-ui-sm leading-4 -my-1 py-1">{@render hl(table.name)}</span>
                         {#if table.rlsEnabled}
                           <Icon
                             name="lock"
@@ -3253,7 +3253,7 @@
                       onclick={() => ontableselect(v.name)}
                     >
                       <span class="relative size-4 shrink-0"><Icon name={mat ? 'layers' : 'eye'} class={cn('absolute inset-0 size-4', mat ? 'text-warning' : 'text-muted-foreground')} /></span>
-                      <span class="truncate text-ui-sm leading-4">{v.name}</span>
+                      <span class="truncate text-ui-sm leading-4 -my-1 py-1">{v.name}</span>
                       {#if showRowCount && mat && v.rowCount != null}
                         <span class="flex min-w-[4ch] shrink-0 items-center justify-end font-mono text-ui-2xs leading-4 tabular-nums text-muted-foreground">{formatTableRowCount(v.rowCount)}</span>
                       {:else}<span></span>{/if}

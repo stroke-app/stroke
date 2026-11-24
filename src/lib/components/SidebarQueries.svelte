@@ -306,7 +306,7 @@
       oncontextmenu={() => (menu = { kind: 'query', query: q })}
     >
       <Icon name="file-code" class={cn('size-3.5 shrink-0', activeId === q.id ? 'text-primary' : 'text-muted-foreground')} />
-      <span class="min-w-0 flex-1 truncate text-ui-sm leading-4">{renamedTo.get(q.id) ?? q.name}</span>
+      <span class="min-w-0 flex-1 truncate text-ui-sm leading-4 -my-1 py-1">{renamedTo.get(q.id) ?? q.name}</span>
     </button>
   {/if}
 {/snippet}
@@ -399,7 +399,7 @@
                   >
                     <Icon name="chevron-right" class={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-150', open && 'rotate-90')} />
                     <Icon name={open ? 'folder-open' : 'folder'} class="size-3.5 shrink-0 text-muted-foreground" />
-                    <span class="min-w-0 flex-1 truncate text-ui-sm leading-4">{f.name}</span>
+                    <span class="min-w-0 flex-1 truncate text-ui-sm leading-4 -my-1 py-1">{f.name}</span>
                     <span class="shrink-0 pr-1 font-mono text-ui-2xs tabular-nums text-muted-foreground">{group.queries.length}</span>
                   </button>
                   <button

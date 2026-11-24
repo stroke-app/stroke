@@ -585,7 +585,7 @@
                       <Icon name="chevron-right" class={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-100', r.open && 'rotate-90')} />
                     </span>
                     <Icon name={OBJECT_KIND_META[/** @type {ObjectKind} */ (r.group)]?.icon ?? 'box'} class={cn('size-4 shrink-0', OBJECT_KIND_META[/** @type {ObjectKind} */ (r.group)]?.tone)} />
-                    <span class="min-w-0 flex-1 truncate text-ui-sm font-medium leading-4">{r.label}</span>
+                    <span class="min-w-0 flex-1 truncate text-ui-sm font-medium leading-4 -my-1 py-1">{r.label}</span>
                     <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground', canCreate && 'group-hover/row:invisible', canCreate && ring && 'invisible')}>
                       {q ? `${r.count}/${r.total}` : r.total}
                     </span>
@@ -620,7 +620,7 @@
                       <Icon name="chevron-right" class={cn('size-3.5 shrink-0 text-muted-foreground transition-transform duration-100', r.open && 'rotate-90')} />
                     </span>
                     <Icon name="package" class="size-4 shrink-0 text-muted-foreground" />
-                    <span class="min-w-0 flex-1 truncate text-ui-sm leading-4">{r.label}</span>
+                    <span class="min-w-0 flex-1 truncate text-ui-sm leading-4 -my-1 py-1">{r.label}</span>
                     <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{q ? `${r.count}/${r.total}` : r.total}</span>
                   </div>
                 {:else}
@@ -642,7 +642,7 @@
                     <span class="w-4 shrink-0" aria-hidden="true"></span>
                     <Icon name={OBJECT_KIND_META[/** @type {ObjectKind} */ (item.kind)]?.icon ?? 'box'} class={cn('size-4 shrink-0', OBJECT_KIND_META[/** @type {ObjectKind} */ (item.kind)]?.tone)} />
                     <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
-                      <span class="min-w-0 shrink truncate text-ui-sm leading-4">{#if hit}{hit[0]}<mark class="rounded-[2px] bg-primary/25 text-inherit">{hit[1]}</mark>{hit[2]}{:else}{item.name}{/if}</span>
+                      <span class="min-w-0 shrink truncate text-ui-sm leading-4 -my-1 py-1">{#if hit}{hit[0]}<mark class="rounded-[2px] bg-primary/25 text-inherit">{hit[1]}</mark>{hit[2]}{:else}{item.name}{/if}</span>
                       {#if (item.kind === 'function' || item.kind === 'procedure') && item.args}
                         <span class="min-w-0 shrink-[2] truncate font-mono text-ui-2xs text-muted-foreground">({item.args})</span>
                       {/if}

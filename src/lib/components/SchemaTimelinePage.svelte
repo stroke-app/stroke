@@ -988,7 +988,7 @@
                     {item.status === 'added' ? '+' : item.status === 'removed' ? '−' : '~'}
                   </span>
                   <!-- Table name col -->
-                  <span class="min-w-0 truncate font-mono text-ui-sm leading-none">{item.name}</span>
+                  <span class="min-w-0 truncate font-mono text-ui-sm leading-normal">{item.name}</span>
                 </button>
               </li>
             {/each}
