@@ -4,6 +4,17 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.8.1] - 2026-11-24
+
+### Changes
+- **Connection page in a tab (Labs, off by default)** - Settings > Labs > Connection page in a tab. Adding or editing a connection opens a Connect tab beside your tables and queries, with the sidebar's own list of connections next to it; a half-filled form or a provider sign-in like Neon stays put while you look at another tab. With nothing connected, the window shows your saved connections and the connect page in one view under a Connect tab, instead of the first-run page and a dialog over it.
+
+### Fixes
+- **Letters like g and y are no longer cut off** - Tab titles and the names in the sidebar's lists (tables, views, databases, saved queries, the tree) clipped the bottom of descenders, more so with a font that sits low like Source Code Pro. They now have room, and the rows stay the same height.
+- **Menu rows fit their menu's corners** - The highlight on a menu row had tighter corners than the menu around it, so the gap at each corner was uneven (most visible on Disconnect in the connection menu). Every dropdown, right-click, select and searchable menu now uses one panel radius, and its rows use that radius minus the padding between them.
+- **Menus open above the connection page** - The account menu, the workspace menu and other menus opened from the title bar drew behind the connection page and the provider sign-in pages, so they looked like they did nothing. Menus, popovers, selects and tooltips now sit above every page and dialog.
+
+
 ## [3.8.0] - 2026-11-24
 
 ### Bug Fixes

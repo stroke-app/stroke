@@ -1,2 +1,0 @@
-### Changes
-- **Connection page in a tab (Labs, off by default)** - Settings > Labs > Connection page in a tab. Adding or editing a connection opens a Connect tab beside your tables and queries, with the sidebar's own list of connections next to it; a half-filled form or a provider sign-in like Neon stays put while you look at another tab. With nothing connected, the window shows your saved connections and the connect page in one view under a Connect tab, instead of the first-run page and a dialog over it.
