@@ -6,7 +6,7 @@
   import ThemeBuilder from './ThemeBuilder.svelte';
   import AddThemeDialog from './AddThemeDialog.svelte';
   import { detectOs } from '$lib/platform.js';
-  import { facesFor, faceStack, normalizeFontSettings } from '$lib/fonts.js';
+  import { facesFor, faceStack, normalizeFontSettings, systemFonts, loadSystemFonts, SYSTEM_PREFIX } from '$lib/fonts.js';
   import { importedThemes, activeImportedId, removeImportedTheme, applyImportedTheme } from '$lib/stores/imported-themes.js';
   import { comboTitle } from '$lib/shortcuts.js'
   import Kbd from './Kbd.svelte'
@@ -260,10 +260,17 @@
     settings = delta > 0 ? increaseZoom() : decreaseZoom();
   }
 
-  /** @param {import('$lib/stores/settings.js').FontId} font */
-  function setFont(font) {
-    if (font === settings.font) return;
-    settings = updateSettings({ font });
+  /** A pairing, or an installed family (`sys:` id) for the whole app. @param {string} id */
+  function setFont(id) {
+    const fonts = normalizeFontSettings(settings.fonts);
+    if (id.startsWith(SYSTEM_PREFIX)) {
+      if (id === fonts.app) return;
+      const mono = $systemFonts.find((f) => SYSTEM_PREFIX + f.family === id)?.mono === true;
+      settings = updateSettings({ fonts: { ...fonts, app: id, appMono: mono } });
+      return;
+    }
+    if (id === settings.font && !fonts.app) return;
+    settings = updateSettings({ font: /** @type {import('$lib/stores/settings.js').FontId} */ (id), fonts: { ...fonts, app: '', appMono: false } });
   }
 
   // ── Separate fonts and smoothing (src/lib/fonts.js) ──
@@ -275,27 +282,57 @@
     { key: 'chat', label: 'AI chat', desc: 'Your prompts and the replies.', kinds: ['sans', 'serif'], sample: 'Which customers ordered twice this week but never paid?' },
     { key: 'terminal', label: 'Terminal', desc: 'Database shells like psql and mysql in the Terminal tab.', kinds: ['mono'], sample: 'app=# \\dt public.*' },
   ]);
-  /** The faces this machine has, per surface; probing installed fonts once is enough. */
-  const faceLists = Object.fromEntries(FONT_SURFACE_ROWS.map((r) => [r.key, facesFor([...r.kinds])]));
+  // The installed families come from the backend once per launch.
+  loadSystemFonts();
+  /** The faces this machine has, per surface. */
+  const faceLists = $derived(Object.fromEntries(FONT_SURFACE_ROWS.map((r) => [r.key, facesFor([...r.kinds], { system: $systemFonts })])));
   const fontsCfg = $derived(normalizeFontSettings(settings.fonts));
   /** @param {Partial<import('$lib/fonts.js').FontSettings>} patch */
   function setFonts(patch) {
     settings = updateSettings({ fonts: { ...normalizeFontSettings(settings.fonts), ...patch } });
   }
-  /** The stack a surface draws in right now, for its preview. @param {string} key */
-  function surfaceStack(key) {
-    const own = faceStack(/** @type {any} */ (fontsCfg)[key]);
-    if (own) return own;
+  /**
+   * The stack a surface draws in right now, for its preview; with `own` false,
+   * the one it draws in on "Theme font".
+   * @param {string} key @param {boolean} [own]
+   */
+  function surfaceStack(key, own = true) {
     const preset = FONT_PRESETS[settings.font] ?? FONT_PRESETS[DEFAULT_FONT];
-    if (key === 'ui' || key === 'chat') return preset.sans;
-    if (key === 'grid') return preset.mono;
-    return 'var(--editor-font-family)';
+    const app = faceStack(fontsCfg.app, preset.sans);
+    const sans = app ?? preset.sans;
+    const mono = (fontsCfg.appMono && app) || preset.mono;
+    const picked = own ? faceStack(/** @type {any} */ (fontsCfg)[key], key === 'ui' || key === 'chat' ? sans : mono) : null;
+    if (picked) return picked;
+    if (key === 'ui' || key === 'chat') return sans;
+    return mono;
   }
   const smoothingDesc = detectOs() === 'macos'
     ? 'Grayscale draws thinner text than the macOS default. System uses the macOS smoothing.'
     : 'Grayscale draws thin, even text. System leaves it to the OS renderer.';
   // The default face leads the list (SF Pro on a Mac, Geist elsewhere).
   const fontEntries = Object.entries(FONT_PRESETS).sort(([a], [b]) => Number(b === DEFAULT_FONT) - Number(a === DEFAULT_FONT));
+  /** Pairings named after their code face draw that name in it. */
+  const MONO_NAMED = new Set(['mono', 'fira', 'source']);
+  /** The main Font menu: the pairings, then every family on this machine. */
+  const fontItems = $derived([
+    ...fontEntries.map(([id, preset]) => ({
+      value: id,
+      label: preset.label,
+      desc: preset.description,
+      font: MONO_NAMED.has(id) ? preset.mono : preset.sans,
+      group: $tx('set.font.group.pairings', 'Pairings'),
+      keywords: [preset.label, preset.description, id === 'mono' ? 'monospace' : 'sans', ...(preset.keywords ?? [])],
+    })),
+    // A fixed-width family sets the whole app; any other sets the interface
+    // and leaves data and code in the pairing's mono. The group says which.
+    ...[true, false].flatMap((mono) => $systemFonts.filter((f) => f.mono === mono).map((f) => ({
+      value: SYSTEM_PREFIX + f.family,
+      label: f.family,
+      font: `"${f.family}", ${mono ? 'monospace' : 'sans-serif'}`,
+      group: mono ? $tx('set.font.group.systemMono', 'Monospace on this computer: the whole app') : $tx('set.font.group.systemSans', 'On this computer: the interface'),
+      keywords: [f.family, mono ? 'monospace mono' : 'sans', 'system installed'],
+    }))),
+  ]);
   const iconStyleEntries = Object.entries(ICON_STYLES);
   const iconSetEntries = Object.entries(ICON_SETS);
   const tableStyleEntries = Object.entries(TABLE_STYLES);
@@ -1526,15 +1563,12 @@
       </div>
       <SelectMenu
         ariaLabel="Font family"
-        value={settings.font}
-        onValueChange={(v) => { if (v) setFont(/** @type {import('$lib/stores/settings.js').FontId} */ (v)); }}
-        items={fontEntries.map(([id, preset]) => ({ value: id, label: preset.label, sans: preset.sans, keywords: [preset.label, preset.description, id === 'mono' ? 'monospace' : 'sans', ...(preset.keywords ?? [])] }))}
+        value={fontsCfg.app || settings.font}
+        onValueChange={(v) => { if (v) setFont(String(v)); }}
+        items={fontItems}
+        contentClass="w-80"
         searchPlaceholder="Search fonts…"
-      >
-        {#snippet lead(it)}
-          <span class="flex size-5 shrink-0 items-center justify-center rounded border border-border/40 bg-muted/30 text-ui-2xs font-semibold text-foreground/70" style="font-family: {it.sans}" aria-hidden="true">Aa</span>
-        {/snippet}
-      </SelectMenu>
+      />
     </div>
   {/if}
 
@@ -1560,15 +1594,11 @@
                 value={current || 'theme'}
                 onValueChange={(v) => setFonts({ [row.key]: v && v !== 'theme' ? v : '' })}
                 items={[
-                  { value: 'theme', label: $tx('set.font.theme', 'Theme font'), sans: surfaceStack(row.key === 'ui' || row.key === 'chat' ? 'ui' : row.key === 'grid' ? 'grid' : 'code'), keywords: ['theme', 'default'] },
-                  ...faceLists[row.key].map((f) => ({ value: f.id, label: f.label, sans: f.stack, keywords: [f.label, f.kind] })),
+                  { value: 'theme', label: $tx('set.font.theme', 'Theme font'), font: surfaceStack(row.key, false), keywords: ['theme', 'default'] },
+                  ...faceLists[row.key].map((f) => ({ value: f.id, label: f.label, font: f.stack, group: f.installed ? $tx('set.font.group.system', 'On this computer') : $tx('set.font.group.builtin', 'Built in'), keywords: [f.label, f.kind] })),
                 ]}
                 searchPlaceholder="Search fonts…"
-              >
-                {#snippet lead(it)}
-                  <span class="flex size-5 shrink-0 items-center justify-center rounded border border-border/40 bg-muted/30 text-ui-2xs font-semibold text-foreground/70" style="font-family: {it.sans}" aria-hidden="true">Aa</span>
-                {/snippet}
-              </SelectMenu>
+              />
             </div>
             <!-- What the surface will look like, in its face. -->
             <p

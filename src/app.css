@@ -84,11 +84,11 @@
   --editor-font-size: 13px;
   /* 1.5 ratio - matches VS Code / Cursor's default editor line height. */
   --editor-line-height: 20px;
-  /* Dedicated code font for the code editors, kept independent of the app's UI /
-     data-grid mono (`--font-mono`) - same separation VS Code makes between its
-     "editor font" and everything else. JetBrains Mono is a true code typeface:
-     heavier, even rhythm, designed ligatures. */
-  --editor-font-family: "JetBrains Mono Variable", "Geist Mono Variable", ui-monospace, monospace;
+  /* No --editor-font-family here: the SQL editor and the terminal read
+     `var(--editor-font-family, var(--font-mono))`, so they follow the font
+     picked in Settings like the data grid does. Separate fonts sets it when the
+     editor gets a face of its own. (It used to pin JetBrains Mono, so picking
+     Source Code Pro or Fira Code left the editor and terminal in another face.) */
 
   /* ── Elevation system ──────────────────────────────────────────────────────
      Layered shadows for raised surfaces (menus, popovers, dialogs, cards).
@@ -548,10 +548,10 @@ html[data-os="linux"]   { --window-radius: 8px; }
      and Linux. System fonts (SF Pro, Segoe UI, desktop sans) and native OS
      smoothing already render at their designed weight, so never synthesize
      weights on them. */
-  html[data-os="windows"][data-smoothing="grayscale"]:not([data-font="apple"]) {
+  html[data-os="windows"][data-smoothing="grayscale"]:not([data-font="apple"]):not([data-font="custom"]) {
     font-weight: 430;
   }
-  html[data-os="linux"][data-smoothing="grayscale"]:not([data-font="apple"]) {
+  html[data-os="linux"][data-smoothing="grayscale"]:not([data-font="apple"]):not([data-font="custom"]) {
     font-weight: 450;
   }
   /* Small UI text: let the face's own kerning and contextual forms apply on
@@ -706,7 +706,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     font-optical-sizing: auto;
   }
 
-  html[data-os='windows'][data-smoothing='grayscale']:not([data-font='apple']) :is(
+  html[data-os='windows'][data-smoothing='grayscale']:not([data-font='apple']):not([data-font='custom']) :is(
     [data-slot='context-menu-content'],
     [data-slot='dropdown-menu-content'],
     [data-slot='select-content'],
@@ -719,7 +719,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     font-weight: 430;
   }
 
-  html[data-os='linux'][data-smoothing='grayscale']:not([data-font='apple']) :is(
+  html[data-os='linux'][data-smoothing='grayscale']:not([data-font='apple']):not([data-font='custom']) :is(
     [data-slot='context-menu-content'],
     [data-slot='dropdown-menu-content'],
     [data-slot='select-content'],

@@ -28,7 +28,7 @@ export default {
   "settings.pagination.desc": "Cómo pagina la tabla: offset, cursor, keyset o temporal.",
   "settings.defaultView.desc": "En qué vista se abre una tabla: Tabla, JSON, Registro, Texto o Gráfico.",
   "settings.theme.desc": "Tema de color para toda la aplicación.",
-  "settings.font.desc": "Tipografía de la interfaz y el editor.",
+  "settings.font.desc": "Toda la app: interfaz, tabla de datos, editor SQL y terminal.",
   "settings.maxQueryHistory": "Máx. historial de consultas",
   "settings.maxQueryHistory.desc": "Cuántas consultas ejecutadas conservar por conexión.",
   "settings.maxAllowedPacket": "Paquete máx. permitido",

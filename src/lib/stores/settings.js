@@ -171,20 +171,20 @@ export const FONT_PRESETS = {
   // headings. Data and SQL stay in JetBrains Mono. All three ship with the app.
   claude: {
     label: 'Claude',
-    description: 'Inter + Source Serif headings',
+    description: 'Inter + Source Serif titles',
     sans: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
     mono: '"JetBrains Mono Variable", ui-monospace, monospace',
     heading: '"Source Serif 4 Variable", ui-serif, Georgia, serif',
   },
   geist: {
     label: 'Geist',
-    description: 'Clean variable sans',
+    description: 'Geist + Geist Mono',
     sans: '"Geist Variable", ui-sans-serif, system-ui, sans-serif',
     mono: '"Geist Mono Variable", ui-monospace, monospace',
   },
   serif: {
     label: 'Serif',
-    description: 'Editorial serif UI',
+    description: 'Serif + system mono',
     sans: 'ui-serif, "New York", "Iowan Old Style", Georgia, "Times New Roman", serif',
     mono: 'ui-monospace, "SF Mono", Menlo, Monaco, Consolas, monospace',
   },
@@ -193,7 +193,7 @@ export const FONT_PRESETS = {
   // UI font (Segoe UI, Cantarell, ...).
   apple: {
     label: IS_MAC ? 'SF Pro' : IS_WINDOWS ? 'Segoe UI' : 'System',
-    description: IS_MAC ? 'macOS system font + SF Mono' : IS_WINDOWS ? 'Windows system font + JetBrains Mono' : "Your system's UI font + JetBrains Mono",
+    description: IS_MAC ? 'SF Pro + SF Mono' : IS_WINDOWS ? 'Segoe UI + JetBrains Mono' : 'System UI + JetBrains Mono',
     keywords: ['SF Pro', 'San Francisco', 'Apple', 'Segoe UI', 'Windows', 'System', 'macOS', 'native'],
     sans: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif',
     // A Mac has SF Mono. Windows and Linux get the JetBrains Mono that ships
@@ -213,7 +213,7 @@ export const FONT_PRESETS = {
   },
   mono: {
     label: 'Mono',
-    description: 'All-monospace terminal feel',
+    description: 'JetBrains Mono, Inter menus',
     sans: '"JetBrains Mono Variable", ui-monospace, monospace',
     mono: '"JetBrains Mono Variable", ui-monospace, monospace',
     // Data and panels stay monospace. Paragraphs of chat prose read badly set
@@ -226,7 +226,7 @@ export const FONT_PRESETS = {
   // The four below also ship with the app (fontsource imports in app.css).
   fira: {
     label: 'Fira Code',
-    description: 'Inter + Fira Code ligatures',
+    description: 'Inter + Fira Code',
     sans: '"Inter Variable", ui-sans-serif, system-ui, sans-serif',
     mono: '"Fira Code Variable", ui-monospace, monospace',
   },
@@ -238,7 +238,7 @@ export const FONT_PRESETS = {
   },
   space: {
     label: 'Space Grotesk',
-    description: 'Geometric sans + JetBrains Mono',
+    description: 'Space Grotesk + JetBrains Mono',
     sans: '"Space Grotesk Variable", ui-sans-serif, system-ui, sans-serif',
     mono: '"JetBrains Mono Variable", ui-monospace, monospace',
   },
@@ -1118,20 +1118,32 @@ export function saveSettings(settings) {
  * @param {{ sans: string, mono: string, reading?: string, chrome?: string }} preset
  */
 function applyFontSurfaces(root, fonts, preset) {
-  const pick = (/** @type {string} */ id) => (fonts.separate ? faceStack(id) : null)
-  const ui = pick(fonts.ui)
+  // An installed family picked as the app font: a proportional one sets the
+  // interface, a fixed-width one sets everything, data and code included.
+  const appFamily = faceStack(fonts.app, preset.sans)
+  const appMono = appFamily && fonts.appMono ? faceStack(fonts.app, preset.mono) : null
+  const sans = appFamily ?? preset.sans
+  const mono = appMono ?? preset.mono
+  if (appFamily) {
+    setStyleVar(root, '--font-sans', sans)
+    setStyleVar(root, '--font-chrome', sans)
+    setStyleVar(root, '--heading-font', sans)
+    if (appMono) setStyleVar(root, '--font-mono', mono)
+  }
+  const pick = (/** @type {string} */ id, /** @type {string} */ fallback) => (fonts.separate ? faceStack(id, fallback) : null)
+  const ui = pick(fonts.ui, sans)
   if (ui) {
     setStyleVar(root, '--font-sans', ui)
     // The chrome and headings go with the interface face.
     setStyleVar(root, '--font-chrome', ui)
     setStyleVar(root, '--heading-font', ui)
   }
-  setStyleVar(root, '--reading-font', pick(fonts.chat) ?? ui ?? preset.reading ?? preset.sans)
-  // Unset, each falls back where it always did: the editor to its own code
-  // face (app.css), the grid to the preset's mono, the terminal to the editor.
-  setOrClearVar(root, '--editor-font-family', pick(fonts.code))
-  setOrClearVar(root, '--grid-font', pick(fonts.grid))
-  setOrClearVar(root, '--terminal-font', pick(fonts.terminal))
+  setStyleVar(root, '--reading-font', pick(fonts.chat, sans) ?? ui ?? appFamily ?? preset.reading ?? preset.sans)
+  // Unset, each follows the font's mono (app.css): the editor and the grid
+  // directly, the terminal through the editor.
+  setOrClearVar(root, '--editor-font-family', pick(fonts.code, mono))
+  setOrClearVar(root, '--grid-font', pick(fonts.grid, mono))
+  setOrClearVar(root, '--terminal-font', pick(fonts.terminal, mono))
   setAttr(root, 'data-smoothing', fonts.smoothing === 'grayscale' ? 'grayscale' : 'system')
 }
 
@@ -1338,7 +1350,8 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   const font = normalizeFont(settings.font)
   setStyleVar(root, '--font-sans', FONT_PRESETS[font].sans)
   // For CSS that depends on the face (the Windows weight bump is Geist's, not Segoe's).
-  setAttr(root, 'data-font', font)
+  // An installed family is drawn at its own weight, as the system faces are.
+  setAttr(root, 'data-font', normalizeFontSettings(settings.fonts).app ? 'custom' : font)
   setStyleVar(root, '--font-mono', FONT_PRESETS[font].mono)
   setStyleVar(root, '--heading-font', FONT_PRESETS[font].heading ?? FONT_PRESETS[font].sans)
   setStyleVar(root, '--reading-font', FONT_PRESETS[font].reading ?? FONT_PRESETS[font].sans)

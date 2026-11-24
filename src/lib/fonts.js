@@ -7,11 +7,18 @@
  * and SF Mono on a Mac, Segoe UI and Cascadia Mono on Windows, the desktop's
  * own faces on Linux. A system face is only offered where the OS has it
  * (`isInstalled`), so the list on each machine is what that machine can draw.
+ *
+ * Past those, every family installed on the machine (the `system_fonts`
+ * command) is offered by name, under "On this computer". Its id is `sys:` and
+ * the family, and its stack ends in the face it replaces, so a font that is
+ * later uninstalled falls back to what the surface used before.
  */
+import { writable } from 'svelte/store'
+import { invoke } from '@tauri-apps/api/core'
 import { detectOs } from '$lib/platform.js'
 
 /** @typedef {'sans' | 'mono' | 'serif'} FaceKind */
-/** @typedef {{ id: string, label: string, kind: FaceKind, stack: string, os?: ('macos' | 'windows' | 'linux')[], probe?: string }} Face */
+/** @typedef {{ id: string, label: string, kind: FaceKind, stack: string, os?: ('macos' | 'windows' | 'linux')[], probe?: string, installed?: boolean }} Face */
 
 /** @type {Face[]} */
 export const FACES = [
@@ -75,22 +82,95 @@ export function isInstalled(family) {
   })
 }
 
+// ── Installed families ────────────────────────────────────────────────────────
+
+export const SYSTEM_PREFIX = 'sys:'
+
+/** @typedef {{ family: string, mono: boolean }} SystemFont */
+
+/** The families installed on this machine, filled by `loadSystemFonts`. */
+export const systemFonts = writable(/** @type {SystemFont[]} */ ([]))
+/** @type {Promise<SystemFont[]> | null} */
+let loading = null
+
+/** Ask the backend once per launch; later calls share the first answer. */
+export function loadSystemFonts() {
+  loading ??= invoke('system_fonts')
+    .then((list) => {
+      const fonts = (Array.isArray(list) ? /** @type {SystemFont[]} */ (list) : [])
+        .filter((f) => cleanFamily(f?.family) === f.family)
+        .map((f) => ({ family: f.family, mono: f.mono === true }))
+      systemFonts.set(fonts)
+      return fonts
+    })
+    .catch(() => {
+      // In the browser build, or if the scan failed: the curated list only.
+      loading = null
+      return /** @type {SystemFont[]} */ ([])
+    })
+  return loading
+}
+
 /**
- * Faces to offer on this machine for a surface: bundled ones, plus the OS's
- * own faces it actually has. `kinds` picks proportional, mono or both.
- * @param {FaceKind[]} kinds
- * @param {{ os?: string, installed?: (family: string) => boolean }} [o]
+ * A family name safe to put in a CSS string: no quotes, backslashes or
+ * control characters, so a stored id cannot break out of `font-family`.
+ * @param {unknown} family
  */
-export function facesFor(kinds, { os = detectOs(), installed = isInstalled } = {}) {
+export function cleanFamily(family) {
+  if (typeof family !== 'string') return ''
+  // eslint-disable-next-line no-control-regex
+  return family.replace(/["'\\;{}<>\u0000-\u001f]/g, '').trim().slice(0, 120)
+}
+
+/** @param {string | null | undefined} id */
+export function systemFamily(id) {
+  return typeof id === 'string' && id.startsWith(SYSTEM_PREFIX) ? cleanFamily(id.slice(SYSTEM_PREFIX.length)) : ''
+}
+
+/** @param {SystemFont} f @returns {Face} */
+function systemFace(f) {
+  return {
+    id: SYSTEM_PREFIX + f.family,
+    label: f.family,
+    kind: f.mono ? 'mono' : 'sans',
+    stack: `"${f.family}", ${f.mono ? 'ui-monospace, monospace' : 'ui-sans-serif, system-ui, sans-serif'}`,
+    installed: true,
+  }
+}
+
+/**
+ * Faces to offer on this machine for a surface: bundled ones, the OS's own
+ * faces it actually has, then every other installed family. `kinds` picks
+ * proportional, mono or both; a surface that takes only mono is offered only
+ * fixed-width families from the machine.
+ * @param {FaceKind[]} kinds
+ * @param {{ os?: string, installed?: (family: string) => boolean, system?: SystemFont[] }} [o]
+ */
+export function facesFor(kinds, { os = detectOs(), installed = isInstalled, system = [] } = {}) {
   const labels = /** @type {Record<string, string>} */ (systemLabels(/** @type {any} */ (os)))
-  return FACES.filter((f) => kinds.includes(f.kind))
+  const curated = FACES.filter((f) => kinds.includes(f.kind))
     .filter((f) => !f.os || f.os.includes(/** @type {any} */ (os)))
     .filter((f) => !f.probe || installed(f.probe))
     .map((f) => ({ ...f, label: labels[f.id] ?? f.label }))
+  // A family the curated list already names (Ubuntu, Menlo, Noto Sans...) or
+  // bundles (Inter installed system-wide) is not listed twice.
+  const known = new Set(FACES.flatMap((f) => [f.label, f.probe ?? '']).map((n) => n.toLowerCase()))
+  const monoOnly = !kinds.some((k) => k !== 'mono')
+  const extra = system
+    .filter((f) => !known.has(f.family.toLowerCase()) && (!monoOnly || f.mono))
+    .map(systemFace)
+  return [...curated, ...extra]
 }
 
-/** A face's CSS stack, or null for "follow the theme font". @param {string | null | undefined} id */
-export function faceStack(id) {
+/**
+ * A face's CSS stack, or null for "follow the theme font". An installed family
+ * falls back to `fallback`, the stack the surface would use without it.
+ * @param {string | null | undefined} id
+ * @param {string} [fallback]
+ */
+export function faceStack(id, fallback) {
+  const family = systemFamily(id)
+  if (family) return `"${family}", ${fallback || 'system-ui, sans-serif'}`
   return (id && BY_ID.get(id)?.stack) || null
 }
 
@@ -103,17 +183,30 @@ export const FONT_SURFACES = /** @type {const} */ ([
   { key: 'terminal', cssVar: '--terminal-font', kinds: ['mono'] },
 ])
 
-/** @typedef {{ separate: boolean, ui: string, code: string, grid: string, chat: string, terminal: string, smoothing: 'grayscale' | 'system' }} FontSettings */
+/**
+ * `app` is an installed family picked in the main Font menu instead of a
+ * pairing: a proportional one sets the interface, a fixed-width one sets
+ * everything. Empty means the pairing (`settings.font`) decides.
+ * @typedef {{ separate: boolean, app: string, appMono: boolean, ui: string, code: string, grid: string, chat: string, terminal: string, smoothing: 'grayscale' | 'system' }} FontSettings
+ */
 
 /** @type {FontSettings} */
-export const DEFAULT_FONT_SETTINGS = { separate: false, ui: '', code: '', grid: '', chat: '', terminal: '', smoothing: 'system' }
+export const DEFAULT_FONT_SETTINGS = { separate: false, app: '', appMono: false, ui: '', code: '', grid: '', chat: '', terminal: '', smoothing: 'system' }
 
 /** @param {unknown} v @returns {FontSettings} */
 export function normalizeFontSettings(v) {
   const o = /** @type {Record<string, unknown>} */ (v && typeof v === 'object' ? v : {})
-  const face = (/** @type {unknown} */ id) => (typeof id === 'string' && BY_ID.has(id) ? id : '')
+  const face = (/** @type {unknown} */ id) => {
+    if (typeof id !== 'string') return ''
+    const family = systemFamily(id)
+    if (family) return SYSTEM_PREFIX + family
+    return BY_ID.has(id) ? id : ''
+  }
+  const app = systemFamily(/** @type {string} */ (o.app))
   return {
     separate: o.separate === true,
+    app: app ? SYSTEM_PREFIX + app : '',
+    appMono: app ? o.appMono === true : false,
     ui: face(o.ui),
     code: face(o.code),
     grid: face(o.grid),

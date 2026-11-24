@@ -28,7 +28,7 @@ export default {
   "settings.pagination.desc": "How the grid pages through rows: offset, cursor, keyset, or temporal.",
   "settings.defaultView.desc": "Which view a table opens in: Table, JSON, Record, Text, or Chart.",
   "settings.theme.desc": "Color theme for the whole app.",
-  "settings.font.desc": "UI and editor typeface.",
+  "settings.font.desc": "The whole app: interface, data grid, SQL editor and terminal.",
   "settings.maxQueryHistory": "Max query history",
   "settings.maxQueryHistory.desc": "How many executed queries to keep per connection.",
   "settings.maxAllowedPacket": "Max allowed packet",
