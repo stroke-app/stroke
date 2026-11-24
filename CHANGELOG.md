@@ -4,6 +4,24 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.8.0] - 2026-11-24
+
+### Bug Fixes
+- **Editing a cell no longer changes how its value looks** - The cell editor draws the value in the grid's own colour, so it stops looking brighter and larger the moment editing starts, and the field inside drops its default vertical padding so the text stays on the canvas text's pixels.
+- **Smooth panel resizing** - Dragging the terminal dock, sidebars or a split pane no longer refits the terminal and reallocates the data grid on every frame. The terminal holds its grid during the drag and refits once on release, and window resizes fit once the drag settles. The terminal dock has a proper handle with a wider grab area, and double-clicking it resets the height.
+
+### Changes
+- **A calmer database picker** - In the connection form's database menu, each row is now the engine's icon and name. The one-line descriptions moved to a hover tooltip and still match in search, and Beta is plain grey text instead of a blue badge. The menu is narrower to match.
+- **Clearer field edges** - Text fields, dropdown triggers and search boxes have a more visible 1px edge (22% of the text colour, up from 16%), and focus stays one crisp accent edge.
+- **A narrower sidebar** - The left sidebar now drags down to 200px (270px on macOS, where it clears the window buttons) instead of stopping at 320px. Tabs that no longer fit move into the "more" menu at the end of the tab row.
+- **Fonts installed on your computer** - The Font menu in Settings > Appearance now lists every font installed on the machine, each name drawn in its own face. A monospace font sets the whole app; any other font sets the interface and leaves data and code in the pairing's code font. The Separate fonts pickers list them too.
+- **Font pairings name their faces** - Each pairing in the Font menu now says which two fonts it sets, for example "Inter + Source Code Pro".
+- **Less style work on every change** - Linux no longer re-checks a whole-document selector on every DOM change to hide scrollbars behind an open dialog; an attribute on the window root does it instead. Text uses the browser's default rendering mode, which keeps WebKit's fast text path while kerning stays on.
+
+### Fixes
+- **The SQL editor and terminal follow the Font setting** - They were pinned to JetBrains Mono, so picking Source Code Pro or Fira Code changed the data grid but not the editor.
+
+
 ## [3.7.9] - 2026-11-24
 
 ### Changes
