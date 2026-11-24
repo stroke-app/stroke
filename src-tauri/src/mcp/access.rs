@@ -42,6 +42,8 @@ pub enum Dialect {
     Dynamo,
     /// Neo4j: Cypher, read by its clauses (see `db::neo4j::cypher_level`).
     Cypher,
+    /// Convex: a table read, or a deployed function that may write.
+    Convex,
 }
 
 impl Dialect {
@@ -56,6 +58,7 @@ impl Dialect {
             "couchdb" | "firestore" | "influxdb" => Self::ReadOnlyDoc,
             "dynamodb" => Self::Dynamo,
             "neo4j" => Self::Cypher,
+            "convex" => Self::Convex,
             _ => Self::Sql,
         }
     }
@@ -76,6 +79,10 @@ pub fn script_level_in(dialect: Dialect, sql: &str) -> u8 {
         Dialect::Redis => redis_level(sql),
         Dialect::Dynamo => dynamo_level(sql),
         Dialect::ReadOnlyDoc => READ,
+        // A function's kind is only known by asking the deployment, so any
+        // call counts as a write here; `convex::query_as` lets a read-only
+        // session run the ones that are queries.
+        Dialect::Convex => if crate::db::convex::reads(sql) { READ } else { WRITE },
         Dialect::Cypher => crate::db::neo4j::cypher_level(sql),
         Dialect::Elastic => match crate::db::elastic::parse(sql) {
             Ok(crate::db::elastic::Statement::Raw { method, path, .. }) => crate::db::elastic::request_level(&method, &path),
@@ -693,6 +700,11 @@ mod tests {
         assert_eq!(Dialect::for_driver("neo4j"), Dialect::Cypher);
         assert_eq!(script_level_in(Dialect::Cypher, "MATCH (n) WITH n DETACH DELETE n"), WRITE);
         assert_eq!(script_level_in(Dialect::Cypher, "MATCH (n) RETURN n"), READ);
+        assert_eq!(Dialect::for_driver("convex"), Dialect::Convex);
+        assert_eq!(script_level_in(Dialect::Convex, "users.limit(5)"), READ);
+        assert_eq!(script_level_in(Dialect::Convex, r#"users.get("j57")"#), READ);
+        assert_eq!(script_level_in(Dialect::Convex, r#"messages:send {"body": "x"}"#), WRITE);
+        assert_eq!(script_level_in(Dialect::Convex, "not a statement"), WRITE);
         let m = |s: &str| script_level_in(Dialect::Mongo, s);
         assert_eq!(m(r#"db.createCollection("shop")"#), MODIFY);
         assert_eq!(m("db.users.createIndex({email: 1}, {unique: true})"), MODIFY);

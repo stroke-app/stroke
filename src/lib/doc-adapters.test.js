@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { couchAdapter, cassandraAdapter, firestoreAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
+import { couchAdapter, cassandraAdapter, firestoreAdapter, convexAdapter, cxFilter, CX_UNDEFINED, mongoAdapter, neo4jAdapter, influxAdapter, uriHost, docGrid, fsPlainFields, fsTypedFields, fsTyped, fsFilter, fsDoc, docColumns, docCell, humanBytes, PAGE_SIZE } from './doc-adapters.js'
 
 /** A fake CouchDB that records calls and answers from a script. */
 function fake(/** @type {Record<string, any>} */ answers = {}) {
@@ -338,5 +338,88 @@ describe('docGrid time columns', () => {
     const docs = [{ time: '2026-11-21T11:04:44Z', at: '2026-11-21T11:04:44Z', v: 1 }]
     const g = docGrid(docs, [], ['time'])
     expect(g.columns.map((c) => c.data_type)).toEqual(['timestamp', 'string', 'int'])
+  })
+})
+
+describe('convex adapter', () => {
+  /** A fake deployment: records system calls and answers per function name. */
+  function cx(/** @type {Record<string, any>} */ answers = {}) {
+    /** @type {[string, any][]} */
+    const calls = []
+    const call = async (/** @type {string} */ path, /** @type {any} */ args) => {
+      calls.push([path, args])
+      const a = answers[path.split('/').pop() ?? '']
+      if (a instanceof Error) throw a
+      return typeof a === 'function' ? a(args) : a ?? { success: true }
+    }
+    return { a: convexAdapter(call), calls }
+  }
+
+  it('filter text becomes the dashboard filter expression', () => {
+    expect(cxFilter('  ')).toBeNull()
+    const decoded = JSON.parse(atob(/** @type {string} */ (cxFilter('age > 30 AND plan == "pro" AND name != Ada'))))
+    expect(decoded.order).toBe('desc')
+    expect(decoded.clauses).toEqual([
+      { id: '0', field: 'age', op: 'gt', value: 30, enabled: true },
+      { id: '1', field: 'plan', op: 'eq', value: 'pro', enabled: true },
+      { id: '2', field: 'name', op: 'neq', value: 'Ada', enabled: true },
+    ])
+    // Non-ASCII survives the base64 step.
+    expect(JSON.parse(new TextDecoder().decode(Uint8Array.from(atob(/** @type {string} */ (cxFilter('name == "Zoë"'))), (c) => c.charCodeAt(0)))).clauses[0].value).toBe('Zoë')
+    expect(() => cxFilter('age ~ 3')).toThrow(/field op value/)
+  })
+
+  it('lists user tables first, then the shown system tables', async () => {
+    const { a } = cx({ getTableMapping: { 1: 'users', 2: '_scheduled_jobs', 3: '_secret', 4: 'messages', 5: '_file_storage' } })
+    expect(await a.listCollections()).toEqual(['messages', 'users', '_file_storage', '_scheduled_jobs'])
+  })
+
+  it('pages with the cursor and stops when Convex says done', async () => {
+    const { a, calls } = cx({ paginatedTableDocuments: (/** @type {any} */ args) => (args.paginationOpts.cursor ? { page: [{ _id: 'b' }], isDone: true, continueCursor: 'end' } : { page: [{ _id: 'a' }], isDone: false, continueCursor: 'c1' }) })
+    const first = await a.load('users', { cursor: null, filter: '', size: 1 })
+    expect(first).toEqual({ docs: [{ _id: 'a' }], cursor: 'c1' })
+    expect(calls[0][1]).toEqual({ table: 'users', filters: null, paginationOpts: { numItems: 1, cursor: null } })
+    const second = await a.load('users', { cursor: first.cursor, filter: 'n > 1', size: 1 })
+    expect(second.cursor).toBeNull()
+    expect(typeof calls[1][1].filters).toBe('string')
+  })
+
+  it('turns a rejected filter into an error', async () => {
+    const { a } = cx({ paginatedTableDocuments: { page: [{ error: 'Invalid field', filter: {} }], isDone: true, continueCursor: '' } })
+    await expect(a.load('users', { cursor: null, filter: 'x == 1', size: 10 })).rejects.toThrow('Invalid field')
+  })
+
+  it('counts only without a filter', async () => {
+    const { a } = cx({ tableSize: 42 })
+    expect(await a.count?.('users', '')).toBe(42)
+    expect(await a.count?.('users', 'a == 1')).toBeNull()
+    expect((await a.describe('users')).summary).toEqual(['42 documents'])
+  })
+
+  it('saves: replace without system fields, insert then read back the newest', async () => {
+    const { a, calls } = cx({ getById: { _id: 'j1', n: 2 }, paginatedTableDocuments: { page: [{ _id: 'j9', n: 1 }], isDone: false } })
+    const prev = { _id: 'j1', _creationTime: 1, n: 1 }
+    expect(await a.save('users', { ...prev, n: 2 }, prev)).toEqual({ _id: 'j1', n: 2 })
+    expect(calls[0]).toEqual(['_system/frontend/replaceDocument', { id: 'j1', document: { n: 2 } }])
+    await expect(a.save('users', { ...prev, _id: 'j2' }, prev)).rejects.toThrow(/assigns document ids/)
+    calls.length = 0
+    expect(await a.save('users', { n: 1 }, null)).toEqual({ _id: 'j9', n: 1 })
+    expect(calls[0]).toEqual(['_system/frontend/addDocument', { table: 'users', documents: [{ n: 1 }] }])
+  })
+
+  it('patches one field by id, int64 wrapped and unset as the placeholder', async () => {
+    const { a, calls } = cx({ getById: { _id: 'j1' } })
+    await a.updateField?.('users', { _id: 'j1' }, 'big', '9007199254740993', { typeHint: 'int64' })
+    expect(calls[0]).toEqual(['_system/frontend/patchDocumentsFields', { table: 'users', ids: ['j1'], fields: { big: { $integer: '9007199254740993' } } }])
+    await a.updateField?.('users', { _id: 'j1' }, 'gone', null, { unset: true })
+    expect(calls[2][1].fields).toEqual({ gone: CX_UNDEFINED })
+    await a.remove('users', { _id: 'j1' })
+    expect(calls.at(-1)).toEqual(['_system/frontend/deleteDocuments', { toDelete: [{ id: 'j1', tableName: 'users' }] }])
+  })
+
+  it('shows int64 as its decimal value', () => {
+    const g = docGrid([{ _id: 'a', big: { $integer: '7' } }], ['_id'])
+    expect(g.rows[0][1]).toBe('7')
+    expect(g.columns[1].data_type).toBe('int64')
   })
 })

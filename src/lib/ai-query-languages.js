@@ -64,6 +64,17 @@ export const QUERY_LANGUAGES = {
 - Range filters on one field plus orderBy on another need a composite index in Firestore.
   The editor is read-only for Firestore: changes are made in the Browse page.`,
   },
+  convex: {
+    name: 'Convex console',
+    fence: 'javascript',
+    collectionNoun: 'table',
+    guide: `Write one statement per block. Not SQL. The query editor takes:
+- A table: users lists its newest 100 documents; users.limit(20) the newest 20.
+- One document: users.get("<document id>").
+- A deployed function and its arguments as one JSON object: messages:list {"limit": 5}. A function in a folder: admin/users:byEmail {"email": "a@b.co"}. Default exports: messages {}.
+- Function calls may be mutations or actions that write, so they need write access. Documents are edited in the Browse page.
+- Every document has _id and _creationTime (milliseconds since the epoch). Int64 values show as {"$integer": "7"}.`,
+  },
   influxdb: {
     name: 'InfluxDB queries (SQL, InfluxQL or Flux)',
     fence: 'sql',
@@ -178,6 +189,7 @@ export function sampleQuery(engine, schema, coll, n) {
     case 'opensearch':
       return `GET ${coll}/_search\n{"size": ${n}}`
     case 'firestore':
+    case 'convex':
       return `${coll}.limit(${n})`
     case 'influxdb':
       return `SELECT * FROM "${coll.replace(/"/g, '\\"')}" ORDER BY time DESC LIMIT ${n}`
@@ -218,6 +230,6 @@ export function describeFromSample(coll, result) {
 export function runnableFences(engine) {
   const lang = queryLanguageFor(engine)
   if (!lang) return null
-  const extra = { mongodb: ['javascript', 'js', 'mongodb', 'mongo'], couchdb: ['javascript', 'js', 'json'], elasticsearch: ['json', 'http', 'text', 'sql'], opensearch: ['json', 'http', 'text', 'sql'], firestore: ['javascript', 'js'], neo4j: ['cypher', 'sql', 'text'], influxdb: ['sql', 'influxql', 'flux', 'text'], cassandra: ['sql', 'cql'], dynamodb: ['sql', 'partiql'], redis: ['redis', 'text', 'bash'], valkey: ['redis', 'text', 'bash'] }
+  const extra = { mongodb: ['javascript', 'js', 'mongodb', 'mongo'], couchdb: ['javascript', 'js', 'json'], elasticsearch: ['json', 'http', 'text', 'sql'], opensearch: ['json', 'http', 'text', 'sql'], firestore: ['javascript', 'js'], convex: ['javascript', 'js', 'json', 'text'], neo4j: ['cypher', 'sql', 'text'], influxdb: ['sql', 'influxql', 'flux', 'text'], cassandra: ['sql', 'cql'], dynamodb: ['sql', 'partiql'], redis: ['redis', 'text', 'bash'], valkey: ['redis', 'text', 'bash'] }
   return new Set([lang.fence, ...(/** @type {Record<string, string[]>} */ (extra)[/** @type {string} */ (engine)] ?? [])])
 }

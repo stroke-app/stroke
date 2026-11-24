@@ -127,12 +127,21 @@
   )
   const selectedDbName = $derived(databases.find((d) => d.db_ref === selectedRef)?.name ?? '')
 
+  /**
+   * The provider's credential fields as words for a sentence: "team access
+   * token", "account email and API key". Acronyms keep their case.
+   */
+  function credentialNames() {
+    const labels = (meta?.token?.fields ?? []).map((/** @type {{ label: string }} */ f) => (/^[A-Z][a-z]/.test(f.label) ? f.label[0].toLowerCase() + f.label.slice(1) : f.label))
+    return labels.length ? labels.join(' and ') : 'credentials'
+  }
+
   /** Turn a raw backend error into a calm title + one-line explanation. */
   function friendlyError(msg) {
     const m = String(msg ?? '')
     const name = meta?.name ?? 'the provider'
     if (/not signed in/i.test(m) && meta?.mode === 'token')
-      return { title: `${name} didn't accept those credentials`, detail: 'Check the email and API key, then enter them again.' }
+      return { title: `${name} didn't accept those credentials`, detail: `Check the ${credentialNames()}, then enter ${meta?.token?.fields?.length === 1 ? 'it' : 'them'} again.` }
     if (/not signed in/i.test(m))
       return { title: 'Session expired', detail: `Your ${name} sign-in is no longer valid. Sign in again to continue.` }
     if (/timed out/i.test(m))

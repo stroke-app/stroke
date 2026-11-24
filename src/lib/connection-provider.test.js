@@ -45,3 +45,12 @@ describe('engineId', () => {
     expect(engineLabel('scylladb')).toBe('ScyllaDB')
   })
 })
+
+describe('Convex', () => {
+  it('a convex.cloud URL is Convex, and the chip says so', async () => {
+    const { providerOf, engineLabel } = await import('./connection-provider.js')
+    expect(providerOf({ type: 'convex', url: 'https://happy-otter-123.convex.cloud' })).toBe('convex')
+    expect(providerOf({ type: 'convex', url: 'http://127.0.0.1:3210' })).toBeNull()
+    expect(engineLabel('convex')).toBe('Convex')
+  })
+})

@@ -23,6 +23,7 @@ pub mod couchdb;
 pub mod elastic;
 pub mod cassandra;
 pub mod firestore;
+pub mod convex;
 pub mod neo4j;
 pub mod influx;
 pub mod google_auth;

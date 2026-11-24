@@ -1091,6 +1091,28 @@ pub async fn firestore_request(
     crate::db::firestore::request(&cfg, &method, &path, body.as_ref()).await
 }
 
+// ── Convex ────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_convex(config: crate::db::convex::ConvexConfig) -> Result<(), String> {
+    crate::db::convex::ping(&config).await
+}
+
+#[tauri::command]
+pub async fn connect_convex_db(state: Db<'_>, config: crate::db::convex::ConvexConfig) -> Result<(), String> {
+    crate::db::connection::connect_convex(state, config).await
+}
+
+/// One of the dashboard's system functions (`db::convex::SYSTEM` only).
+#[tauri::command]
+pub async fn convex_call(state: Db<'_>, path: String, args: serde_json::Value) -> Result<serde_json::Value, String> {
+    let cfg = match require_conn(&state)? {
+        ActiveConnection::Doc(crate::db::docdb::DocConn::Convex(cfg)) => cfg,
+        _ => return Err("Not connected to Convex".into()),
+    };
+    crate::db::convex::system_call(&cfg, &path, args).await
+}
+
 // ── Cassandra ─────────────────────────────────────────────────────────────────
 
 #[tauri::command]

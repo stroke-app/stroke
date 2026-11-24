@@ -286,6 +286,8 @@ pub fn grid_cell(v: &Value) -> (Value, &'static str) {
                 ("$numberLong", Value::String(_)) => (x.clone(), "long"),
                 ("$numberDecimal", Value::String(_)) => (x.clone(), "decimal"),
                 ("$uuid", Value::String(_)) => (x.clone(), "uuid"),
+                // Convex int64, already decimal (see `db::convex::decode`).
+                ("$integer", Value::String(_)) => (x.clone(), "int64"),
                 _ => (v.clone(), "object"),
             }
         }

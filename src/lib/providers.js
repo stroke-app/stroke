@@ -1,6 +1,6 @@
 /**
  * Frontend bridge for database provider adapters (Neon, Supabase, PlanetScale,
- * Prisma Postgres, TiDB Cloud, Turso, Railway, Nile, Upstash, PostHog). Mirrors `cloudflare.js`: thin invoke wrappers plus a
+ * Prisma Postgres, TiDB Cloud, Turso, Railway, Nile, Upstash, PostHog, Convex). Mirrors `cloudflare.js`: thin invoke wrappers plus a
  * metadata registry the UI renders from. The heavy lifting (OAuth, listing,
  * building a connectable spec) lives in Rust (`src-tauri/src/providers`).
  */
@@ -63,6 +63,7 @@ export const PROVIDERS = [
       join: (/** @type {Record<string, string>} */ v) => v.apiKey.trim(),
     },
   },
+  { id: 'convex',      name: 'Convex',          mode: 'oauth', engine: 'convex',   blurb: 'Reactive backend database, creates a deploy key on connect', signIn: 'Secure PKCE flow' },
   {
     id: 'posthog', name: 'PostHog', mode: 'token', engine: 'posthog',
     blurb: 'Product analytics, queried with HogQL. Read-only',
@@ -155,7 +156,8 @@ export async function providerDatabaseStatus(provider, dbRef) {
  * or a switch upserts that entry instead of piling up duplicates (or, worse,
  * overwriting the connection you switched away from).
  * libsql gets its URL in `host` and token in `password`; PostHog its project id
- * in `database` and API key in `password`; Redis its db number in `database`.
+ * in `database` and API key in `password`; Convex its deployment URL in `host`
+ * and deploy key in `password`; Redis its db number in `database`.
  * @param {ProviderConnection & { providerRef?: string }} conn
  * @param {{ provider?: string, saved: any[], readOnly?: boolean, newId: () => string }} opts
  */
@@ -169,6 +171,10 @@ export function providerToSaved(conn, { provider, saved, readOnly, newId }) {
   if (conn.db_type === 'posthog') {
     const existing = saved.find((s) => s.type === 'posthog' && s.host === conn.host && String(s.projectId) === String(conn.database))
     return { ...base, id: existing?.id ?? newId(), type: 'posthog', host: conn.host, projectId: conn.database, apiKey: conn.password, readOnly: true }
+  }
+  if (conn.db_type === 'convex') {
+    const existing = saved.find((s) => s.type === 'convex' && s.url === conn.host)
+    return { ...base, id: existing?.id ?? newId(), type: 'convex', url: conn.host, apiKey: conn.password, readOnly: ro }
   }
   if (conn.db_type === 'redis') {
     const existing = saved.find((s) => s.type === 'redis' && s.host === conn.host && s.port === conn.port)

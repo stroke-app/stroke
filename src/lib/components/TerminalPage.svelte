@@ -125,7 +125,7 @@
   /** No query language to type: nothing for a prompt to run. */
   const NO_PROMPT = new Set(['firestore'])
   /** Engines whose CLI is not SQL: no SQL prompt to fall back to. */
-  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'neo4j', 'influxdb'])
+  const NON_SQL = new Set(['redis', 'valkey', 'keydb', 'dragonfly', 'mongodb', 'couchdb', 'elasticsearch', 'opensearch', 'cassandra', 'firestore', 'convex', 'neo4j', 'influxdb'])
 
   /** A result set from executeSqlMulti as the prompt's table shape. @param {string} sql */
   async function sqlRows(sql) {

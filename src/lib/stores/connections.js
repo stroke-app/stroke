@@ -19,7 +19,7 @@ const LAST_ID_KEY  = 'stroke:last-connection-id'
 const DISCONNECTED_KEY = 'stroke:disconnected'
 
 /**
- * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'yugabytedb' | 'alloydb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'snowflake' | 'odbc' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'neo4j' | 'influxdb' | 'mongodb' | 'posthog'} DbType
+ * @typedef {'postgres' | 'sqlite' | 'd1' | 'mysql' | 'mariadb' | 'cockroachdb' | 'yugabytedb' | 'alloydb' | 'libsql' | 'clickhouse' | 'duckdb' | 'mssql' | 'oracle' | 'spanner' | 'bigquery' | 'snowflake' | 'odbc' | 'redis' | 'valkey' | 'dynamodb' | 'couchdb' | 'elasticsearch' | 'opensearch' | 'cassandra' | 'firestore' | 'convex' | 'neo4j' | 'influxdb' | 'mongodb' | 'posthog'} DbType
  *
  * @typedef {{ host: string, port?: number, username: string, privateKeyPath?: string }} SshConfig
  *
@@ -51,9 +51,9 @@ const DISCONNECTED_KEY = 'stroke:disconnected'
  *   ssh?: SshConfig
  *   readOnly?: boolean
  *   environment?: 'prod' | 'staging' | 'dev' | null
- *   provider?: 'neon' | 'supabase' | 'planetscale' | 'prisma' | 'tidb' | 'turso' | 'nile' | 'railway' | 'upstash' | 'posthog' | 'xata' | 'singlestore'
+ *   provider?: 'neon' | 'supabase' | 'planetscale' | 'prisma' | 'tidb' | 'turso' | 'nile' | 'railway' | 'upstash' | 'posthog' | 'xata' | 'singlestore' | 'convex'
  *   projectId?: string  - PostHog project
- *   apiKey?: string     - PostHog personal API key
+ *   apiKey?: string     - PostHog personal API key, Convex deploy or admin key
  *   providerRef?: string  - the provider's own id for this database (its db_ref), so reopening it from the provider picker connects with this entry instead of minting new credentials
  *   group?: string | null
  *   workspaceId?: string | null  - the workspace it belongs to (stores/workspaces.js); missing = the default one

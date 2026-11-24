@@ -53,10 +53,13 @@ function matchAt(re, s, at) {
  * All variables in the SQL, in first-appearance order.
  * @param {string} sql
  * @param {SqlParamOptions} [opts] `engine` keeps SQL Server's `$action` and
- *   friends from reading as variables there.
+ *   friends from reading as variables there, and turns variables off for
+ *   Convex, whose console is not SQL.
  * @returns {SqlParam[]}
  */
 export function extractSqlParams(sql, opts = {}) {
+  // Convex's console names functions `module:name`: a colon there is never a variable.
+  if (opts.engine === 'convex') return []
   /** @type {Map<string, SqlParam>} */
   const found = new Map()
   const s = String(sql ?? '')
