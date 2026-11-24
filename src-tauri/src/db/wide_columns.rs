@@ -11,7 +11,7 @@
 //! `WIDE_COLUMN_AVG_BYTES` are selected as a stand-in instead of a value:
 //!
 //! ```sql
-//! CASE WHEN pg_column_size("resume") > 262144
+//! CASE WHEN pg_column_size("resume") > 4096
 //!   THEN jsonb_build_object('__strokeOversize', true, 'dataType', 'jsonb', 'bytes', pg_column_size("resume"))
 //!   ELSE jsonb_build_object('__strokeInline', to_jsonb("resume"))
 //! END AS "resume"
@@ -51,8 +51,6 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use super::sql_util::CELL_VALUE_CAP;
-
 /// Average bytes per value past which a column is fetched as a preview.
 ///
 /// 32KB is the point where one column outweighs a whole page of ordinary ones:
@@ -76,30 +74,22 @@ const SAMPLE_ROWS: i64 = 500;
 /// the sample is skipped entirely - which is the path almost every table takes.
 const TOAST_SAMPLE_FLOOR: i64 = 1024 * 1024;
 
-/// Stored size above which a row's TEXT length is checked as well.
+/// Stored size up to which a wide column's value ships whole in a page.
 ///
-/// `pg_column_size` is the COMPRESSED size, and these payloads compress
-/// extraordinarily well - a jsonb holding a file as an array of byte integers
-/// ran 8.4MB stored against 18.1MB of text, and rows well under the cap on disk
-/// were shipping multiple megabytes each. The text check materialises the value,
-/// so it is worth about 260ms a page on the table it was measured against, and
-/// it is what makes the page size bounded rather than hopeful. Below the floor
-/// no amount of compression can reach the cap, so those rows skip it.
-const TEXT_CHECK_FLOOR: usize = 1024;
-
-/// Text size past which a wide column's value ships as a preview in a page.
-///
-/// The grid draws about forty characters of a cell, yet everything under the
-/// 256KB cap used to ship whole: a 50-row page of a resume table moved 823KB
-/// of one jsonb column (1.1MB in all), and over a slower link a few of those
-/// in flight left the grid on skeletons. Past 8KB the value arrives as its
-/// size and its first `PREVIEW_CHARS`; that page is 50KB of the column (341KB
-/// in all), and the value loads when the cell is opened or edited.
-const GRID_INLINE_BYTES: usize = 8 * 1024;
-
-/// How much of a previewed value ships: enough for the grid, a tooltip and
-/// the first lines of the JSON view.
-const PREVIEW_CHARS: usize = 512;
+/// Decided on `pg_column_size` alone, which reads the varlena header and never
+/// touches the value. Earlier cuts also measured `octet_length(col::text)` and
+/// cut a 512-character `left(col::text, 512)` preview for values between 1KB
+/// and the 256KB cap, and that was the slow part: both casts detoast,
+/// decompress and re-serialise the whole value. On a resume table averaging
+/// 454KB stored (about 1MB of JSON text), 343 rows spent 14.2s in the
+/// `octet_length` alone and 13.7s more in `left`, against 3ms for
+/// `pg_column_size`; opening that table took 12.6s, and loading all 1,762 rows
+/// took most of the server's time. Values past this size now arrive as their
+/// stored size, which costs nothing, and load whole when the cell is opened
+/// (`fetch_cell_value`), as values past the cap always did. 4KB stored is
+/// under Postgres's own TOAST threshold neighbourhood, so what ships inline is
+/// a small value, not a compressed big one.
+const GRID_INLINE_STORED_BYTES: usize = 4 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct WideColumn {
@@ -409,18 +399,14 @@ pub fn projection(all_columns: &[String], wide: &[WideColumn]) -> Option<String>
                     .find(|w| &w.name == name)
                     .map(|w| w.type_name.replace('\'', "''"))
                     .unwrap_or_default();
+                // One branch on the header-only stored size: nothing here reads
+                // a large value. See GRID_INLINE_STORED_BYTES.
                 format!(
-                    "CASE WHEN pg_column_size({quoted}) > {cap} \
+                    "CASE WHEN pg_column_size({quoted}) > {inline} \
                      THEN jsonb_build_object('__strokeOversize', true, 'dataType', '{col_type}', \
                      'bytes', pg_column_size({quoted})) \
-                     WHEN pg_column_size({quoted}) > {floor} AND octet_length({quoted}::text) > {inline} \
-                     THEN jsonb_build_object('__strokeOversize', true, 'dataType', '{col_type}', \
-                     'bytes', octet_length({quoted}::text), 'preview', left({quoted}::text, {preview})) \
                      ELSE jsonb_build_object('__strokeInline', to_jsonb({quoted})) END AS {quoted}",
-                    cap = CELL_VALUE_CAP,
-                    floor = TEXT_CHECK_FLOOR,
-                    inline = GRID_INLINE_BYTES,
-                    preview = PREVIEW_CHARS,
+                    inline = GRID_INLINE_STORED_BYTES,
                 )
             } else {
                 quoted
@@ -484,15 +470,12 @@ mod tests {
         assert!(sql.starts_with("\"id\", CASE WHEN pg_column_size(\"resume\")"));
         assert!(sql.contains("'__strokeOversize', true"));
         assert!(sql.contains("'dataType', 'jsonb'"));
-        // No preview past the cap: building one would detoast every over-cap
-        // value on the page. Under it the value is read for its length anyway,
-        // so that branch carries the first 512 characters.
-        let (over_cap, under_cap) = sql.split_once("WHEN pg_column_size(\"resume\") > 1024").expect("two branches");
-        assert!(!over_cap.contains("left("));
-        assert!(under_cap.contains("'preview', left(\"resume\"::text, 512)"));
-        assert!(under_cap.contains("octet_length(\"resume\"::text) > 8192"));
-        // The compressed size is the cheap gate; the text length is the honest one.
-        assert!(sql.contains("length(\"resume\"::text) >"));
+        // One branch, on the stored size only: no cast reads the value, so
+        // nothing in a page detoasts a wide value.
+        assert!(sql.contains("pg_column_size(\"resume\") > 4096"));
+        assert!(!sql.contains("::text"));
+        assert!(!sql.contains("left("));
+        assert!(!sql.contains("octet_length"));
         assert!(sql.contains("AS \"resume\""));
         assert!(sql.ends_with(", \"status\""));
         // Every column is still selected, in order.

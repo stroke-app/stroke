@@ -56,9 +56,11 @@ describe('pickWindowRows', () => {
   })
 
   it('keeps one window near the byte target', () => {
-    // 20KB rows → ~2MB per window, whatever the row shape happens to be.
-    const bytes = 20_000
-    expect(pickWindowRows(bytes) * bytes).toBeLessThan(4_000_000)
+    // 2KB rows → ~600KB per window, whatever the row shape happens to be: a
+    // window is what a scroll waits on, so it stays under a second at 5 Mbit.
+    const bytes = 2_000
+    expect(pickWindowRows(bytes) * bytes).toBeLessThanOrEqual(600_000)
+    expect(pickWindowRows(bytes) * bytes).toBeGreaterThan(400_000)
   })
 
   it('falls back to the default when the payload is unmeasurable', () => {
@@ -77,6 +79,11 @@ describe('shouldWindow', () => {
 
   it('loads a short, light result whole', () => {
     expect(shouldWindow({ rowCount: 10_000, bytesPerRow: 130 })).toBe(false)
+  })
+
+  it('streams a few thousand wide rows instead of one big response', () => {
+    // 4,000 rows of 1.5 KB is 6 MB: windowed, so rows show as they arrive.
+    expect(shouldWindow({ rowCount: 4_000, bytesPerRow: 1_500 })).toBe(true)
   })
 
   it('never windows without an exact row count', () => {

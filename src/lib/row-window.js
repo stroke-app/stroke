@@ -11,10 +11,24 @@
  * resident, what's in flight) lives in StudioShell.
  */
 
-/** Rows in the first, measuring fetch of a large load. */
-export const WINDOW_PROBE = 200
-/** Target payload for one window request. */
-export const WINDOW_TARGET_BYTES = 2_000_000
+/**
+ * Rows in the first, measuring fetch of a large load. It is also the first
+ * paint, so it is sized to a few screens rather than to the measurement: at
+ * 200 rows a table of 6.5 KB rows sent 1.3 MB before anything showed, 3.2 s
+ * at 10 Mbit. 100 rows still measures a row's weight well (row-window samples
+ * three of them) and covers about three screens of a tall window.
+ */
+export const WINDOW_PROBE = 100
+/**
+ * Target payload for one window request.
+ *
+ * 600 KB, down from 2 MB. A window is what a scroll waits on whenever the rows
+ * in view are not the screenful fetched first, and 2 MB was 3-4 s on a 5 Mbit
+ * home link: an 800-byte-a-row audit table sat on skeletons for 4.8 s at rows
+ * 54-83. 600 KB is under a second there and still a few thousand narrow rows,
+ * so a local or fast link pays a handful more round trips and nothing else.
+ */
+export const WINDOW_TARGET_BYTES = 600_000
 export const WINDOW_ROWS_MIN = 100
 export const WINDOW_ROWS_MAX = 10_000
 /** Used when the payload can't be measured at all. */
@@ -30,8 +44,16 @@ export const WINDOW_ROWS_DEFAULT = 5_000
  * single request is quick enough that the extra round-trips aren't worth it.
  */
 export const WINDOW_THRESHOLD = 25_000
-/** …or heavier than this, however few rows it has. */
-export const WINDOW_HEAVY_BYTES = 8_000_000
+/**
+ * …or heavier than this, however few rows it has.
+ *
+ * 1.5 MB, down from 8 MB. Under the bar a view is the probe and then ONE
+ * request for the rest, and nothing past the first 200 rows shows until it
+ * lands: a 4,000-row table of 1.5 KB rows was a single 6 MB response, ten
+ * seconds at 5 Mbit. Over it, the view streams in windows (and, when small,
+ * fills in the background - see fillRemainingWindows in StudioShell).
+ */
+export const WINDOW_HEAVY_BYTES = 1_500_000
 /** Rows kept resident on each side of the viewport. */
 export const WINDOW_KEEP_ROWS = 80_000
 

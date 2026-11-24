@@ -2813,6 +2813,33 @@ let rowSearch = $state('')
   let _schemaColumnsGen = 0
   /** @type {Promise<void>} */
   let _schemaColumnsReady = Promise.resolve()
+  /**
+   * Each table's primary key, from the same call. A first open does not know
+   * its table's key until the rows come back, so the first page went out in
+   * no order, could not be reused as window 0 (windows slice the key's
+   * order), and was fetched again: on a wide table, the first 1.3 MB twice.
+   * Plain, not reactive: only read when a load starts.
+   * @type {Record<string, string[]>}
+   */
+  let _schemaPks = {}
+  /** A table's primary key when this schema's columns are loaded, else null. @param {string} schema @param {string | null} table */
+  function knownPrimaryKey(schema, table) {
+    if (!table || `${persistConnectionId}:${schema}` !== _schemaColumnsFor) return null
+    return _schemaPks[table] ?? null
+  }
+  // Loaded with the table list rather than on first completion: the keys it
+  // carries are what lets a first open's page count as its first window.
+  // Once per connection and schema: the table list changes as its counts fill
+  // in, and re-reading the whole schema's columns each time cost a 0.5-1.2 s
+  // catalog query per change on a large remote schema. Completion still
+  // refreshes it on a new table (loadSchemaColumns' own key).
+  $effect(() => {
+    void _tableNames
+    if (!connection || !activeSchema) return
+    untrack(() => {
+      if (`${persistConnectionId}:${activeSchema}` !== _schemaColumnsFor) void loadSchemaColumns()
+    })
+  })
   $effect(() => {
     void _tableNames
     _schemaColumnsGen++
@@ -2830,16 +2857,22 @@ let rowSearch = $state('')
     if (owner !== _schemaColumnsFor) {
       _schemaColumnsFor = owner
       _schemaColumns = {}
+      _schemaPks = {}
     }
     _schemaColumnsReady = getSchemaColumnStructure(activeSchema)
       .then((rows) => {
         if (_schemaColumnsKey !== key) return
         /** @type {Record<string, Array<{ name: string, type: string }>>} */
         const next = {}
+        /** @type {Record<string, string[]>} */
+        const pks = {}
         for (const { table, columns: cols } of rows ?? []) {
           next[table] = cols.map((c) => ({ name: c.name, type: c.dataType ?? '' }))
+          const pk = cols.filter((c) => c.isPrimaryKey).map((c) => c.name)
+          if (pk.length) pks[table] = pk
         }
         _schemaColumns = next
+        _schemaPks = pks
       })
       .catch(() => {
         // Let the next request try again rather than caching the failure.
@@ -7509,6 +7542,7 @@ let rowSearch = $state('')
       // tenth of a second. Worth it whenever the window is heavy or the link slow.
       const heavyWindow = limit * (_windowBytesPerRow || 0) > SCREENFUL_FIRST_BYTES || _windowSlow
       if (!local && (limit > VIEWPORT_FIRST_MIN || heavyWindow) && _visStart >= start && _visStart < start + limit && rows[_visStart] === undefined) {
+        _screenfulInFlight++
         const from = Math.max(start, _visStart - 20)
         const count = Math.min(start + limit, Math.max(_visEnd, _visStart) + 60) - from
         try {
@@ -7519,6 +7553,11 @@ let rowSearch = $state('')
           dataVersion++
           tracePoint(`window ${start} screenful ${got.length} rows ${Math.round(performance.now() - t0)}ms`)
         } catch { /* the full window below still runs */ }
+        finally {
+          _screenfulInFlight = Math.max(0, _screenfulInFlight - 1)
+          // Scrolled while it was out: whatever is still missing on screen.
+          if (seq === _windowSeq) fillVisibleGap(_visStart, _visEnd)
+        }
       }
       const data = local ? { rows: local } : await getTableRows(activeSchema, activeTable, limit, _windowBase + start, { ...currentRowQuery(false), keyset, fetchTag: windowFetchTag() })
       // Rolling, so the measure tracks the connection rather than latching on the
@@ -7585,6 +7624,25 @@ let rowSearch = $state('')
       if (i < 0) break
       const w = _windowQueue.splice(i, 1)[0]
       void fetchWindow(w)
+    }
+    fillRemainingWindows()
+  }
+
+  /**
+   * A view small enough to hold whole streams the rest in once the screen is
+   * served: one window at a time, only while nothing the user asked for is
+   * queued or in flight. A 4,000-row table used to be either one request
+   * (seconds of nothing past the first 200 rows on a home link) or, windowed,
+   * only the windows a scroll had reached. Larger views have the mirror for
+   * this (startMirror), so they keep loading on demand.
+   */
+  function fillRemainingWindows() {
+    if (!windowed || _windowInFlight > 0 || _windowQueue.length > 0) return
+    if (_windowCount >= MIRROR_MIN_ROWS || _windowBase !== 0) return
+    for (let w = 0; w * _windowRows < _windowCount; w++) {
+      if (_windowLoaded.has(w) || _windowFetching.has(w) || _windowFailed.has(w)) continue
+      void fetchWindow(w)
+      return
     }
   }
 
@@ -7689,11 +7747,62 @@ let rowSearch = $state('')
       (w) => w >= 0 && w * _windowRows < _windowCount && !_windowLoaded.has(w) && !_windowFetching.has(w),
     )
     pumpWindowQueue()
+    fillVisibleGap(start, end)
     if (_visRangeTimer) clearTimeout(_visRangeTimer)
     _visRangeTimer = setTimeout(() => {
       _visRangeTimer = null
       if (windowed) evictFarWindows(firstW, lastW)
     }, 300)
+  }
+
+  /**
+   * Rows on screen that no fetch will paint soon: their window is already on
+   * its way, but it started for another part of the screen (the screenful
+   * fetched first on open covers the first ~80 rows; scroll to row 60 and
+   * rows 80-90 waited for the whole window, ~600 KB to 2 MB, seconds over a
+   * home link, on skeletons). Ask for exactly those rows, alone, the way a
+   * jump does. Same load generation, so it never cancels the window it is
+   * racing; whichever lands first fills the gap and the other skips filled
+   * rows. One at a time, re-checked when it lands.
+   */
+  let _gapInFlight = false
+  /** Screenful-first fetches running (fetchWindow): they already cover the screen. */
+  let _screenfulInFlight = 0
+  /** @param {number} start @param {number} end */
+  function fillVisibleGap(start, end) {
+    if (_gapInFlight || _screenfulInFlight > 0 || !windowed || !activeTable) return
+    const last = Math.min(end, _windowCount - 1)
+    let from = -1
+    for (let i = Math.max(0, start); i <= last; i++) if (rows[i] === undefined) { from = i; break }
+    if (from < 0) return
+    let to = from
+    for (let i = last; i > from; i--) if (rows[i] === undefined) { to = i; break }
+    // Only behind a window already in flight: a window still queued fetches
+    // its own screenful first (fetchWindow), and a mirror read is local.
+    const w = Math.floor(from / _windowRows)
+    if (!_windowFetching.has(w) || activeMirror()) return
+    const begin = Math.max(0, from - 10)
+    const count = Math.min(400, to - begin + 1 + 30, _windowCount - begin)
+    const seq = _windowSeq
+    const schema = activeSchema
+    const table = activeTable
+    _gapInFlight = true
+    const t0 = performance.now()
+    getTableRows(schema, table, count, _windowBase + begin, { ...currentRowQuery(false), fetchTag: windowFetchTag() })
+      .then((head) => {
+        if (seq !== _windowSeq) return
+        const got = head.rows ?? []
+        let filled = 0
+        for (let i = 0; i < got.length; i++) if (rows[begin + i] === undefined) { rows[begin + i] = got[i]; filled++ }
+        if (filled) dataVersion++
+        tracePoint(`window gap ${begin}+${got.length} rows ${Math.round(performance.now() - t0)}ms`)
+      })
+      .catch(() => { /* the window still lands */ })
+      .finally(() => {
+        _gapInFlight = false
+        // Scrolled on while it was out: fill what is on screen now.
+        if (seq === _windowSeq) fillVisibleGap(_visStart, _visEnd)
+      })
   }
 
   /** Fetch the full ordered result set in chunks (windowed export/copy path).
@@ -7802,7 +7911,15 @@ let rowSearch = $state('')
       // ordered by the primary key too, whenever we already know it. On the very
       // first load of a table the key arrives with this response, so the probe
       // can't be ordered yet; its rows are then treated as provisional below.
-      const probeOrder = wantsWindow ? stableWindowOrder(rowSort, rowSortMore, primaryKey) : null
+      // On a first open the key comes from the schema's catalog (see
+      // knownPrimaryKey), so even the first page is in window order.
+      const orderPk = includeMeta ? (knownPrimaryKey(ownerSchema, ownerTable) ?? primaryKey) : primaryKey
+      const probeOrder = wantsWindow ? stableWindowOrder(rowSort, rowSortMore, orderPk) : null
+      // Without that order the probe cannot become window 0: its rows are
+      // dropped and the window fetched again in order. Then it only measures
+      // (row weight, columns, count), and 20 rows do that, instead of sending a
+      // first screenful twice (0.9 MB of it on a wide table, at app start).
+      const probeSize = probeOrder ? WINDOW_PROBE : 20
       // Query shape frozen at call time. The remainder fetch below must not read
       // it back off the globals - by then they may describe another tab.
       const ownerQuery = {
@@ -7817,7 +7934,7 @@ let rowSearch = $state('')
       const viewKey = rowCountKey(ownerSchema, ownerTable, ownerSig)
       const data = await getTableRows(
         ownerSchema, ownerTable,
-        wantsWindow ? WINDOW_PROBE : effectivePageSize,
+        wantsWindow ? probeSize : effectivePageSize,
         offset,
         { ...ownerQuery,
           keyset: keysetArg,
@@ -7846,7 +7963,7 @@ let rowSearch = $state('')
       // total of 0, which reads as "cannot count" above, so it used to be asked
       // for the rest of its page - the same empty query a second time, on every
       // open and every return to its tab.
-      const probeExhausted = wantsWindow && fetched.length < WINDOW_PROBE
+      const probeExhausted = wantsWindow && fetched.length < probeSize
       const viewCount = wantsWindow
         ? (probeExhausted
             ? fetched.length
@@ -7971,6 +8088,13 @@ let rowSearch = $state('')
         // one they are looking at. The grid re-emits its visible range as soon
         // as the new array lands, which asks for the right ones.
         if (!keepScroll) {
+          // A fresh view starts at the top. The last visible range belongs to
+          // whatever was on screen before (another table, another sort), and
+          // window 0's screenful-first check read it: rows 300-360 of the old
+          // view looked missing, so the rows the probe had just painted were
+          // fetched a second time ahead of the window.
+          _visStart = 0
+          _visEnd = 0
           const firstGap = _windowLoaded.size
           for (let w = firstGap; w <= firstGap + WINDOW_PREFETCH; w++) _windowQueue.push(w)
           pumpWindowQueue()
