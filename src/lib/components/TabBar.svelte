@@ -164,7 +164,6 @@
     if (tab.kind === 'map') return 'globe'
     if (tab.kind === 'search') return 'search'
     if (tab.kind === 'license') return 'key-round'
-    if (tab.kind === 'connect') return 'plug'
     if (tab.kind === 'shortcuts') return 'keyboard'
     if (tab.kind === 'shares') return 'share-2'
     if (tab.kind === 'queries') return 'history'

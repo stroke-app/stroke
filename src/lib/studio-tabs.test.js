@@ -8,8 +8,6 @@ import {
   cloneTableTabState,
   cloneSqlTabState,
   createAiTab,
-  createConnectTab,
-  findConnectTab,
   createSchemaTab,
   findAiTab,
   findSchemaTab,
@@ -95,12 +93,6 @@ describe('find helpers', () => {
     expect(findAiTab(tabs)?.kind).toBe('ai')
     expect(findSchemaTab(tabs)?.kind).toBe('schema')
     expect(findAiTab([createSqlTab('SELECT 1;')])).toBeNull()
-  })
-  it('find the Labs Connect tab, titled for what it does', () => {
-    const connect = createConnectTab()
-    expect(connect.title).toBe('Connect')
-    expect(findConnectTab([createSqlTab('SELECT 1;'), connect])?.id).toBe(connect.id)
-    expect(findConnectTab([createAiTab()])).toBeNull()
   })
 })
 

@@ -409,9 +409,9 @@
     })
   }
 
-  const iconBtn = 'inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground'
+  const iconBtn = 'inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground'
   /** Shared label+icon button */
-  const labelBtn = 'flex h-6 items-center gap-1.5 rounded-md px-2 text-ui-2xs hover:bg-sidebar-accent/60 hover:text-foreground data-[state=open]:bg-sidebar-accent/60 data-[state=open]:text-foreground'
+  const labelBtn = 'flex h-7 items-center gap-2 rounded-md px-2.5 text-ui-xs hover:bg-sidebar-accent/60 hover:text-foreground data-[state=open]:bg-sidebar-accent/60 data-[state=open]:text-foreground'
 
   let aiModelMenuOpen = $state(false)
 
@@ -492,7 +492,7 @@
 {/snippet}
 
 <div
-  class={cn('@container/sb flex h-7 shrink-0 items-center gap-0.5 border-t border-border/50 bg-panel text-ui-2xs text-muted-foreground select-none', 'px-2')}
+  class={cn('@container/sb flex h-9 shrink-0 items-center gap-0.5 border-t border-border/50 bg-panel text-ui-xs text-muted-foreground select-none', 'px-2')}
   data-studio-region="statusbar"
 >
   <!-- ── Left group ──────────────────────────────────────────────────── -->
@@ -975,7 +975,7 @@
       <button
         type="button"
         class={cn(
-          'flex h-6 items-center gap-1.5 rounded-md px-1.5 text-ui-2xs hover:bg-sidebar-accent/60',
+          'flex h-7 items-center gap-1.5 rounded-md px-1.5 text-ui-xs hover:bg-sidebar-accent/60',
           tone === 'bad' ? 'text-destructive' : tone === 'fair' ? 'text-warning' : 'text-muted-foreground hover:text-foreground',
         )}
         onclick={onping}

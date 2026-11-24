@@ -1538,6 +1538,15 @@ html[data-window-focused='false'] [role='tablist'] > * {
   opacity: 0.65;
 }
 
+/* ── Icon scale (T3-sized) ───────────────────────────────────────────────────
+   Every icon one step up: 12→14, 14→17, 16→19px. Icons read as the controls
+   rather than as specks beside the text. One rule, so every icon in the app
+   moves together; rem, so it follows the zoom. Unlayered so it wins over the
+   `size-*` utilities on the icons themselves. */
+svg.size-3 { width: calc(14px * var(--app-scale, 1)); height: calc(14px * var(--app-scale, 1)); }
+svg.size-3\.5 { width: calc(17px * var(--app-scale, 1)); height: calc(17px * var(--app-scale, 1)); }
+svg.size-4 { width: calc(19px * var(--app-scale, 1)); height: calc(19px * var(--app-scale, 1)); }
+
 /* ── Linux frameless window edge ─────────────────────────────────────────────
    Without OS decorations, a dark window blends into dark windows behind it on
    Linux compositors that don't draw CSD borders. A crisp 1px inner hairline
