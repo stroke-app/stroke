@@ -11,6 +11,7 @@
   import WindowControls from './WindowControls.svelte'
   import TitleBarMenu from './TitleBarMenu.svelte'
   import WorkspaceSwitcher from './WorkspaceSwitcher.svelte'
+  import NightlySky from './NightlySky.svelte'
   import PanelLeft from '@lucide/svelte/icons/panel-left'
   import { tabDisplayTitle } from '$lib/studio-tabs.js'
   import { bindNativeMenu, syncNativeMenuState, watchFullscreen } from '$lib/native-menu.js'
@@ -111,7 +112,7 @@
   style) floating over this bar, so it only reserves space for them here.
 -->
 <div
-  class="studio-chrome relative flex shrink-0 items-center border-b border-border/50 bg-panel h-(--app-titlebar-h) {isMac ? 'pr-[calc(10px*var(--app-scale))]' : 'pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
+  class="studio-chrome relative isolate flex shrink-0 items-center border-b border-border/50 bg-panel h-(--app-titlebar-h) {isMac ? 'pr-[calc(10px*var(--app-scale))]' : 'pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
   data-studio-chrome
   style:--spacing="calc(4px * var(--app-scale, 1))"
   data-studio-region="titlebar"
@@ -121,6 +122,9 @@
   aria-label="Window title bar"
   tabindex="-1"
 >
+  <!-- Stroke Nightly only: a night sky behind the bar, so it is told from Stable
+       at a glance. Painted under the bar's content (the bar is `isolate`). -->
+  <NightlySky />
 
   {#if isMac}
     <!-- Room for the native traffic lights (inset set in mac_chrome.rs: they end

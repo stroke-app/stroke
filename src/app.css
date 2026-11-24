@@ -1879,3 +1879,61 @@ html[data-os="linux"]:has([role="dialog"][data-state="open"], [role="alertdialog
 [data-slot="dialog-content"] > .flex-1 {
   flex-basis: auto;
 }
+
+/* Stroke Nightly: a violet to amber accent and a night sky behind the title
+   bar, only on Nightly builds (NightlyEdge.svelte, NightlySky.svelte). */
+:root {
+  --nightly-a: oklch(0.62 0.19 295);
+  --nightly-b: oklch(0.76 0.15 65);
+  --nightly-glow: oklch(0.62 0.19 295 / 0.2);
+  --nightly-glow-2: oklch(0.6 0.16 255 / 0.12);
+  --nightly-star: oklch(0.55 0.17 295 / 0.75);
+}
+.dark {
+  --nightly-a: oklch(0.7 0.17 295);
+  --nightly-b: oklch(0.8 0.14 65);
+  --nightly-glow: oklch(0.5 0.2 295 / 0.32);
+  --nightly-glow-2: oklch(0.45 0.16 260 / 0.24);
+  --nightly-star: oklch(0.97 0.02 290 / 0.9);
+}
+.nightly-edge {
+  background: linear-gradient(90deg, transparent, var(--nightly-a) 30%, var(--nightly-b) 70%, transparent);
+  opacity: 0.85;
+}
+.nightly-sky {
+  background:
+    radial-gradient(120% 160% at 0% 0%, var(--nightly-glow), transparent 55%),
+    radial-gradient(80% 140% at 28% 120%, var(--nightly-glow-2), transparent 60%);
+}
+.nightly-star {
+  background: var(--nightly-star);
+  box-shadow: 0 0 3px var(--nightly-star);
+  animation: nightly-twinkle 5.5s ease-in-out infinite;
+}
+@keyframes nightly-twinkle {
+  0%, 100% { opacity: 0.25; }
+  50% { opacity: 1; }
+}
+/* One streak, mostly idle: crosses the left of the bar for ~0.8s every 18s. */
+.nightly-shooting-star {
+  left: 6%;
+  top: 10%;
+  width: 56px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--nightly-star));
+  opacity: 0;
+  transform: rotate(11deg);
+  animation: nightly-shoot 18s ease-out 4s infinite;
+}
+@keyframes nightly-shoot {
+  0%, 95% { opacity: 0; transform: translate(0, 0) rotate(11deg); }
+  96% { opacity: 1; }
+  100% { opacity: 0; transform: translate(160px, 32px) rotate(11deg); }
+}
+/* A light bar is a daytime sky: the glow stays, stars on it read as dust. */
+:root:not(.dark) .nightly-star,
+:root:not(.dark) .nightly-shooting-star { display: none; }
+@media (prefers-reduced-motion: reduce) {
+  .nightly-star { animation: none; opacity: 0.7; }
+  .nightly-shooting-star { display: none; }
+}

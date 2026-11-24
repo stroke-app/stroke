@@ -1,5 +1,6 @@
 <script>
   import { errorText } from '$lib/utils.js'
+  import { appVersion as runningVersion, isNightlyVersion } from '$lib/build-track.js';
   import { tick, untrack } from "svelte";
   import { toastPosition, TOAST_POSITIONS } from '$lib/stores/toast-position.js'
   import ThemeBuilder from './ThemeBuilder.svelte';
@@ -656,14 +657,9 @@
   // Stable and Nightly are separate apps (own name and data), so the track is
   // which app runs: switching installs the other one if needed, opens it and
   // quits this one.
-  let appVersion = $state('')
-  const onNightly = $derived(/-nightly\./.test(appVersion))
-  $effect(() => {
-    void import('@tauri-apps/api/app')
-      .then((m) => m.getVersion())
-      .then((v) => { appVersion = v })
-      .catch(() => {})
-  })
+  // The one copy of the version (build-track.js), shared with the Nightly sky.
+  const appVersion = $derived($runningVersion)
+  const onNightly = $derived(isNightlyVersion(appVersion))
 
   /** A check asked for from here came back with nothing: say so on the button. */
   let upToDate = $state(false)
@@ -1400,7 +1396,7 @@
       <div class="min-w-0">
         <p class="text-ui-sm font-medium text-foreground">Update track</p>
         <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">
-          Nightly is built every night from the newest code. Each track is its own app with its own settings, so switching leaves the other as it is.
+          Nightly is built every night from the newest code. Each track is its own app with its own settings, so switching leaves the other as it is. Saved connections are shared by both.
         </p>
       </div>
       <div class="shrink-0">
