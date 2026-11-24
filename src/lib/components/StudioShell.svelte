@@ -1183,11 +1183,11 @@
     // lights, "History") and no status bar. Using the table view's heights there
     // left the AI header showing above inset pages (shortcuts, connections) and
     // its footer below them.
-    // The title bar is a fixed height at every zoom (TitleBar counter-zooms it),
-    // in AI mode too.
-    // Titlebar stays crisp desktop height: 38px on macOS (matches native
-    // unified toolbar / traffic lights), 36px on Windows/Linux.
-    root.style.setProperty('--app-titlebar-h', IS_MAC ? '38px' : '36px')
+    // The title bar is 38px on macOS (the traffic lights' row) and 36px on
+    // Windows and Linux at 100%, and grows with the app zoom like everything
+    // under it, in AI mode too. The sidebar's top row and the inset pages use
+    // the same value, so they stay level with the bar and fit their buttons.
+    root.style.setProperty('--app-titlebar-h', `calc(${IS_MAC ? 38 : 36}px * var(--app-scale, 1))`)
     // The status bar is h-7 (28px at 100%), growing cleanly with app zoom.
     root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 7)' : '0px')
   })
