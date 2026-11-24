@@ -35,13 +35,11 @@
      schemes. 36% measures ~2.4:1 on dark and ~2.6:1 on light, so it misses WCAG
      1.4.11's 3:1 for a control boundary - a deliberate call for the hairline
      look, with the visible-state burden carried by the focus outline (4.63:1). */
-  --field-border: color-mix(in oklch, var(--foreground) 16%, transparent);
-  /* Filled, hairline fields (the macOS / SQL Studio look): a 1px edge at low
-     contrast over a faint fill, so a form reads as quiet surfaces rather than a
-     stack of outlined pills. The fill carries the "this is a field" signal the
-     2px border used to; translucent so it sits right on any surface (panel,
-     popover, dialog) without a per-surface value. Focus brightens the edge
-     toward the accent and adds a soft halo (see the focus rule below). */
+  --field-border: color-mix(in oklch, var(--foreground) 22%, transparent);
+  /* Filled, hairline fields (the macOS / SQL Studio look): a crisp 1px edge
+     over a faint fill, so a form reads as quiet surfaces rather than a stack of
+     outlined pills. Focus turns the edge to the accent (see the focus rule
+     below). */
   --field-bg: color-mix(in oklch, var(--foreground) 5%, transparent);
   --field-border-width: 1px;
   /* Fields, dropdown triggers and buttons all share ONE corner, and it is the
@@ -279,14 +277,9 @@ html[data-icon-style="bold"]  svg.lucide { stroke-width: 2.5px; }
 .field-surface:not([aria-invalid="true"]):not(.no-focus-ring):focus-visible,
 .cell-quiet:focus-visible,
 [data-slot="select-trigger"].field-surface:not([aria-invalid="true"]):focus-visible {
-  /* The border is deliberately NOT touched here: a field's edge looks identical
-     whether it has focus or not. The indicator is an outline just outside that
-     edge - no shadow, no ring stacked on the border, no layout shift, and it
-     follows the corner radius. --ring measures 4.63:1 against --background. */
-  /* Filled-hairline focus: the edge takes the accent and a soft 3px halo sits
-     outside it. A box-shadow follows the radius and never shifts layout. */
-  /* A crisp 1px accent edge and nothing else, the way native search fields
-     show focus: no halo outside the field, no layout shift. */
+  /* One crisp 1px accent edge, the way native fields show focus: no halo
+     outside it (a halo beside a hover-gray border read as two outlines) and
+     no layout shift. --ring measures 4.63:1 against --background. */
   outline: none;
   border-color: var(--ring);
   box-shadow: none;
@@ -386,19 +379,22 @@ textarea:not(.no-focus-ring):not(.no-field-frame) {
 }
 
 /* An editing cell is frameless, for the same reason `.cell-fields` above is: the
-   cell IS the field. The overlay around it already draws the edit's only frame
-   (`ring-2 ring-inset ring-primary` in DataTable), which is what marks an edit on
-   a canvas with no DOM to highlight, and a 2px field border at the 12px field
-   radius inside that square 2px ring drew a second, rounder box a couple of
-   pixels in from the first - worst on the timestamp editor, where the border
-   traced only the text input and left the calendar button outside it. One ring,
-   flush with the cell, and the value sits where the canvas drew it. */
+   cell IS the field. The overlay around it draws the edit's crisp outline, and
+   inner inputs keep zero UA margin/vertical padding so the glyphs sit pixel-for-
+   pixel on top of the canvas text they replace. */
 [data-cell-editor] :is(input, textarea, select, button, [data-slot="select-trigger"]) {
   outline: none !important;
   box-shadow: none !important;
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
+}
+[data-cell-editor] input {
+  padding-top: 0 !important;
+  padding-bottom: 0 !important;
+  margin: 0 !important;
+  appearance: none;
+  -webkit-appearance: none;
 }
 /* Fields that sit inside a container which already carries the frame (command
    palette, dropdown filters, the AI composer card) opt out. The outline follows
@@ -1391,16 +1387,15 @@ html[data-motion="reduced"] .animate-spin {
   .search-box {
     height: 2rem;
     border-radius: var(--radius-lg);
-    border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-    background-color: color-mix(in oklab, var(--muted) 30%, transparent);
+    border: 1px solid var(--field-border);
+    background-color: color-mix(in oklab, var(--muted) 32%, transparent);
     color: var(--foreground);
     outline: none;
-    transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
+    transition: border-color 120ms ease-out, background-color 120ms ease-out, box-shadow 120ms ease-out;
   }
   .search-box::placeholder { color: var(--muted-foreground); }
-  .search-box:hover:not(:disabled):not(:focus) { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
-  /* Focus is one crisp accent edge, hovered or not: no halo outside it. A
-     halo beside a hover-gray border read as two outlines. */
+  .search-box:hover:not(:disabled):not(:focus) { border-color: color-mix(in oklch, var(--foreground) 32%, transparent); }
+  /* Focus is one crisp accent edge, hovered or not: no halo outside it. */
   .search-box:focus {
     border-color: var(--ring);
     background-color: color-mix(in oklab, var(--muted) 45%, transparent);
@@ -1412,15 +1407,16 @@ html[data-motion="reduced"] .animate-spin {
      row): the wrapper carries the outline and lights up while the input has focus. */
   .search-shell {
     border-radius: var(--radius-lg);
-    border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
-    background-color: color-mix(in oklab, var(--muted) 30%, transparent);
+    border: 1px solid var(--field-border);
+    background-color: color-mix(in oklab, var(--muted) 32%, transparent);
     color: var(--foreground);
-    transition: border-color 150ms ease-out, background-color 150ms ease-out, box-shadow 150ms ease-out;
+    transition: border-color 120ms ease-out, background-color 120ms ease-out, box-shadow 120ms ease-out;
   }
-  .search-shell:hover:not(:focus-within) { border-color: color-mix(in oklab, var(--foreground) 20%, transparent); }
+  .search-shell:hover:not(:focus-within) { border-color: color-mix(in oklch, var(--foreground) 32%, transparent); }
   .search-shell:focus-within {
     border-color: var(--ring);
     background-color: color-mix(in oklab, var(--muted) 45%, transparent);
+    box-shadow: none;
   }
   .search-shell input { background: transparent; color: inherit; }
   .search-shell input::placeholder { color: var(--muted-foreground); }
