@@ -19,7 +19,7 @@
 	bind:indeterminate
 	data-slot="dropdown-menu-checkbox-item"
 	class={cn(
-		"focus:bg-accent focus:text-foreground focus:**:text-foreground min-h-7 gap-2 rounded-sm py-1 pr-7 pl-2 text-ui-xs data-inset:pl-7 [&_svg:not([class*='size-'])]:size-3.5 relative flex min-w-0 cursor-default items-center outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 [&>[data-slot=menu-label]]:min-w-0 [&>[data-slot=menu-label]]:truncate [&_svg]:pointer-events-none [&_svg]:shrink-0",
+		"focus:bg-accent focus:text-foreground focus:**:text-foreground min-h-7 gap-2 rounded-menu-item py-1 pr-7 pl-2 text-ui-xs data-inset:pl-7 [&_svg:not([class*='size-'])]:size-3.5 relative flex min-w-0 cursor-default items-center outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-40 [&>[data-slot=menu-label]]:min-w-0 [&>[data-slot=menu-label]]:truncate [&_svg]:pointer-events-none [&_svg]:shrink-0",
 		className
 	)}
 	{...restProps}

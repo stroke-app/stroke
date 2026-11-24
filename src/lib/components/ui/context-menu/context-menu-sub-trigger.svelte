@@ -17,7 +17,7 @@
 	data-slot="context-menu-sub-trigger"
 	data-inset={inset}
 	class={cn(
-		"focus:bg-accent focus:text-foreground data-open:bg-accent data-open:text-foreground gap-1.5 rounded-sm px-1.5 py-1 text-ui-2xs data-inset:pl-7 [&_svg:not([class*='size-'])]:size-3.5 flex min-w-0 cursor-default items-center outline-hidden select-none [&>[data-slot=menu-label]]:min-w-0 [&>[data-slot=menu-label]]:truncate [&_svg]:pointer-events-none [&_svg]:shrink-0",
+		"focus:bg-accent focus:text-foreground data-open:bg-accent data-open:text-foreground gap-1.5 rounded-menu-item px-1.5 py-1 text-ui-2xs data-inset:pl-7 [&_svg:not([class*='size-'])]:size-3.5 flex min-w-0 cursor-default items-center outline-hidden select-none [&>[data-slot=menu-label]]:min-w-0 [&>[data-slot=menu-label]]:truncate [&_svg]:pointer-events-none [&_svg]:shrink-0",
 		className
 	)}
 	{...restProps}
