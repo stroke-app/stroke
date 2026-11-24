@@ -15,7 +15,19 @@ vi.mock('@tauri-apps/api/core', () => ({
     if (cmd === 'connections_store_read') return diskPayload
     if (cmd === 'close_parked') { closedParked.push(args.connection); return null }
     if (cmd === 'conn_secrets_read') { if (vaultBroken) throw new Error('no keychain'); return vault }
-    if (cmd === 'conn_secrets_write') { if (vaultBroken) throw new Error('no keychain'); vault = args.json; return null }
+    if (cmd === 'conn_secrets_read_fresh') { if (vaultBroken) throw new Error('no keychain'); return vault }
+    if (cmd === 'conn_secrets_merge') {
+      // Same rules as merge_conn_secrets in secrets.rs.
+      if (vaultBroken) throw new Error('no keychain')
+      const map = vault ? JSON.parse(vault) : {}
+      for (const [id, sec] of Object.entries(JSON.parse(args.set))) {
+        if (sec && Object.keys(sec).length) map[id] = sec
+        else delete map[id]
+      }
+      for (const id of args.removed) delete map[id]
+      vault = Object.keys(map).length ? JSON.stringify(map) : null
+      return null
+    }
     throw new Error(`unexpected command ${cmd}`)
   }),
 }))
@@ -163,6 +175,48 @@ describe('connection secrets in the keychain', () => {
     store.removeConnection('n')
     await flush()
     expect(JSON.parse(vault ?? '{}').n).toBeUndefined()
+  })
+
+  it("leaves the other track's passwords in the shared keychain", async () => {
+    // Nightly saved "n" (with its password); this app (Stable) never had it.
+    vault = JSON.stringify({ n: { password: 'nightly' }, gone: { password: 'x' } })
+    diskPayload = JSON.stringify({ connections: [{ id: 's', type: 'postgres', name: 's', host: 'h' }], deleted: ['gone'] })
+    const store = await import('./connections.js')
+    await store.hydrateConnectionsFromDisk()
+    // Startup drops only a deleted id, not every id missing from this list.
+    expect(JSON.parse(vault ?? '{}')).toEqual({ n: { password: 'nightly' } })
+    // A save here merges, so "n" survives this app's writes too.
+    store.upsertConnection({ id: 's', type: 'postgres', name: 's', host: 'h', password: 'stable' })
+    await flush()
+    expect(JSON.parse(vault ?? '{}')).toEqual({ n: { password: 'nightly' }, s: { password: 'stable' } })
+  })
+
+  it('picks up a connection the other track added, with its password', async () => {
+    diskPayload = JSON.stringify({ connections: [{ id: 's', type: 'postgres', name: 's' }], deleted: [] })
+    const store = await import('./connections.js')
+    await store.hydrateConnectionsFromDisk()
+    expect(await store.refreshConnectionsFromDisk()).toBe(false)
+    // Meanwhile Nightly adds "n" to the shared file and keychain.
+    diskPayload = JSON.stringify({ connections: [{ id: 's', type: 'postgres', name: 's' }, { id: 'n', type: 'mysql', name: 'n' }], deleted: [] })
+    vault = JSON.stringify({ n: { password: 'nightly' } })
+    expect(await store.refreshConnectionsFromDisk()).toBe(true)
+    const n = store.loadSavedConnections().find((c) => c.id === 'n')
+    expect(n?.password).toBe('nightly')
+    // Same list with keys in another order is not a change.
+    diskPayload = JSON.stringify({ deleted: [], connections: [{ name: 's', type: 'postgres', id: 's' }, { name: 'n', id: 'n', type: 'mysql' }] })
+    expect(await store.refreshConnectionsFromDisk()).toBe(false)
+  })
+
+  it('tells the disk copy about a revived connection', async () => {
+    const store = await import('./connections.js')
+    await store.hydrateConnectionsFromDisk()
+    store.upsertConnection({ id: 'sample', type: 'sqlite', name: 'Sample', filePath: '/s.db' })
+    store.removeConnection('sample')
+    store.upsertConnection({ id: 'sample', type: 'sqlite', name: 'Sample', filePath: '/s.db' }, { revive: true })
+    await flush()
+    const last = JSON.parse(writes.at(-1) ?? '{}')
+    expect(last.revived).toEqual(['sample'])
+    expect(last.deleted).toEqual([])
   })
 
   it('keeps secrets inline when the keychain is unavailable', async () => {

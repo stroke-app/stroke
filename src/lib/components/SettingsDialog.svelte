@@ -2187,7 +2187,7 @@
     </div>
     <div class="mt-4 flex items-center gap-4 border-t border-border/40 px-6 py-4">
       <p class="min-w-0 flex-1 text-ui-xs leading-relaxed text-muted-foreground">
-        Connections and settings stay with each app. Signed in, synced ones follow you.
+        Both apps share saved connections and their passwords. Settings stay with each app; signed in, synced ones follow you.
       </p>
       <div class="flex shrink-0 items-center gap-2">
         <Button type="button" variant="outline" disabled={switchBusy} onclick={() => (switchTo = null)}>Cancel</Button>

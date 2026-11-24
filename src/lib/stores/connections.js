@@ -157,7 +157,7 @@ export function saveConnections(connections) {
         return pub
       })
       _secretCache = next
-      queueSecretsWrite()
+      queueSecretsWrite(connections.map((c) => c.id))
     }
     localStorage.setItem(STORAGE_KEY, JSON.stringify(stored))
     mirrorToDisk()
@@ -230,11 +230,22 @@ export function splitSecrets(c) {
 
 let _secretsChain = Promise.resolve()
 
-/** Persist the cache; on failure, put the secrets back inline so none is lost. */
-function queueSecretsWrite() {
-  const json = JSON.stringify(Object.fromEntries(_secretCache))
+/**
+ * Merge this app's secrets into the keychain vault, which Stroke and Stroke
+ * Nightly share: every id of `ids` is written from the cache (an empty object
+ * clears it), deleted ids are removed, and ids this app doesn't have are left
+ * as the other app saved them. Writing the whole vault from this app's cache
+ * used to drop the other track's passwords. On failure the secrets go back
+ * inline so none is lost.
+ * @param {Iterable<string>} ids
+ */
+function queueSecretsWrite(ids) {
+  /** @type {Record<string, Record<string, string>>} */
+  const set = {}
+  for (const id of ids) if (typeof id === 'string') set[id] = _secretCache.get(id) ?? {}
+  const payload = { set: JSON.stringify(set), removed: [...loadDeletedIds()] }
   _secretsChain = _secretsChain
-    .then(() => invoke('conn_secrets_write', { json }))
+    .then(() => invoke('conn_secrets_merge', payload))
     .catch((err) => {
       console.error('Keychain write failed; keeping connection secrets inline:', err)
       _vaultReady = false
@@ -267,11 +278,18 @@ export async function hydrateConnectionSecrets() {
         inline = true
       }
     }
-    // Secrets of deleted connections don't come back.
-    const ids = new Set(list.map((c) => c?.id))
-    for (const id of [...cache.keys()]) if (!ids.has(id)) cache.delete(id)
-    if (inline || cache.size !== Object.keys(stored ?? {}).length) {
-      await invoke('conn_secrets_write', { json: JSON.stringify(Object.fromEntries(cache)) })
+    // Secrets of deleted connections don't come back. Only an id with a
+    // tombstone counts as deleted: one missing from this list may belong to
+    // the other track (Stroke and Stroke Nightly share the vault), and
+    // dropping those wiped its passwords every time the other app started.
+    const deleted = loadDeletedIds()
+    let pruned = false
+    for (const id of [...cache.keys()]) if (deleted.has(id)) { cache.delete(id); pruned = true }
+    if (inline || pruned) {
+      /** @type {Record<string, Record<string, string>>} */
+      const set = {}
+      for (const c of list) if (c && typeof c.id === 'string') set[c.id] = cache.get(c.id) ?? {}
+      await invoke('conn_secrets_merge', { set: JSON.stringify(set), removed: [...deleted] })
     }
     _secretCache = cache
     _vaultReady = true
@@ -293,6 +311,9 @@ export async function hydrateConnectionSecrets() {
 // file is loaded into localStorage before anything reads the list.
 
 let _mirrorChain = Promise.resolve()
+/** Ids re-added after a delete this session. The backend merges each write
+ *  with the file, where a tombstone otherwise wins over a copy of the row. */
+const _revived = new Set()
 
 /** Queue a write of the current list and deleted ids. Writes run one at a time,
  *  so an older payload can never land after a newer one. */
@@ -303,6 +324,7 @@ function mirrorToDisk() {
       version: 1,
       connections: JSON.parse(localStorage.getItem(STORAGE_KEY) ?? '[]'),
       deleted: [...loadDeletedIds()],
+      revived: [..._revived],
     })
   } catch {
     return
@@ -380,6 +402,54 @@ export async function hydrateConnectionsFromDisk({ waitForSecrets = true } = {})
   }
 }
 
+/** JSON with object keys sorted, for comparing two payloads by value. @param {unknown} v @returns {string} */
+function canonical(v) {
+  if (Array.isArray(v)) return `[${v.map(canonical).join(',')}]`
+  if (v && typeof v === 'object') {
+    return `{${Object.keys(v).sort().map((k) => `${JSON.stringify(k)}:${canonical(/** @type {Record<string, unknown>} */ (v)[k])}`).join(',')}}`
+  }
+  return JSON.stringify(v) ?? 'null'
+}
+
+/**
+ * Pick up what the other track saved. Stroke and Stroke Nightly share
+ * connections.json and the keychain vault, and both can be open: call this
+ * when the window comes back to the front. Returns true when the list changed,
+ * after reading the passwords fresh so a connection added over there connects
+ * here without asking again.
+ * @returns {Promise<boolean>}
+ */
+export async function refreshConnectionsFromDisk() {
+  try {
+    // Let this app's own pending writes land first, so the file includes them.
+    await _mirrorChain
+    await _secretsChain
+    const json = /** @type {string | null} */ (await invoke('connections_store_read'))
+    if (json == null) return false
+    const data = JSON.parse(json)
+    if (!Array.isArray(data?.connections)) return false
+    const list = JSON.stringify(data.connections)
+    const deleted = JSON.stringify(Array.isArray(data.deleted) ? data.deleted : [])
+    // The backend may write keys in another order: compare values, not text.
+    const same = (/** @type {string} */ a, /** @type {string | null} */ b) => {
+      try { return canonical(JSON.parse(a)) === canonical(JSON.parse(b ?? '[]')) } catch { return false }
+    }
+    if (same(list, localStorage.getItem(STORAGE_KEY)) && same(deleted, localStorage.getItem(DELETED_KEY))) return false
+    if (_vaultReady) {
+      try {
+        const sec = /** @type {string | null} */ (await invoke('conn_secrets_read_fresh'))
+        const parsed = sec ? JSON.parse(sec) : {}
+        _secretCache = new Map(Object.entries(parsed ?? {}))
+      } catch { /* keep the cache: a connection without its password asks for it */ }
+    }
+    localStorage.setItem(STORAGE_KEY, list)
+    localStorage.setItem(DELETED_KEY, deleted)
+    return true
+  } catch {
+    return false
+  }
+}
+
 /**
  * Where a connection is filed and how it looks, set by the person rather than
  * by whatever dialled it. The one-click paths (a provider's database, a Docker
@@ -417,6 +487,7 @@ export function upsertConnection(conn, { revive = false, exact = false } = {}) {
     }
     deleted.delete(conn.id)
     saveDeletedIds(deleted)
+    _revived.add(conn.id)
   }
   const list = loadSavedConnections()
   const idx  = list.findIndex((c) => c.id === conn.id)
@@ -482,6 +553,7 @@ export function removeConnection(id) {
   closeParkedFor(id)
   const deleted = loadDeletedIds()
   deleted.add(id)
+  _revived.delete(id)
   // Before saveConnections, so the disk copy it writes carries the id too.
   saveDeletedIds(deleted)
   // Sync carries the delete to other devices (a no-op while sync applies one).
