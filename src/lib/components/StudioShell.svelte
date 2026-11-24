@@ -1210,7 +1210,7 @@
     // the same value, so they stay level with the bar and fit their buttons.
     root.style.setProperty('--app-titlebar-h', `calc(${IS_MAC ? 38 : 36}px * var(--app-scale, 1))`)
     // The status bar is h-7 (28px at 100%), growing cleanly with app zoom.
-    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 7)' : '0px')
+    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 9)' : '0px')
   })
   // Width for the loading-fallback shell, so the spinner fills a properly-sized
   // sidebar panel (matching saved width) instead of a zero-width strip while the
