@@ -4,6 +4,35 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.7.6] - 2026-11-24
+
+### New Features
+
+#### Connections
+- **Convex** - Connect to Convex two ways. The Convex provider card signs in with Convex in the browser, lists every cloud deployment on the team you authorize (production, development and previews), and creates a deploy key named Stroke for the one you pick. Convex (URL + key) connects any deployment by its URL and a deploy or admin key, including self-hosted backends and `npx convex dev --local`.
+- **Browse and edit Convex tables** - Tables and their document counts in the sidebar, newest documents first, filters like `age > 30 AND plan == "pro"`, inline cell edits, and insert, replace and delete. Int64 values show and edit as whole numbers without losing precision.
+- **Convex console** - Run a deployed function with its arguments, `messages:list {"limit": 5}`, or read a table with `users.limit(20)` and `users.get("<id>")`. A function can write, so read-only mode and the MCP server's read-only access refuse function calls.
+
+### Bug Fixes
+- Rejected tokens for PostHog, Xata and SingleStore no longer ask to check "the email and API key": the message names that provider's own fields.
+
+### Changes
+- **Stable release notes** - Updating from one stable version to the next lists every change in between, instead of only the newest version's.
+- **What's new after a long update** - Updating across more than 8 versions (stable to stable) lists every change since your old version, grouped as New, Fixed and Improved, instead of the newest 8 versions and a count of the rest.
+
+#### Look and feel
+- **Desktop density** - Text, icons and bars are smaller and tighter, closer to native desktop apps. The base text size is 14px instead of 16px, icons render at their real 12, 14 and 16px sizes, corners are tighter, and the macOS title bar is 38px (36px on Windows and Linux).
+- **Quieter motion** - Buttons no longer shrink when pressed, dialogs fade in instead of zooming, tooltips lose the arrow and bounce, and the sidebar loader is a spinner.
+- **System font and scrolling by default** - Unless changed in Settings, Stroke uses the system UI font with the OS's own text smoothing, and native scrolling on every platform. Trackpads always scroll natively, even with eased mouse-wheel scrolling turned on.
+
+#### Window
+- **Window size and position are remembered** - Stroke reopens where it was, at the same size, instead of opening maximized every time.
+- **Native window chrome** - Windows 11 keeps its window shadow and rounded corners, uses Mica for the glass effect, and gets Fluent caption buttons. Linux gets round GTK-style window buttons and a 1px border on unmaximized windows. On macOS the glass dims with the window when another app has focus, like Finder.
+- **Unfocused window** - The title bar and sidebar dim slightly when Stroke isn't the active window.
+- **Menu mnemonics** - On Windows and Linux, Alt+F, E, V, T and H open the menus, and holding Alt underlines their letters.
+- **Linux GPU rendering** - Stroke now uses GPU compositing on Linux, and falls back to software rendering only after a launch that failed to draw or when `WEBKIT_DISABLE_DMABUF_RENDERER=1` is set.
+
+
 ## [3.7.5] - 2026-11-23
 
 ### Bug Fixes
