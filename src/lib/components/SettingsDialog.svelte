@@ -657,7 +657,7 @@
   // Stable and Nightly are separate apps (own name and data), so the track is
   // which app runs: switching installs the other one if needed, opens it and
   // quits this one.
-  // The one copy of the version (build-track.js), shared with the Nightly sky.
+  // The one copy of the version (build-track.js), shared with the title bar.
   const appVersion = $derived($runningVersion)
   const onNightly = $derived(isNightlyVersion(appVersion))
 
