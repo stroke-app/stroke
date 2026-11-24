@@ -417,6 +417,16 @@ function isEsWrite(text) {
 }
 
 /**
+ * A Convex console call, `messages:send {"body": "hi"}`: a deployed function
+ * that may be a mutation or an action, so read-only mode refuses it. No SQL
+ * statement starts with `word:word`.
+ * @param {string} sql
+ */
+export function isConvexCall(sql) {
+  return /^\s*[\w.-]+(\/[\w.-]+)*:[A-Za-z_]\w*(\s|\(|\{|;|$)/.test(String(sql ?? ''))
+}
+
+/**
  * `isWriteSql`, knowing which language it is reading. The AI runs every engine
  * through one `execute_sql` tool, and the SQL rules alone let some writes
  * through read-only mode: Redis `SET` (left out of the shared list because SQL
@@ -445,6 +455,8 @@ export function isWriteFor(sql, engine) {
       return isEsWrite(text)
     case 'dynamodb':
       return DYNAMO_WRITE_RE.test(text)
+    case 'convex':
+      return isConvexCall(text)
     default:
       return false
   }

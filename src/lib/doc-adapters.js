@@ -1,6 +1,6 @@
 // Per-engine adapters for DocBrowser.svelte: the one page that browses and
-// edits CouchDB, Cassandra, Firestore, MongoDB, Elasticsearch/OpenSearch and
-// Neo4j, and reads InfluxDB. Each adapter turns that engine's API
+// edits CouchDB, Cassandra, Firestore, MongoDB, Elasticsearch/OpenSearch,
+// Neo4j and Convex, and reads InfluxDB. Each adapter turns that engine's API
 // into the same few verbs (list collections, load a page, save, delete). The
 // API calls are injected so the logic is unit-tested without Tauri.
 
@@ -724,6 +724,129 @@ export function firestoreAdapter(req, conn) {
   }
 }
 
+// ── Convex ──────────────────────────────────────────────────────────────────
+
+/** Tables the Convex dashboard lists although their names start with `_`. */
+const CX_SHOWN_SYSTEM = ['_scheduled_jobs', '_file_storage']
+
+/** The value Convex's dashboard functions read as "remove this field". */
+export const CX_UNDEFINED =
+  '__CONVEX_PLACEHOLDER_undefined_I23atX0jcndVbFgXoQZffsih7eAqktCyFjgUuAeNBtfr3ySOljPSPSEOPFgprkdBO3zXNiGEJxmJ5ZFPc5C5qKesG80QRPvlJe8vgSxAt9feLTwxTg4PHfVwUaTEJU67FDwldWmTxp1guMPwxQ2jOuhEryTBf3mQ'
+
+const CX_OPS = /** @type {Record<string, string>} */ ({ '==': 'eq', '!=': 'neq', '<': 'lt', '<=': 'lte', '>': 'gt', '>=': 'gte' })
+
+/**
+ * The browser's filter, `age > 30 AND plan == "pro"`, as the dashboard's
+ * filter expression, base64 of its JSON. Values are JSON; a bare word is a
+ * string. Null for no filter.
+ * @param {string} text
+ */
+export function cxFilter(text) {
+  const parts = String(text ?? '').trim().split(/\s+AND\s+/i).filter(Boolean)
+  if (parts.length === 0) return null
+  const clauses = parts.map((p, i) => {
+    const m = /^([\w.$-]+)\s*(==|!=|<=|>=|<|>)\s*(.+)$/.exec(p.trim())
+    if (!m) throw new Error(`Can't read "${p}". Write field op value, e.g. age > 30 AND plan == "pro"`)
+    let value
+    try {
+      value = JSON.parse(m[3])
+    } catch {
+      value = m[3].trim()
+    }
+    return { id: String(i), field: m[1], op: CX_OPS[m[2]], value, enabled: true }
+  })
+  const bytes = new TextEncoder().encode(JSON.stringify({ clauses, order: 'desc' }))
+  return btoa(Array.from(bytes, (b) => String.fromCharCode(b)).join(''))
+}
+
+/** A document without the fields Convex sets itself. @param {Record<string, any>} doc */
+function cxBody(doc) {
+  const { _id, _creationTime, ...rest } = doc
+  return rest
+}
+
+/**
+ * @param {(path: string, args?: Record<string, any>) => Promise<any>} call a `_system/frontend/*` function
+ * @returns {DocAdapter}
+ */
+export function convexAdapter(call) {
+  /** @param {string} name */
+  const fn = (name) => `_system/frontend/${name}`
+  /** @param {string} id */
+  const byId = (id) => call(fn('getById'), { id })
+  /** @param {string} coll @param {number} size @param {any} cursor @param {string | null} filters */
+  const page = (coll, size, cursor, filters) =>
+    call(fn('paginatedTableDocuments'), { table: coll, filters, paginationOpts: { numItems: size, cursor: cursor ?? null } })
+  return {
+    engine: 'convex',
+    noun: { collection: 'Table', collections: 'Tables', item: 'Document', items: 'documents' },
+    consoleLabel: 'Query',
+    filterPlaceholder: 'age > 30 AND plan == "pro"',
+    filterHint: 'field op value, joined with AND; ops: == != < <= > >=. Newest first',
+
+    async listCollections() {
+      const m = await call(fn('getTableMapping'))
+      const names = Object.values(m ?? {}).map(String).filter((n) => !n.startsWith('_') || CX_SHOWN_SYSTEM.includes(n))
+      return [...new Set(names)].sort((a, b) => Number(a.startsWith('_')) - Number(b.startsWith('_')) || a.localeCompare(b))
+    },
+
+    async describe(coll) {
+      let summary = /** @type {string[]} */ ([])
+      try {
+        const n = await call(fn('tableSize'), { tableName: coll })
+        if (typeof n === 'number') summary = [`${n.toLocaleString()} documents`]
+      } catch {
+        // The count is a nicety.
+      }
+      return { keys: ['_id'], summary }
+    },
+
+    async count(coll, filter) {
+      if (String(filter ?? '').trim()) return null
+      const n = await call(fn('tableSize'), { tableName: coll })
+      return typeof n === 'number' ? n : null
+    },
+
+    async load(coll, { cursor, filter, size = PAGE_SIZE }) {
+      const r = await page(coll, size, cursor, cxFilter(filter))
+      // A filter the dashboard function rejects comes back as rows describing
+      // the problem instead of documents.
+      const bad = (r?.page ?? []).find((/** @type {any} */ d) => d && typeof d === 'object' && 'error' in d && !('_id' in d))
+      if (bad) throw new Error(String(bad.error))
+      return { docs: r?.page ?? [], cursor: r?.isDone ? null : r?.continueCursor || null }
+    },
+
+    idOf: (doc) => String(doc._id ?? ''),
+
+    async save(coll, next, prev) {
+      const id = typeof next._id === 'string' ? next._id.trim() : ''
+      if (prev) {
+        if (id && id !== prev._id) throw new Error('Convex assigns document ids, so _id cannot be changed. Insert a new document instead.')
+        await call(fn('replaceDocument'), { id: prev._id, document: cxBody(next) })
+        return (await byId(prev._id)) ?? next
+      }
+      await call(fn('addDocument'), { table: coll, documents: [cxBody(next)] })
+      // The insert returns no id: the newest document is the one just added.
+      const r = await page(coll, 1, null, null)
+      return r?.page?.[0] ?? next
+    },
+
+    async updateField(coll, doc, path, value, o = {}) {
+      const v = o.unset ? CX_UNDEFINED : value != null && o.typeHint === 'int64' && typeof value !== 'object' ? { $integer: String(value) } : value
+      await call(fn('patchDocumentsFields'), { table: coll, ids: [doc._id], fields: { [path]: v } })
+      return (await byId(doc._id)) ?? doc
+    },
+
+    async remove(coll, doc) {
+      await call(fn('deleteDocuments'), { toDelete: [{ id: doc._id, tableName: coll }] })
+    },
+
+    template: () => ({}),
+    keyChangeWarning: 'Convex assigns document ids, so _id cannot be changed.',
+    querySeed: (coll) => `${coll}.limit(50)`,
+  }
+}
+
 // ── Shared helpers ──────────────────────────────────────────────────────────
 
 /**
@@ -783,7 +906,7 @@ export function docCell(v, max = 200) {
   return { text: s.length > max ? s.slice(0, max) + '…' : s, kind }
 }
 
-const EXT_TYPES = /** @type {Record<string, string>} */ ({ $oid: 'objectId', $date: 'date', $numberLong: 'long', $numberDecimal: 'decimal', $uuid: 'uuid' })
+const EXT_TYPES = /** @type {Record<string, string>} */ ({ $oid: 'objectId', $date: 'date', $numberLong: 'long', $numberDecimal: 'decimal', $uuid: 'uuid', $integer: 'int64' })
 
 /**
  * A field's display value and type: Extended JSON scalars (`{"$oid": …}`) as

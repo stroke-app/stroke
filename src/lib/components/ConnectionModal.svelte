@@ -43,6 +43,8 @@
     connectInflux,
     testFirestore,
     connectFirestore,
+    testConvex,
+    connectConvex,
     testSpanner,
     connectSpanner,
     testBigquery,
@@ -230,6 +232,7 @@
         { id: "cassandra", label: "Cassandra", desc: "Wide-column store (CQL)" },
         { id: "scylladb", label: "ScyllaDB", desc: "Cassandra-compatible wide-column store (CQL)" },
         { id: "firestore", label: "Firestore", desc: "Google Cloud document database" },
+        { id: "convex-url", label: "Convex (URL + key)", desc: "Self-hosted, local or cloud deployment with its admin key" },
         { id: "neo4j", label: "Neo4j", desc: "Graph database, also Aura (over HTTP)", beta: true },
         { id: "influxdb", label: "InfluxDB", desc: "Time series, 1.x, 2.x and 3.x (read-only)", beta: true },
       ],
@@ -287,6 +290,11 @@
           label: "PostHog",
           desc: "Product analytics in HogQL, read-only",
         },
+        {
+          id: "convex",
+          label: "Convex",
+          desc: "Reactive backend database, connect with a team token",
+        },
       ],
     },
   ];
@@ -323,6 +331,7 @@
     "nile",
     "upstash",
     "posthog",
+    "convex",
     "d1",
     "spanner",
     "bigquery",
@@ -341,6 +350,7 @@
     "cassandra",
     "scylladb",
     "firestore",
+    "convex-url",
   ];
   const driverItems = DRIVER_ORDER.map((id) =>
     ALL_DRIVERS.find((d) => d.id === id),
@@ -355,7 +365,7 @@
 
   // Provider (sign-in) ids are surfaced as cards on their own tab, so keep them
   // out of the manual Type dropdown.
-  const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma", "tidb", "turso", "railway", "nile", "upstash", "posthog"];
+  const PROVIDER_IDS = ["neon", "supabase", "planetscale", "prisma", "tidb", "turso", "railway", "nile", "upstash", "posthog", "convex"];
   // Providers temporarily turned off (shown as a disabled tab, not connectable).
   /** @type {Set<string>} */
   const DISABLED_TABS = new Set();
@@ -565,6 +575,9 @@
   // Cassandra: contact points and an optional default keyspace.
   let cqlHosts = $state("127.0.0.1:9042");
   let cqlKeyspace = $state("");
+  // Convex by hand: the deployment URL and its admin or deploy key.
+  let cxUrl = $state("");
+  let cxKey = $state("");
   // Firestore: project, optional database, and how to sign in.
   let fsProject = $state("");
   let fsDatabase = $state("");
@@ -849,7 +862,7 @@
 
 
   /** Providers with an account flow, in the order they are offered. */
-  const PROVIDER_CARDS = ["neon", "supabase", "prisma", "planetscale", "tidb", "turso", "railway", "nile", "upstash", "posthog", "d1"];
+  const PROVIDER_CARDS = ["neon", "supabase", "prisma", "planetscale", "tidb", "turso", "railway", "nile", "upstash", "posthog", "convex", "d1"];
 
   /** Names for providers a URI can identify but the catalog has no card for. */
   const PROVIDER_LABELS = { "prisma-postgres": "Prisma Postgres" };
@@ -1294,6 +1307,8 @@
       };
     if (dbType === "mongodb")
       return { type: "mongodb", name: nm, uri: mongoUri.trim(), database: mongoDb.trim(), ...(ssh && { ssh }) };
+    if (dbType === "convex-url")
+      return { type: "convex", name: nm, url: cxUrl.trim(), apiKey: cxKey.trim() };
     if (dbType === "firestore")
       return {
         type: "firestore",
@@ -1484,7 +1499,11 @@
         conn.filePath === ":memory:" &&
         (conn.type === "sqlite" || conn.type === "duckdb")
           ? `${conn.type}-memory`
-          : engineId(conn) || "postgres";
+          // Convex by hand has its own form; through the provider it opens
+          // on the provider's page.
+          : conn.type === "convex" && !conn.provider
+            ? "convex-url"
+            : engineId(conn) || "postgres";
       dbType = t;
       name = conn.name ?? "";
       host = conn.host ?? "127.0.0.1";
@@ -1510,6 +1529,8 @@
       mongoDb = conn.type === "mongodb" ? (conn.database ?? "") : "";
       fsProject = conn.projectId ?? "";
       fsDatabase = conn.type === "firestore" ? (conn.database ?? "") : "";
+      cxUrl = conn.type === "convex" ? (conn.url ?? "") : "";
+      cxKey = conn.type === "convex" ? (conn.apiKey ?? "") : "";
       fsAuth = conn.auth ?? "serviceAccount";
       fsKeyFile = conn.keyFile ?? "";
       fsEmulator = conn.emulatorHost ?? "localhost:8080";
@@ -1609,6 +1630,8 @@
       d1Oauth = false;
       libsqlUrl = "";
       libsqlToken = "";
+      cxUrl = "";
+      cxKey = "";
       couchUrl = "http://localhost:5984";
       ifxVersion = "2";
       ifxOrg = "";
@@ -1832,6 +1855,7 @@
     cassandra:   { database: "", user: "" },
     scylladb:    { database: "", user: "" },
     firestore:   { database: "", user: "" },
+    "convex-url": { database: "", user: "" },
     spanner:     { database: "", user: "" },
     bigquery:    { database: "", user: "" },
     snowflake:   { database: "", user: "" },
@@ -2064,6 +2088,11 @@
       return where && odbcMode === "fields" ? `${activeDriver.label} · ${where}` : activeDriver.label;
     }
     if (dbType === "firestore") return fsProject.trim() || "Firestore";
+    // A cloud deployment by its name (happy-otter-123); a local one keeps its port.
+    if (dbType === "convex-url")
+      return ((h) => (/^(\d+\.){3}\d+(:\d+)?$|^localhost(:\d+)?$/.test(h) ? h : h.split(".")[0]))(
+        cxUrl.trim().replace(/^\w+:\/\//, "").split("/")[0],
+      ) || "Convex";
     if (dbType === "influxdb") return database.trim() ? `${database.trim()} · InfluxDB` : "InfluxDB";
     if (dbType === "neo4j") {
       const at = couchUrl.trim().replace(/^\w+:\/\//, "").split(/[/:]/)[0];
@@ -2279,6 +2308,7 @@
     if (conn.type === "bigquery") return [[conn.projectId, conn.dataset].filter(Boolean).join("."), conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "spanner") return [conn.instanceId && conn.databaseId ? `${conn.instanceId}/${conn.databaseId}` : conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
     if (conn.type === "firestore") return [conn.projectId, conn.auth === "emulator" ? "emulator" : null].filter(Boolean).join(" · ") || "—";
+    if (conn.type === "convex") return String(conn.url ?? "").replace(/^https?:\/\//, "") || "—";
     if (conn.type === "cassandra") return [conn.hosts, conn.keyspace].filter(Boolean).join(" · ") || "—";
     if (conn.type === "dynamodb") return conn.endpoint || [conn.profile, conn.region].filter(Boolean).join(" · ") || "AWS";
     return conn.database || "—";
@@ -2392,6 +2422,7 @@
     if (conn.type === "elasticsearch" || conn.type === "opensearch") return connectElastic(conn);
     if (conn.type === "cassandra") return connectCassandra(conn);
     if (conn.type === "firestore") return connectFirestore(conn);
+    if (conn.type === "convex") return connectConvex(conn);
     if (conn.type === "spanner") return connectSpanner(conn);
     if (conn.type === "bigquery") return connectBigquery(conn);
     if (conn.type === "snowflake") return connectSnowflake(conn);
@@ -2961,6 +2992,7 @@
       }
       else if (p.type === "cassandra") await testCassandra(p);
       else if (p.type === "firestore") await testFirestore(p);
+      else if (p.type === "convex") await testConvex(p);
       else if (p.type === "spanner") await testSpanner(p);
       else if (p.type === "bigquery") await testBigquery(p);
       else if (p.type === "snowflake") await testSnowflake(p);
@@ -3164,6 +3196,8 @@
       apiToken,
       libsqlUrl,
       libsqlToken,
+      cxUrl,
+      cxKey,
       readOnly,
       sshEnabled,
       sshHost,
@@ -3201,6 +3235,7 @@
     if (dbType === "influxdb") return [couchUrl, database].filter(Boolean).join(" · ") || "—";
     if (isCqlForm) return cqlHosts || "—";
     if (dbType === "firestore") return fsProject || "—";
+    if (dbType === "convex-url") return cxUrl.replace(/^https?:\/\//, "") || "—";
     if (dbType === "spanner") return [fsProject, spInstance, spDatabase].filter(Boolean).join("/") || "—";
     if (dbType === "bigquery") return [fsProject, bqDataset].filter(Boolean).join(".") || "—";
     if (dbType === "snowflake") return [sfAccount, database].filter(Boolean).join(" · ") || "—";
@@ -3985,7 +4020,7 @@
                  the rail's far end, and in a 48px row against the panel's 40px,
                  it jumped across and down on every collapse. -->
             <div
-              class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1.5 ps-3 pe-2", isMacChrome && "ps-[92px]")}
+              class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1.5 ps-3 pe-2", isMacChrome && "ps-[78px]")}
               data-tauri-drag-region="deep"
             >
               <button
@@ -4312,7 +4347,7 @@
                lights' centre line instead of floating at an offset. It is also
                the window's drag area here. -->
           <div
-            class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1 px-3", isMacChrome && !railOpen && "ps-[92px]")}
+            class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1 px-3", isMacChrome && !railOpen && "ps-[78px]")}
             data-tauri-drag-region="deep"
           >
             {#if !railOpen}
@@ -5721,6 +5756,19 @@
                             <div>
                               <label for="cn-mongo-db" class={lbl}>Database <span class="normal-case font-normal opacity-50">(optional)</span></label>
                               <Input id="cn-mongo-db" bind:value={mongoDb} placeholder="the string's, else the first one found" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                            </div>
+
+                            <!-- ── Convex (URL + key) ─────────────────────── -->
+                          {:else if dbType === "convex-url"}
+                            <div>
+                              <label for="cn-cx-url" class={lbl}>Deployment URL</label>
+                              <Input id="cn-cx-url" bind:value={cxUrl} placeholder="https://happy-otter-123.convex.cloud" spellcheck="false" autocomplete="off" class={cn(inp, "font-mono")} />
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">The cloud URL, a self-hosted backend, or <span class="font-mono">http://127.0.0.1:3210</span> for <span class="font-mono">npx convex dev --local</span>.</p>
+                            </div>
+                            <div>
+                              <label for="cn-cx-key" class={lbl}>Deploy key or admin key</label>
+                              <PasswordInput id="cn-cx-key" bind:value={cxKey} placeholder="prod:happy-otter-123|ey…" class={inp} />
+                              <p class="mt-1 text-ui-3xs text-muted-foreground">Create a deploy key in the deployment's settings in the Convex dashboard. Self-hosted backends print an admin key with <span class="font-mono">generate_admin_key.sh</span>.</p>
                             </div>
 
                             <!-- ── Firestore ──────────────────────────────── -->

@@ -4,7 +4,7 @@ import { traceIpc, traceRows } from '$lib/perf.js'
 import { recordQuery } from '$lib/stores/query-log.js'
 import { assertWritable } from '$lib/stores/read-only.js'
 import { getLastConnection } from '$lib/stores/connections.js'
-import { isWriteSql } from '$lib/sql-write.js'
+import { isWriteSql, isConvexCall } from '$lib/sql-write.js'
 import { odbcConfigOf } from '$lib/odbc-presets.js'
 import { setOdbcDialect, setSpannerDialect } from '$lib/sql-ident.js'
 
@@ -922,6 +922,47 @@ export async function connectFirestore(config) {
   return connectInv('connect_firestore_db', { config: normalizeFirestore(config) })
 }
 
+// ── Convex ────────────────────────────────────────────────────────────────────
+
+/**
+ * A Convex deployment: its URL and a deploy or admin key (kept under `apiKey`,
+ * a secret field, in the saved connection).
+ * @typedef {{ name?: string, url?: string, apiKey?: string }} ConvexConnConfig
+ */
+
+/** @param {ConvexConnConfig} config */
+function normalizeConvex(config) {
+  return {
+    name: String(config.name || 'Convex'),
+    url: String(config.url || '').trim(),
+    adminKey: String(config.apiKey || '').trim(),
+  }
+}
+
+/** @param {ConvexConnConfig} config */
+export async function testConvex(config) {
+  return inv('test_convex', { config: normalizeConvex(config) })
+}
+
+/** @param {ConvexConnConfig} config */
+export async function connectConvex(config) {
+  return connectInv('connect_convex_db', { config: normalizeConvex(config) })
+}
+
+/** The dashboard's system functions that write (src-tauri/src/db/convex.rs `SYSTEM`). */
+const CONVEX_WRITES = new Set(['addDocument', 'replaceDocument', 'deleteDocuments', 'patchDocumentsFields', 'createTable'])
+
+/**
+ * One Convex system function on the active connection, e.g.
+ * `_system/frontend/paginatedTableDocuments`. Only the ones the browser needs
+ * are allowed through.
+ * @param {string} path @param {Record<string, any>} [args]
+ */
+export async function convexCall(path, args = {}) {
+  if (CONVEX_WRITES.has(path.split('/').pop() ?? '')) assertWritable('change documents')
+  return inv('convex_call', { path, args })
+}
+
 // ── InfluxDB (beta, read-only) ────────────────────────────────────────────────
 
 /**
@@ -1811,7 +1852,7 @@ export async function sqlAccessLevel(sql) {
 }
 
 export async function executeSql(sql, queryId) {
-  if (isWriteSql(sql)) assertWritable('run that statement')
+  if (isWriteSql(sql) || isConvexCall(sql)) assertWritable('run that statement')
   const _t0 = performance.now()
   try {
     const r = await inv('pg_execute_sql', { sql, queryId: queryId ?? null })
@@ -1826,7 +1867,7 @@ export async function executeSql(sql, queryId) {
 /** Execute one or more SQL statements and return each result as a separate entry.
  *  @param {string} sql @param {string} [queryId] cancel handle for this run */
 export async function executeSqlMulti(sql, queryId) {
-  if (isWriteSql(sql)) assertWritable('run that statement')
+  if (isWriteSql(sql) || isConvexCall(sql)) assertWritable('run that statement')
   return await inv('pg_execute_sql_multi', { sql, queryId: queryId ?? null })
 }
 
@@ -1849,7 +1890,7 @@ export async function executeSqlMulti(sql, queryId) {
  * @param {{ keepInStore?: boolean }} [opts]
  */
 export async function executeSqlStream(sql, queryId, onRows, opts = {}) {
-  if (isWriteSql(sql)) assertWritable('run that statement')
+  if (isWriteSql(sql) || isConvexCall(sql)) assertWritable('run that statement')
   /** @type {(v?: unknown) => void} */
   let landed = () => {}
   const allLanded = new Promise((resolve) => { landed = resolve })
@@ -1994,7 +2035,7 @@ export async function explainSql(sql, opts = {}) {
  * @param {string} sql
  */
 export async function executeSqlOnConnection(connectionConfig, sql) {
-  if (isWriteSql(sql)) assertWritable('run that statement')
+  if (isWriteSql(sql) || isConvexCall(sql)) assertWritable('run that statement')
   try {
     return await invoke('execute_sql_on_connection', { config: connectionConfig, sql })
   } catch (err) {
@@ -2277,7 +2318,7 @@ export async function txBegin(sessionId) {
  * @param {string} sql
  */
 export async function txExecute(sessionId, sql) {
-  if (isWriteSql(sql)) assertWritable('run that statement')
+  if (isWriteSql(sql) || isConvexCall(sql)) assertWritable('run that statement')
   const _t0 = performance.now()
   try {
     const r = await inv('tx_execute', { sessionId, sql })

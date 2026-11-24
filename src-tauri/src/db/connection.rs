@@ -437,7 +437,7 @@ pub enum ActiveConnection {
     Clickhouse(ClickhouseConfig),
     Redis(RedisConfig),
     Dynamodb(crate::db::dynamodb::DynamoConfig),
-    /// CouchDB, Cassandra, Firestore: see `db::docdb`.
+    /// CouchDB, Cassandra, Firestore, Convex, ...: see `db::docdb`.
     Doc(crate::db::docdb::DocConn),
     Duckdb(DuckdbHandle),
     Mssql(MssqlHandle),
@@ -1968,6 +1968,12 @@ pub async fn connect_influx(state: Db<'_>, config: crate::db::influx::InfluxConf
 pub async fn connect_neo4j(state: Db<'_>, config: crate::db::neo4j::Neo4jConfig) -> Result<(), String> {
     let config = crate::db::neo4j::connect(&config).await?;
     set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Neo4j(config))))
+}
+
+/// Convex: a deployment URL and its deploy or admin key.
+pub async fn connect_convex(state: Db<'_>, config: crate::db::convex::ConvexConfig) -> Result<(), String> {
+    crate::db::convex::ping(&config).await?;
+    set_conn(&state, Some(ActiveConnection::Doc(crate::db::docdb::DocConn::Convex(config))))
 }
 
 pub async fn connect_firestore(state: Db<'_>, config: crate::db::firestore::FirestoreConfig) -> Result<(), String> {

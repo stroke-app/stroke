@@ -239,3 +239,10 @@ describe("remembered values per scope", () => {
     expect(loadScopedParamValues("a")).toEqual({});
   });
 });
+
+describe('Convex console', () => {
+  it('reads no variables in a function path', () => {
+    expect(extractSqlParams('messages:list {"limit": 5}', { engine: 'convex' })).toEqual([])
+    expect(extractSqlParams('messages:list {"limit": 5}').map((p) => p.name)).toEqual(['list'])
+  })
+})

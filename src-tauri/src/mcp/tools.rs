@@ -249,7 +249,7 @@ fn sample_sql(conn: &ActiveConnection, schema: &str, table: &str, n: usize) -> R
             "mongodb" => format!("db.getCollection(\"{table}\").find({{}}).limit({n})"),
             "couchdb" => format!("{table}.find({{}}, {{\"limit\": {n}}})"),
             "elasticsearch" | "opensearch" => format!("GET {table}/_search\n{{\"size\": {n}}}"),
-            "firestore" => format!("{table}.limit({n})"),
+            "firestore" | "convex" => format!("{table}.limit({n})"),
             "cassandra" => format!("SELECT * FROM {}.{} LIMIT {n}", dq(schema), dq(table)),
             other => return Err(format!("sample_rows is not available for {other}. Use execute_sql.")),
         },
@@ -1148,6 +1148,10 @@ async fn describe_table(
                 DocConn::Influx(c) => {
                     let info = crate::db::influx::describe(c, table).await?;
                     Ok(json!({"table":table,"engine":"influxdb","tags":info["tags"],"fields":info["fields"],"note":"Read-only. Tags are indexed strings, fields hold the values, `time` is the timestamp. Always bound time and add LIMIT."}).to_string())
+                }
+                DocConn::Convex(c) => {
+                    let count = crate::db::convex::table_size(c, table).await.unwrap_or(-1);
+                    Ok(json!({"table":table,"engine":"convex","document_count":count,"note":"Convex tables are documents with _id and _creationTime. Read them with `table.limit(20)` or `table.get(\"<id>\")`; run a deployed function with `module:function {\"arg\": 1}`. Function calls may write."}).to_string())
                 }
                 // Typed columns where the engine keeps them (CQL, index mappings).
                 DocConn::Cassandra(_) | DocConn::Elastic(_) => {

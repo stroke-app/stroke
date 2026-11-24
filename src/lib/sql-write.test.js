@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isWriteFor, isWriteSql, sqlRunEffects, stripSqlComments } from './sql-write.js'
+import { isConvexCall, isWriteFor, isWriteSql, sqlRunEffects, stripSqlComments } from './sql-write.js'
 
 describe('isWriteSql', () => {
   it('allows plain reads', () => {
@@ -236,5 +236,22 @@ describe('isWriteFor neo4j', () => {
     expect(w("MERGE (a:A {id: 1}) ON CREATE SET a.t = timestamp()")).toBe(true)
     expect(w("CALL apoc.create.node(['X'], {})")).toBe(true)
     expect(w('DROP INDEX person_name')).toBe(true)
+  })
+})
+
+describe('Convex console calls', () => {
+  it('counts a function call as a write and a table read as a read', () => {
+    expect(isConvexCall('messages:send {"body": "x"}')).toBe(true)
+    expect(isConvexCall('admin/users:byEmail({"email": "a"})')).toBe(true)
+    expect(isConvexCall('messages:count')).toBe(true)
+    expect(isWriteFor('messages:list {}', 'convex')).toBe(true)
+    expect(isWriteFor('users.limit(5)', 'convex')).toBe(false)
+    expect(isWriteFor('users.get("j57")', 'convex')).toBe(false)
+  })
+
+  it('never matches SQL', () => {
+    for (const sql of ['SELECT 1', "SELECT 'a:b'", 'SELECT x::int FROM t', 'label: SELECT 1', 'GET logs/_search', 'SET a:b 1']) {
+      expect(isConvexCall(sql)).toBe(false)
+    }
   })
 })

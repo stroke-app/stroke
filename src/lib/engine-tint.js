@@ -37,6 +37,8 @@ export const ENGINE_TINT = {
   cassandra: "text-sky-600/80",
   scylladb: "text-cyan-500/80",
   firestore: "text-amber-500/80",
+  convex: "text-orange-500/80",
+  "convex-url": "text-orange-500/80",
   neo4j: "text-blue-500/80",
   influxdb: "text-violet-500/80",
   spanner: "text-blue-500/80",

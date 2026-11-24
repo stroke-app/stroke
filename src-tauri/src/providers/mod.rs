@@ -20,6 +20,7 @@
  * dashboard link instead.
  */
 
+mod convex;
 mod neon;
 mod planetscale;
 mod posthog;
@@ -79,6 +80,7 @@ pub enum Provider {
     PostHog,
     Xata,
     SingleStore,
+    Convex,
 }
 
 /// How a provider signs the user in.
@@ -109,14 +111,15 @@ impl Provider {
             "posthog" => Ok(Self::PostHog),
             "xata" => Ok(Self::Xata),
             "singlestore" => Ok(Self::SingleStore),
+            "convex" => Ok(Self::Convex),
             other => Err(format!("Unknown provider: {other}")),
         }
     }
 
-    const ALL: [Provider; 12] = [
+    const ALL: [Provider; 13] = [
         Self::Neon, Self::Supabase, Self::PlanetScale, Self::Prisma, Self::TiDB,
         Self::Turso, Self::Railway, Self::Nile, Self::Upstash, Self::PostHog,
-        Self::Xata, Self::SingleStore,
+        Self::Xata, Self::SingleStore, Self::Convex,
     ];
 
     /// The API host each listing and connect talks to, for `provider_warm`.
@@ -134,6 +137,7 @@ impl Provider {
             Self::Upstash => "https://api.upstash.com",
             Self::Xata => "https://api.xata.tech",
             Self::SingleStore => "https://api.singlestore.com",
+            Self::Convex => "https://api.convex.dev",
             Self::PostHog => return None,
         })
     }
@@ -153,6 +157,7 @@ impl Provider {
             Self::PostHog => "posthog",
             Self::Xata => "xata",
             Self::SingleStore => "singlestore",
+            Self::Convex => "convex",
         }
     }
 
@@ -171,6 +176,7 @@ impl Provider {
             Self::PostHog => "PostHog",
             Self::Xata => "Xata",
             Self::SingleStore => "SingleStore",
+            Self::Convex => "Convex",
         }
     }
 
@@ -196,6 +202,7 @@ impl Provider {
             Self::PostHog => posthog::OAUTH,
             Self::Xata => xata::OAUTH,
             Self::SingleStore => singlestore::OAUTH,
+            Self::Convex => convex::OAUTH,
         }
     }
 
@@ -263,6 +270,7 @@ impl Provider {
             Self::PostHog => posthog::list_databases(token).await,
             Self::Xata => xata::list_databases(token).await,
             Self::SingleStore => singlestore::list_databases(token).await,
+            Self::Convex => convex::list_databases(token).await,
         }
     }
 
@@ -284,6 +292,7 @@ impl Provider {
             Self::PostHog => posthog::build_connection(token, db_ref).await,
             Self::Xata => xata::build_connection(token, db_ref).await,
             Self::SingleStore => singlestore::build_connection(token, db_ref).await,
+            Self::Convex => convex::build_connection(token, db_ref).await,
         }
     }
 
@@ -298,7 +307,7 @@ impl Provider {
             Self::Turso => turso::create_options(token, scope).await,
             Self::Nile => nile::create_options(token, scope).await,
             Self::Upstash => Ok(upstash::create_options()),
-            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore => Err(self.create_unsupported()),
+            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore | Self::Convex => Err(self.create_unsupported()),
         }
     }
 
@@ -311,7 +320,7 @@ impl Provider {
             Self::Turso => turso::create_database(token, req).await,
             Self::Nile => nile::create_database(token, req).await,
             Self::Upstash => upstash::create_database(token, req).await,
-            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore => Err(self.create_unsupported()),
+            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore | Self::Convex => Err(self.create_unsupported()),
         }
     }
 
@@ -325,7 +334,7 @@ impl Provider {
             Self::Upstash => upstash::database_status(token, db_ref).await,
             // Turso databases are usable the moment the create call returns.
             Self::Turso => Ok(DatabaseStatus::ready("ready")),
-            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore => Err(self.create_unsupported()),
+            Self::PlanetScale | Self::Railway | Self::PostHog | Self::Xata | Self::SingleStore | Self::Convex => Err(self.create_unsupported()),
         }
     }
 
@@ -344,6 +353,7 @@ impl Provider {
             Self::PostHog => "PostHog projects are created in PostHog.".into(),
             Self::Xata => "Create Xata projects and branches in the Xata console, then refresh.".into(),
             Self::SingleStore => "Create SingleStore workspaces in the SingleStore portal, then refresh.".into(),
+            Self::Convex => "Create Convex projects with `npx convex dev` or in the Convex dashboard, then refresh.".into(),
             _ => format!("{} databases can't be created from Stroke yet.", self.label()),
         }
     }

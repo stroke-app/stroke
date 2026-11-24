@@ -20,6 +20,7 @@ const HOSTS = [
   [/\.upstash\.io$/i, 'upstash'],
   [/\.xata\.tech$/i, 'xata'],
   [/\.svc\.singlestore\.com$/i, 'singlestore'],
+  [/\.convex\.(cloud|site)$/i, 'convex'],
 ]
 
 /** Older saved connections used these ids before the cards settled on theirs. */
@@ -76,6 +77,7 @@ const ENGINE_SHORT = {
   cassandra: 'Cassandra',
   scylladb: 'ScyllaDB',
   firestore: 'Firestore',
+  convex: 'Convex',
   neo4j: 'Neo4j',
   influxdb: 'InfluxDB',
   spanner: 'Spanner',

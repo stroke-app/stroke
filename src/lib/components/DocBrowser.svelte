@@ -367,7 +367,7 @@ GET products/_search
   // (MongoDB), otherwise the document is saved whole with the cell changed.
   const inlineEdit = $derived(!readOnly && !!info)
   /** Extended JSON wrapper per grid type, so an optimistic value displays right. */
-  const EXT_WRAP = /** @type {Record<string, string>} */ ({ objectId: '$oid', date: '$date', long: '$numberLong', decimal: '$numberDecimal', uuid: '$uuid' })
+  const EXT_WRAP = /** @type {Record<string, string>} */ ({ objectId: '$oid', date: '$date', long: '$numberLong', decimal: '$numberDecimal', uuid: '$uuid', int64: '$integer' })
 
   /** @param {number | null} r @param {number} c @returns {string | null} */
   function cellEditBlock(r, c) {
@@ -396,11 +396,11 @@ GET products/_search
     const s = raw.trim()
     if (t === 'string') return { ok: true, value: s === 'null' ? null : raw }
     if (s === '' || s === 'null') return { ok: true, value: null }
-    if (t === 'int' || t === 'long') {
+    if (t === 'int' || t === 'long' || t === 'int64') {
       if (!/^-?\d+$/.test(s)) return { ok: false, message: `"${s}" isn't a whole number` }
       const n = Number(s)
       if (Number.isSafeInteger(n)) return { ok: true, value: n }
-      return t === 'long' ? { ok: true, value: s } : { ok: false, message: 'Too large for an int' }
+      return t === 'long' || t === 'int64' ? { ok: true, value: s } : { ok: false, message: 'Too large for an int' }
     }
     if (t === 'double' || t === 'decimal') {
       if (!/^-?\d+(\.\d+)?([eE][+-]?\d+)?$/.test(s)) return { ok: false, message: `"${s}" isn't a number` }
