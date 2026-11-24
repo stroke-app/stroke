@@ -1591,7 +1591,7 @@
         <p class="text-ui-sm font-medium text-foreground">{$tx('set.Font smoothing', 'Font smoothing')}</p>
         <p class="mt-0.5 text-ui-xs leading-relaxed text-muted-foreground">{$tx(detectOs() === 'macos' ? 'set.smoothing.desc.mac' : 'set.smoothing.desc', smoothingDesc)}</p>
       </div>
-      {@render segmented('Font smoothing', [{ value: 'grayscale', label: $tx('set.smoothing.grayscale', 'Grayscale') }, { value: 'system', label: $tx('set.smoothing.system', 'System') }], fontsCfg.smoothing, (v) => setFonts({ smoothing: v }))}
+      {@render segmented('Font smoothing', [{ value: 'system', label: $tx('set.smoothing.system', 'System') }, { value: 'grayscale', label: $tx('set.smoothing.grayscale', 'Grayscale') }], fontsCfg.smoothing, (v) => setFonts({ smoothing: v }))}
     </div>
   {/if}
 

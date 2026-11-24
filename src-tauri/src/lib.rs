@@ -42,6 +42,7 @@ mod sync;
 mod updates;
 mod quit;
 mod web_search;
+mod window_state;
 
 use db::{ActiveConnection, DbState, TunnelState};
 use mcp::McpState;
@@ -437,29 +438,23 @@ pub fn run() {
     // Wayland or X11, before GTK starts and before any thread (display_backend.rs).
     display_backend::choose();
 
-    // Linux WebKitGTK rendering fix - set before any threads spawn.
+    // Linux WebKitGTK GPU compositing - set before any threads spawn.
     #[cfg(target_os = "linux")]
     // SAFETY: called before any threads are spawned.
     unsafe {
-        // WEBKIT_DISABLE_DMABUF_RENDERER: WebKitGTK's DMA-buf renderer composites
-        // text as GPU textures that get bilinearly sampled at fractional pixel
-        // offsets during scroll/zoom, producing the characteristic blur on Linux.
-        // Disabling it falls back to a Cairo/FreeType software path that stays crisp.
-        // This is the only verified safe WebKitGTK rendering env var - others like
-        // WEBKIT_USE_LEGACY_TEXT_RENDERER are not real and can trigger SIGTRAP crashes.
-        //
-        // The cost is per-frame CPU. rAF still rides the GdkFrameClock, so the
-        // cadence the compositor offers is the cadence WebKit asks for - but
-        // rasterising in software is expensive enough that a busy frame can miss
-        // it, and the miss gets more likely the higher the panel's rate. Default
-        // to crisp, and let a high-refresh setup buy frames back with
-        // `WEBKIT_DISABLE_DMABUF_RENDERER=0`, which puts the webview on the GPU
-        // compositor. The "0" is unset rather than passed through, because WebKit
-        // tests some of these vars for presence and not for value.
+        // Keep hardware DMA-buf compositing enabled on healthy Linux GPU setups
+        // so scrolling, resizing and dialogs stay fluid (our type scale now
+        // lands on whole pixels, avoiding fractional texture resampling). Only
+        // fall back to Cairo software rendering if a previous launch failed to
+        // draw (display_backend::using_fallback()) or the user explicitly sets
+        // WEBKIT_DISABLE_DMABUF_RENDERER=1.
         match std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").as_deref() {
             Ok("0") | Ok("") => std::env::remove_var("WEBKIT_DISABLE_DMABUF_RENDERER"),
             Ok(_) => {}
-            Err(_) => std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1"),
+            Err(_) if display_backend::using_fallback() => {
+                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+            }
+            Err(_) => {}
         }
         // GDK_SCALE is intentionally NOT forced here - overriding it breaks HiDPI
         // setups (2× displays) and can cause rendering panics on Wayland compositors.
@@ -536,7 +531,8 @@ pub fn run() {
             // paths that need them without a State/AppHandle argument: the D1
             // driver refreshing an expired Cloudflare token mid-session.
             cloudflare::set_app_handle(app.handle().clone());
-            if let Ok(dir) = app.path().app_data_dir() {
+            let app_data_dir = app.path().app_data_dir().ok();
+            if let Some(dir) = app_data_dir.clone() {
                 crash::set_dir(dir.clone());
                 db::connection::set_data_dir(dir);
             }
@@ -552,15 +548,10 @@ pub fn run() {
             .inner_size(1280.0, 800.0)
             .min_inner_size(960.0, 600.0)
             .resizable(true)
-            .maximized(true)
             // Hidden until the page has its first finished screen: revealApp()
-            // in src/lib/app-reveal.js shows it. A window visible from build()
-            // put every pre-paint layer on screen in turn - the host surface,
-            // the webview backdrop, the maximize resize - and on Windows that
-            // read as the window flickering between two blacks for half a second
-            // before the app appeared. tao keeps MAXIMIZED across the hide, and
-            // show() issues SW_SHOW then SW_MAXIMIZE, so the OS still records a
-            // real maximized state (minimize -> restore keeps working).
+            // in src/lib/app-reveal.js shows it. Window size, position, and
+            // maximized state are restored from window-state.json right after
+            // build() rather than forcing maximized on every launch.
             .visible(false)
             // Never let the default white surface show. The real theme is only
             // known to the frontend (localStorage), so start on the dark base -
@@ -572,8 +563,8 @@ pub fn run() {
             // OS-drawn traffic lights via the Overlay style - they just float over
             // our content instead of sitting in a native title bar strip, so
             // clicking/hovering/dragging them stays pixel-native with no code on
-            // our side. Windows/Linux get no decorations at all; TitleBar.svelte
-            // draws its own drag region and minimize/maximize/close buttons.
+            // our side. Windows/Linux use frameless windows with native shadows
+            // enabled so DWM shadows & rounded corners stay intact on Windows 11.
             #[cfg(target_os = "macos")]
             {
                 window_builder = window_builder
@@ -593,7 +584,7 @@ pub fn run() {
             }
             #[cfg(not(target_os = "macos"))]
             {
-                window_builder = window_builder.decorations(false);
+                window_builder = window_builder.decorations(false).shadow(true);
             }
 
             let window = window_builder
@@ -613,6 +604,11 @@ pub fn run() {
             .zoom_hotkeys_enabled(false)
             .on_navigation(navigation_allowed)
             .build()?;
+
+            window_state::restore(&window, app_data_dir.as_deref());
+            if let Some(dir) = app_data_dir {
+                window_state::attach(&window, dir);
+            }
 
             // Match the surface to the OS appearance before the first frame. Both
             // calls land inside `setup`, i.e. before the event loop starts, so
@@ -772,12 +768,12 @@ pub fn run() {
             commands::cassandra_tables,
             commands::cassandra_describe,
             commands::cassandra_page,
-            commands::test_convex,
-            commands::connect_convex_db,
             commands::cassandra_save,
             commands::cassandra_delete,
             commands::test_firestore,
             commands::connect_firestore_db,
+            commands::test_convex,
+            commands::connect_convex_db,
             commands::test_neo4j,
             commands::connect_neo4j_db,
             commands::neo4j_labels,
@@ -797,11 +793,11 @@ pub fn run() {
             commands::test_odbc,
             commands::connect_odbc_db,
             commands::test_snowflake,
-            commands::convex_call,
             commands::connect_snowflake_db,
             commands::odbc_drivers,
             commands::odbc_data_sources,
             commands::firestore_request,
+            commands::convex_call,
             commands::test_mongo,
             commands::connect_mongo_db,
             commands::doc_use_schema,

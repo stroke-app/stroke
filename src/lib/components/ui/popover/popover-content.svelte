@@ -18,7 +18,7 @@
 		{sideOffset}
 		{align}
 		class={cn(
-			" data-closed:animate-out data-closed:fade-out-0 [transform-origin:var(--bits-floating-transform-origin)] ease-out duration-100 z-50 rounded-[10px] border border-border/60 bg-popover p-0 elevate-2-rim outline-none",
+			"data-closed:animate-out data-closed:fade-out-0 ease-out duration-75 z-50 rounded-lg border border-border/70 bg-popover p-0 elevate-2-rim outline-none",
 			className
 		)}
 		{...restProps}

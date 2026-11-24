@@ -64,7 +64,7 @@
         if (parsed?.zoom != null) zoom = Number(parsed.zoom)
         else if (parsed?.fontSize != null) zoom = Number(parsed.fontSize) / 14
         if (Number.isFinite(zoom) && zoom > 0) {
-          const fontPx = Math.round(13 * zoom)
+          const fontPx = Math.round(14 * zoom)
           const root = document.documentElement
           root.style.setProperty('--app-zoom', String(zoom))
           root.style.setProperty('--app-font-size', fontPx + 'px')

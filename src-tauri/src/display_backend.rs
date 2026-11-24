@@ -100,6 +100,12 @@ mod imp {
         });
     }
 
+    /// True when an earlier GPU/Wayland launch failed to draw and we fell back
+    /// to the safe X11 path.
+    pub fn using_fallback() -> bool {
+        state_dir().map(|d| d.join(FALLBACK).exists()).unwrap_or(false)
+    }
+
     /// The page drew: this backend works here.
     pub fn drawn() {
         if let Some(dir) = state_dir() {
@@ -109,7 +115,7 @@ mod imp {
 }
 
 #[cfg(target_os = "linux")]
-pub use imp::{choose, drawn, watch};
+pub use imp::{choose, drawn, using_fallback, watch};
 
 #[cfg(not(target_os = "linux"))]
 pub fn choose() {}
@@ -119,3 +125,8 @@ pub fn drawn() {}
 
 #[cfg(not(target_os = "linux"))]
 pub fn watch(_app: tauri::AppHandle) {}
+
+#[cfg(not(target_os = "linux"))]
+pub fn using_fallback() -> bool {
+    false
+}

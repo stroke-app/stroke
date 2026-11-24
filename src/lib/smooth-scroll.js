@@ -33,6 +33,27 @@ const LINE_PX = 16
 const MAX_PENDING_SCREENS = 3
 
 /**
+ * True when a wheel event looks like a smooth trackpad / Precision Touchpad
+ * gesture rather than a discrete notched mouse wheel. Trackpads already apply
+ * OS momentum and inertia, so double-easing them in JS feels floaty/laggy.
+ * @param {WheelEvent} e
+ */
+export function isTrackpadWheel(e) {
+  // Line-mode (1) and page-mode (2) come from notched wheels / scroll wheels.
+  if (e.deltaMode !== 0) return false
+  const ax = Math.abs(e.deltaX)
+  const ay = Math.abs(e.deltaY)
+  // Diagonal two-axis movement is a trackpad gesture.
+  if (ax > 0 && ay > 0) return true
+  const primary = ay || ax
+  if (primary === 0) return false
+  // Fractional pixel deltas or small (<40px) pixel deltas come from high-res
+  // trackpads / precision touchpads; classic mouse notches are 48/53/100/120px.
+  if (!Number.isInteger(primary) || primary < 40) return true
+  return false
+}
+
+/**
  * Wheel delta in CSS pixels. Wheel events arrive in pixels, lines or pages
  * depending on the browser and device; a scroller that assumes pixels moves by a
  * few pixels per notch on the ones that don't.
@@ -189,6 +210,13 @@ export function smoothScroll(node, params = {}) {
   function onWheel(e) {
     // Ctrl+wheel is a zoom gesture (app zoom / trackpad pinch), never a scroll.
     if (e.ctrlKey || e.metaKey) return
+    // Trackpads / Precision Touchpads already have native OS momentum; never
+    // double-ease them in JS.
+    if (isTrackpadWheel(e)) {
+      scroller.stop()
+      scroller.sync()
+      return
+    }
     // Let a nested scroller that can actually move have the event.
     const inner = e.target instanceof Element ? e.target.closest('[data-native-scroll]') : null
     if (inner && inner !== node) return

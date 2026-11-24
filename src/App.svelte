@@ -19,13 +19,14 @@
   import GlobalTooltip from './lib/components/GlobalTooltip.svelte'
   import PerfOverlay from './lib/components/PerfOverlay.svelte'
   import { loadSettings, applySettings, installZoomShortcuts } from '$lib/stores/settings.js'
-  import { installPlatformClass } from '$lib/platform.js'
+  import { installPlatformClass, installWindowStateListeners } from '$lib/platform.js'
   import { installClipboardBridge } from '$lib/clipboard.js'
   import { installShiftWheel } from '$lib/shift-wheel.js'
   import { installSlashFocus } from '$lib/slash-focus.js'
 
-  onMount(async () => {
+  onMount(() => {
     installPlatformClass()
+    const unwatchWindow = installWindowStateListeners()
     applySettings(loadSettings())
     installZoomShortcuts()
     // Shift + wheel scrolls sideways in every scroll area, whatever the webview does.
@@ -39,14 +40,16 @@
     // Dev-only console helpers (window.__TAURI__ isn't exposed without
     // withGlobalTauri, which we keep off in production).
     if (import.meta.env.DEV) {
-      const { invoke } = await import('@tauri-apps/api/core')
-      const { refreshLicenseStatus } = await import('$lib/stores/license.js')
-      // @ts-expect-error - dev-only debug surface
-      window.__stroke = {
-        status: () => invoke('check_license_status'),
-        refresh: () => refreshLicenseStatus(),
-      }
-      console.info('[stroke] dev helpers → window.__stroke.status() / .refresh()')
+      void (async () => {
+        const { invoke } = await import('@tauri-apps/api/core')
+        const { refreshLicenseStatus } = await import('$lib/stores/license.js')
+        // @ts-expect-error - dev-only debug surface
+        window.__stroke = {
+          status: () => invoke('check_license_status'),
+          refresh: () => refreshLicenseStatus(),
+        }
+        console.info('[stroke] dev helpers → window.__stroke.status() / .refresh()')
+      })()
     }
 
     // Suppress Tauri's internal "Couldn't find callback id" warning.
@@ -84,6 +87,7 @@
 
     // No fade-in here: AppLockGate has not rendered anything yet. The first
     // complete screen reveals the page - see $lib/app-reveal.js.
+    return () => unwatchWindow()
   })
 </script>
 
@@ -92,7 +96,7 @@
 <ZoomIndicator />
 <Toaster
   position={$toastPosition}
-  offset={{ top: '52px', bottom: '40px', left: '12px', right: '12px' }}
+  offset={{ top: '42px', bottom: '32px', left: '12px', right: '12px' }}
   closeButton
 />
 <AppErrorBoundary>

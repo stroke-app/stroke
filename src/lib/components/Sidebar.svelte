@@ -1923,12 +1923,9 @@
      list wrote its own bare "Loading…" line, so the Databases tab looked like it
      had failed and printed a label rather than like it was working. -->
 {#snippet listLoading(/** @type {string} */ label)}
-  <div class="flex items-center justify-center py-6" role="status" aria-label={label}>
-    <span class="inline-flex gap-1.5" aria-hidden="true">
-      <span class="size-1.5 animate-bounce rounded-full bg-muted-foreground/50" style="animation-delay: 0ms"></span>
-      <span class="size-1.5 animate-bounce rounded-full bg-muted-foreground/50" style="animation-delay: 150ms"></span>
-      <span class="size-1.5 animate-bounce rounded-full bg-muted-foreground/50" style="animation-delay: 300ms"></span>
-    </span>
+  <div class="loading-reveal flex items-center justify-center gap-1.5 py-6 text-muted-foreground" role="status" aria-label={label}>
+    <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />
+    <span class="text-ui-2xs">{label}</span>
   </div>
 {/snippet}
 
@@ -1961,7 +1958,10 @@
        the section headers below name their own list and carry their own count,
        which needs no query at all. -->
   <aside
-    class="studio-chrome flex h-full min-w-0 flex-1 flex-col bg-sidebar text-sidebar-foreground"
+    class={cn(
+      "studio-chrome flex h-full min-w-0 flex-1 flex-col bg-sidebar text-sidebar-foreground",
+      side === "right" ? "border-l border-sidebar-border/70" : "border-r border-sidebar-border/70",
+    )}
     data-studio-chrome
     data-kbd-nav={kbdNav ? "" : undefined}
     onpointerdown={() => (kbdNav = false)}
@@ -1970,7 +1970,7 @@
     <!-- Redis: no tables. The same full-height column, holding the keyspace's
          own navigation (views, databases, namespaces). -->
     <div class="flex min-h-0 flex-1 flex-col">
-      <div class="flex h-[52px] shrink-0 items-center gap-2 pr-3 {isMacChrome ? 'pl-[92px]' : 'pl-4'}" data-tauri-drag-region>
+      <div class="flex h-(--app-titlebar-h) shrink-0 items-center gap-2 border-b border-sidebar-border/50 pr-3 {isMacChrome ? 'pl-[78px]' : 'pl-3'}" data-tauri-drag-region>
         <span class="min-w-0 truncate text-ui-sm font-medium text-foreground" data-tauri-drag-region>{connection?.type === "valkey" ? "Valkey" : "Redis"}</span>
       </div>
       <RedisSidebarNav />
@@ -1992,7 +1992,7 @@
              do with. `ml-auto` is the gap - a fixed one would drift as the sidebar
              is dragged wider. The tablist stays its own element: a tablist holding
              three non-tab buttons is a lie to every screen reader. -->
-        <div class="flex h-[52px] shrink-0 items-center gap-1 pr-3 {isMacChrome ? 'pl-[92px]' : 'pl-3'}" data-tauri-drag-region>
+        <div class="flex h-(--app-titlebar-h) shrink-0 items-center gap-1 border-b border-sidebar-border/50 pr-2 {isMacChrome ? 'pl-[78px]' : 'pl-2'}" data-tauri-drag-region>
           <div
             role="tablist"
             aria-label="Sidebar sections"
@@ -3359,21 +3359,18 @@
       {#await import('./ExtensionsSidebarPanel.svelte') then { default: ExtensionsSidebarPanel }}<ExtensionsSidebarPanel onopendetail={onopenextensiondetail} />{/await}
     {/if}
 
-    <!-- Footer, as in T3: app-wide controls as plain icons, one round action. -->
-    <!-- Bottom-aligned with 4px under it, like the status bar beside it (h-9
-         with pb-1), so the icons here and its items share one centre line and
-         neither sits on the window edge. -->
-    <div class="flex h-12 shrink-0 items-end gap-0.5 px-2.5 pb-1">
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-3.5 shrink-0" /></button>
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-3.5 shrink-0" /></button>
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-3.5 shrink-0" /></button>
-      {#if onopenlabs}<button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Labs: features still being shaped" aria-label="Labs" onclick={onopenlabs}><Icon name="flask-conical" class="size-3.5 shrink-0" /></button>{/if}
+    <!-- Footer: crisp 28px bar aligned with StatusBar beside it. -->
+    <div class="flex h-7 shrink-0 items-center gap-0.5 border-t border-sidebar-border/50 px-2">
+      <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-3.5 shrink-0" /></button>
+      {#if onopenlabs}<button type="button" class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Labs: features still being shaped" aria-label="Labs" onclick={onopenlabs}><Icon name="flask-conical" class="size-3.5 shrink-0" /></button>{/if}
       {#if updateState}
         <!-- T3's update pill: there when there is something to do, gone when
              there isn't. Ready means downloaded; Restart installs it. -->
         <button
           type="button"
-          class="ml-auto mb-0.5 inline-flex h-6 items-center gap-1 rounded-full bg-primary px-2.5 text-ui-2xs font-medium text-primary-foreground transition-[background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-primary/90 active:scale-[0.97] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+          class="ml-auto inline-flex h-5 items-center gap-1 rounded-full bg-primary px-2 text-ui-2xs font-medium text-primary-foreground hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           title={updateState === 'ready' ? 'The update is downloaded. Restart to install it.' : 'A new version of Stroke is available'}
           onclick={oncheckupdates}
         >
@@ -3381,7 +3378,7 @@
           {updateState === 'ready' ? 'Restart' : 'Update'}
         </button>
       {:else}
-        <button type="button" class="ml-auto inline-flex size-7 items-center justify-center rounded-full text-muted-foreground outline-none transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none" title={checkingUpdate ? 'Checking for updates…' : 'Check for updates'} aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} aria-busy={checkingUpdate} disabled={checkingUpdate} onclick={oncheckupdates}><Icon name="download" class={checkingUpdate ? 'size-3.5 shrink-0 animate-pulse' : 'size-3.5 shrink-0'} /></button>
+        <button type="button" class="ml-auto inline-flex size-6 items-center justify-center rounded-md text-muted-foreground outline-none hover:bg-sidebar-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none" title={checkingUpdate ? 'Checking for updates…' : 'Check for updates'} aria-label={checkingUpdate ? 'Checking for updates' : 'Check for updates'} aria-busy={checkingUpdate} disabled={checkingUpdate} onclick={oncheckupdates}><Icon name="download" class={checkingUpdate ? 'size-3.5 shrink-0 animate-pulse' : 'size-3.5 shrink-0'} /></button>
       {/if}
     </div>
   </aside>

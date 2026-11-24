@@ -91,7 +91,7 @@
 <div class={cn('fixed inset-0 z-[9999] flex flex-col bg-background transition-opacity duration-200 ease-out', leaving && 'opacity-0')}>
   <!-- Bare title bar: just the drag region, the mark, and window controls -->
   <div
-    class="flex shrink-0 items-center border-b border-border/40 select-none {isMac ? 'h-[52px] px-2.5' : 'h-10 pl-2.5'}"
+    class="flex h-(--app-titlebar-h) shrink-0 items-center border-b border-border/50 select-none {isMac ? 'px-2.5' : 'pl-2.5'}"
     data-tauri-drag-region
     role="toolbar"
     aria-label="Window title bar"
@@ -99,7 +99,7 @@
     ondblclick={onDragRegionDblClick}
   >
     {#if isMac}
-      <div class="w-[92px] shrink-0"></div>
+      <div class="w-[78px] shrink-0"></div>
     {/if}
     <Logo class="size-4 shrink-0" />
     <div class="min-w-0 flex-1" data-tauri-drag-region></div>

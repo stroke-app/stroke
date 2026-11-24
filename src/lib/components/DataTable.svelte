@@ -10,7 +10,7 @@
   // with the rest of the UI (applySettings mirrors the app zoom into zoomState).
   import { increaseZoom, decreaseZoom, resetZoom, appPreviewDml, appTableStyle, TABLE_STYLES, normalizeTableStyle, appVimMode, appTableAlign, appNativeScroll, appRowSpacing, appZebraRows, rowSpacingHeight, appNumberGrouping, appHighlightActiveRow, appGridFontSize, appImagePreview, appOpenUrlsOnClick, appRowNumbers, appDisplayTimezone } from '$lib/stores/settings.js'
   import { instantIn, resolveZone } from '$lib/timezone.js'
-  import { createSmoothScroll, wheelPixels } from '$lib/smooth-scroll.js'
+  import { createSmoothScroll, isTrackpadWheel, wheelPixels } from '$lib/smooth-scroll.js'
   import { isJsonColumnType } from '$lib/cell-expand.js'
   import { readClipboardText } from '$lib/clipboard.js'
   import { setVimSubMode } from '$lib/vim/vim.js'
@@ -8311,8 +8311,14 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         return
       }
       if (!scroller) return
-      // Plain wheel, eased: animate the offset ourselves. The rAF redraw loop
-      // still runs off the resulting `scroll` events, so nothing else changes.
+      // Plain wheel, eased: animate notched mouse wheels only. Trackpads and
+      // Precision Touchpads already carry native OS inertia and pass straight
+      // through to the compositor.
+      if (isTrackpadWheel(e)) {
+        scroller.stop()
+        scroller.sync()
+        return
+      }
       if (inner && inner !== el) return
       const { dx, dy } = wheelPixels(e, el.clientHeight)
       if (!dy && !dx) return

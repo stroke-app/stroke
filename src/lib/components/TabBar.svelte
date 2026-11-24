@@ -197,7 +197,7 @@
 </script>
 
 <header
-  class="studio-chrome flex h-10 shrink-0 items-center bg-panel px-2"
+  class="studio-chrome flex h-9 shrink-0 items-center border-b border-border/50 bg-panel px-2"
   data-studio-chrome
   data-tauri-drag-region
   role="tablist"
@@ -251,7 +251,7 @@
             // floor keeps a short title from being squeezed to "New t…".
             // A pill, not a folder tab: the active one is a soft lighter fill,
             // the rest are just text until you hover them.
-            'group/tab relative flex h-7 min-w-24 max-w-50 shrink-0 items-stretch rounded-md transition-colors duration-100',
+            'group/tab relative flex h-6 min-w-24 max-w-50 shrink-0 items-stretch rounded-md',
             active
               ? 'bg-sidebar-accent shadow-[inset_0_0_0_1px_var(--color-border)]'
               : 'hover:bg-sidebar-accent/50',

@@ -32,6 +32,7 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-start-dragging",
     "core:window:allow-is-maximized",
+    "core:window:allow-is-focused",
     "dialog:default",
     "dialog:allow-save",
     "autostart:default"

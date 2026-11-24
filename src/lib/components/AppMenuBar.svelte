@@ -27,32 +27,73 @@
   import { COMMAND_BY_ID } from "$lib/shortcuts.js";
 
   let { connected = false, actions = /** @type {Record<string, () => void>} */ ({}) } = $props();
+  let openMenu = $state('');
+  let altHeld = $state(false);
+
+  /** Map Alt+<letter> to the menu value, matching Windows/Linux native menu bars. */
+  const MNEMONICS = /** @type {Record<string, string>} */ ({
+    f: 'file',
+    e: 'edit',
+    v: 'view',
+    t: 'tools',
+    h: 'help',
+  });
+
+  /** @param {KeyboardEvent} e */
+  function onWindowKeydown(e) {
+    if (e.key === 'Alt' && !e.ctrlKey && !e.metaKey && !e.shiftKey) {
+      altHeld = true;
+      return;
+    }
+    if (e.altKey && !e.ctrlKey && !e.metaKey) {
+      const target = /** @type {HTMLElement | null} */ (e.target);
+      if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable || target.closest('.cm-editor'))) {
+        return;
+      }
+      const id = MNEMONICS[e.key.toLowerCase()];
+      if (id) {
+        e.preventDefault();
+        openMenu = openMenu === id ? '' : id;
+      }
+    }
+  }
+  /** @param {KeyboardEvent} e */
+  function onWindowKeyup(e) {
+    if (e.key === 'Alt') altHeld = false;
+  }
+  function onWindowBlur() {
+    altHeld = false;
+  }
+
   /** @param {string} name */
   function run(name) {
     actions[name]?.();
   }
 
-  // h-6 on the control scale, not an off-scale 22px; normal weight so the five
-  // words read as a quiet menu row, not five buttons competing with the tabs.
+  // h-6 on the control scale; normal weight so the five words read as a quiet
+  // native menu row, not five buttons competing with the tabs.
   const triggerCls =
-    "inline-flex h-6 max-h-[calc(28px*var(--app-scale))] shrink-0 items-center rounded-md px-2.5 text-ui-2xs text-muted-foreground outline-none transition-colors " +
+    "inline-flex h-6 max-h-[calc(26px*var(--app-scale))] shrink-0 items-center rounded-md px-2 text-ui-xs text-muted-foreground outline-none " +
     "hover:bg-foreground/[0.06] hover:text-foreground focus-visible:bg-foreground/[0.06] focus-visible:text-foreground " +
     "data-[state=open]:bg-foreground/[0.08] data-[state=open]:text-foreground";
 
   const contentCls =
-    "data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 duration-75 " +
-    "chrome-font border border-border/60 bg-popover text-popover-foreground min-w-60 max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim z-[60] outline-none";
+    "data-closed:animate-out data-closed:fade-out-0 duration-75 " +
+    "chrome-font border border-border/70 bg-popover text-popover-foreground min-w-60 max-w-(--menu-max-w) rounded-lg p-1 elevate-2-rim z-[60] outline-none";
 
-  // A fixed h-7 row (the compact control height) instead of py-1: padding-based
-  // rows grew with the font and zoom, and every menu came out a different
-  // rhythm. rounded-md inside the 10px menu with 4px padding keeps the corners
-  // concentric.
   const itemCls =
-    "focus:bg-accent focus:text-foreground h-7 gap-2.5 rounded-md px-2 text-ui-xs relative flex min-w-0 cursor-default items-center outline-hidden select-none " +
+    "focus:bg-accent focus:text-foreground h-7 gap-2.5 rounded-sm px-2 text-ui-xs relative flex min-w-0 cursor-default items-center outline-hidden select-none " +
     "data-disabled:pointer-events-none data-disabled:opacity-40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5";
 
   const sepCls = "-mx-1 my-1 h-px bg-border/50";
 </script>
+
+<svelte:window onkeydown={onWindowKeydown} onkeyup={onWindowKeyup} onblur={onWindowBlur} />
+
+{#snippet menuLabel(/** @type {string} */ key, /** @type {string} */ fallback)}
+  {@const text = $tx('menubar.' + key, fallback)}
+  {#if altHeld && text.length > 0}<span class="underline underline-offset-2">{text[0]}</span>{text.slice(1)}{:else}{text}{/if}
+{/snippet}
 
 <!-- `combo` is a remappable command id (`tab.close`, printed as whatever the
      user bound it to) or a fixed chord in the grammar `createHotkey` parses (`Mod+Shift+T`),
@@ -69,10 +110,10 @@
 {/snippet}
 
 
-<Menubar.Root class="flex shrink-0 items-center gap-0.5" aria-label="Main menu">
+<Menubar.Root bind:value={openMenu} class="flex shrink-0 items-center gap-0.5" aria-label="Main menu">
   <!-- File -->
-  <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>{$tx('menubar.File', 'File')}</Menubar.Trigger>
+  <Menubar.Menu value="file">
+    <Menubar.Trigger class={triggerCls}>{@render menuLabel('File', 'File')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("file-text", "New tab", "newTab", "tab.new")}
@@ -91,8 +132,8 @@
 
 
   <!-- Edit -->
-  <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>{$tx('menubar.Edit', 'Edit')}</Menubar.Trigger>
+  <Menubar.Menu value="edit">
+    <Menubar.Trigger class={triggerCls}>{@render menuLabel('Edit', 'Edit')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("search", "Search rows", "search", "table.search", !connected)}
@@ -108,8 +149,8 @@
 
 
   <!-- View -->
-  <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>{$tx('menubar.View', 'View')}</Menubar.Trigger>
+  <Menubar.Menu value="view">
+    <Menubar.Trigger class={triggerCls}>{@render menuLabel('View', 'View')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("layout-list", "Toggle sidebar", "toggleSidebar", "view.sidebar")}
@@ -127,8 +168,8 @@
 
 
   <!-- Tools -->
-  <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>{$tx('menubar.Tools', 'Tools')}</Menubar.Trigger>
+  <Menubar.Menu value="tools">
+    <Menubar.Trigger class={triggerCls}>{@render menuLabel('Tools', 'Tools')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("box", "Database objects", "objects", "", !connected)}
@@ -149,8 +190,8 @@
 
 
   <!-- Help -->
-  <Menubar.Menu>
-    <Menubar.Trigger class={triggerCls}>{$tx('menubar.Help', 'Help')}</Menubar.Trigger>
+  <Menubar.Menu value="help">
+    <Menubar.Trigger class={triggerCls}>{@render menuLabel('Help', 'Help')}</Menubar.Trigger>
     <Menubar.Portal>
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("command", "Keyboard shortcuts", "shortcuts", "help.shortcuts")}

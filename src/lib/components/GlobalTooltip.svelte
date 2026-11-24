@@ -15,16 +15,13 @@
   import { cn } from '$lib/utils.js'
 
   const DELAY = 450 // ms before showing (a touch slower so it doesn't flash on pass-through)
-  const GAP = 8 // distance between trigger and tooltip (arrow lives inside this)
+  const GAP = 6 // distance between trigger and tooltip
   const EDGE = 8 // min gap from the viewport edge
-  const ARROW = 5 // half the arrow's diagonal footprint
 
   let text = $state('')
   let shown = $state(false)
-  let side = $state(/** @type {'top' | 'bottom'} */ ('bottom'))
   let top = $state(0)
   let left = $state(0)
-  let arrowLeft = $state(0)
 
   /** @type {HTMLDivElement | null} */
   let tipEl = null
@@ -85,16 +82,13 @@
 
     // Prefer below; flip above when it would clip the bottom edge.
     if (r.bottom + GAP + th > vh - EDGE && r.top - GAP - th > EDGE) {
-      side = 'top'
       top = r.top - GAP - th
     } else {
-      side = 'bottom'
       top = r.bottom + GAP
     }
 
     const anchorX = r.left + r.width / 2
     left = Math.max(EDGE, Math.min(anchorX - tw / 2, vw - tw - EDGE))
-    arrowLeft = Math.max(ARROW + 4, Math.min(anchorX - left, tw - ARROW - 4))
 
     shown = true
   }
@@ -151,22 +145,14 @@
   role="tooltip"
   aria-hidden={!shown}
   class={cn(
-    'pointer-events-none fixed z-[300] max-w-xs rounded-lg border border-border/60 bg-popover px-2.5 py-1.5',
-    'text-ui-xs leading-snug text-popover-foreground elevate-2-rim',
-    'origin-[var(--tt-origin)] transition-[opacity,transform] duration-[130ms] ease-out',
+    'pointer-events-none fixed z-[300] max-w-xs rounded-md border border-border/70 bg-popover px-2 py-1',
+    'text-ui-2xs leading-snug text-popover-foreground elevate-2-rim',
+    'transition-opacity duration-75 ease-out',
     'motion-reduce:transition-none',
-    shown ? 'scale-100 opacity-100' : 'scale-[0.96] opacity-0',
+    shown ? 'opacity-100' : 'opacity-0',
   )}
-  style="top:{top}px; left:{left}px; --tt-origin:{side === 'top' ? 'bottom' : 'top'};"
+  style="top:{top}px; left:{left}px;"
   style:visibility={text ? 'visible' : 'hidden'}
 >
   <span class="whitespace-pre-line break-words">{text}</span>
-  <!-- Arrow: a rotated square with two visible borders, tucked against the edge. -->
-  <span
-    class={cn(
-      'absolute size-2 rotate-45 border-border/60 bg-popover',
-      side === 'bottom' ? '-top-1 border-l border-t' : '-bottom-1 border-b border-r',
-    )}
-    style="left:{arrowLeft}px; margin-left:-4px;"
-  ></span>
 </div>

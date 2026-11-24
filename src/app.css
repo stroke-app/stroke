@@ -25,7 +25,7 @@
      background regardless of CSS - the `.dark` block below flips it to dark for
      every dark theme. One declaration fixes every native dropdown at zero cost. */
   color-scheme: light;
-  --radius: 8px;
+  --radius: 6px;
   /* Boundary of a form control (input, textarea, select trigger, combobox).
      `--border` is the hairline/divider role and sits at ~1.3:1 against every
      surface, which is fine for a divider and invisible on a field: the filter
@@ -60,30 +60,30 @@
      too: without it the first paint (before applySettings runs) resolves every
      `calc(Npx * var(--app-scale))` through the fallback instead. */
   --app-scale: 1;
-  --app-font-size: 16px;
+  --app-font-size: 14px;
   /* UI type scale, in whole pixels. applySettings() recomputes these for the
      active zoom rung and writes them back to the root; these are the 100%
-     fallbacks (16px base) that hold for the first paint before JS runs, and they
+     fallbacks (14px base) that hold for the first paint before JS runs, and they
      must stay in step with `buildTypeScale()` in src/lib/type-scale.js.
      Whole pixels are the point: a fractional font-size makes WebKit rasterise
      glyphs off the pixel grid, which is what made UI text look soft at 100%. */
-  --fs-3xl: 27px;
-  --lh-3xl: 34px;
-  --fs-2xl: 23px;
-  --lh-2xl: 32px;
-  --fs-xl: 21px;
-  --lh-xl: 30px;
-  --fs-lg: 18px;
-  --lh-lg: 27px;
-  --fs-base: 16px;
-  --fs-15: 17px;
-  --fs-sm: 15px;
-  --fs-xs: 14px;
-  --fs-2xs: 13px;
-  --fs-3xs: 11px;
-  --editor-font-size: 16px;
+  --fs-3xl: 24px;
+  --lh-3xl: 30px;
+  --fs-2xl: 20px;
+  --lh-2xl: 28px;
+  --fs-xl: 18px;
+  --lh-xl: 26px;
+  --fs-lg: 16px;
+  --lh-lg: 24px;
+  --fs-base: 14px;
+  --fs-15: 15px;
+  --fs-sm: 13px;
+  --fs-xs: 12px;
+  --fs-2xs: 11px;
+  --fs-3xs: 10px;
+  --editor-font-size: 13px;
   /* 1.5 ratio - matches VS Code / Cursor's default editor line height. */
-  --editor-line-height: 24px;
+  --editor-line-height: 20px;
   /* Dedicated code font for the code editors, kept independent of the app's UI /
      data-grid mono (`--font-mono`) - same separation VS Code makes between its
      "editor font" and everything else. JetBrains Mono is a true code typeface:
@@ -412,11 +412,10 @@ textarea.no-focus-ring:focus-visible {
   outline: none;
 }
 
-/* Control radius is the same on every OS - a button that reads as "ours" on macOS
-   has to read the same on Windows and Linux. Only the WINDOW radius still follows
-   the platform, because that corner is drawn against the OS compositor and a
-   mismatch there shows as a seam against the desktop, not as a style choice. */
-:root { --radius: 10px; --window-radius: 10px; } /* macOS Big Sur+ system radius */
+/* Control radius is the same on every OS - tight native desktop corners (6px
+   controls, 4px compact, 8px containers/menus). Only the WINDOW radius follows
+   the platform compositor. */
+:root { --radius: 6px; --window-radius: 10px; } /* macOS Big Sur+ system radius */
 html[data-os="windows"] { --window-radius: 8px; } /* Windows 11 */
 html[data-os="linux"]   { --window-radius: 8px; }
 
@@ -524,12 +523,11 @@ html[data-os="linux"]   { --window-radius: 8px; }
     /* Opaque background: the window uses native OS decorations (rectangular,
        no transparency), so nothing shows through behind the content. */
     background: var(--background);
-    /* Grayscale antialiasing on every platform. On macOS the default subpixel
-       ('auto') renders UI text noticeably heavier; 'antialiased' gives the
-       crisp, lighter weight the design system targets and keeps rendering
-       identical to the Windows/Linux overrides below. */
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
+    /* Native OS text rendering by default (ClearType on Windows, macOS
+       default smoothing, desktop fontconfig on Linux). Users who prefer thin
+       grayscale strokes can pick Grayscale in Settings -> Appearance. */
+    -webkit-font-smoothing: auto;
+    -moz-osx-font-smoothing: auto;
     /* optimizeLegibility: proper kerning + shaping so UI text stays smooth and
        crisp at every zoom level (optimizeSpeed skips shaping and looks rough,
        especially scaled down). The perf-sensitive data grid opts back into
@@ -540,28 +538,20 @@ html[data-os="linux"]   { --window-radius: 8px; }
        a WebKit font assertion on Linux startup; text-size-adjust is a no-op on desktop. */
   }
 
-  /* Windows renders the bundled variable fonts noticeably lighter than
-     macOS/Linux due to DirectWrite's grayscale AA. Bump weight slightly so
-     strokes look consistent. The system face (Segoe UI, the Windows default)
-     is drawn at its own weight: it is hinted for ClearType, and 430 made it
-     heavier than every other window on screen. */
-  html[data-os="windows"]:not([data-font="apple"]) {
-    font-weight: 430;
-  }
-
-  /* Linux/WebKitGTK: subpixel rendering is unavailable on Wayland (the compositor
-     can rotate/scale windows, so subpixel direction is unknown). Without it, Geist
-     Variable at weight 400 produces ~1px strokes that disappear on dark backgrounds.
-     'antialiased' forces consistent grayscale AA regardless of the user's fontconfig
-     setup; bumping weight to 450 restores stroke visibility lost without subpixels. */
-  html[data-os="linux"] {
+  /* Appearance > Font smoothing > Grayscale: opt-in thinner grayscale AA. */
+  html[data-smoothing='grayscale'] {
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
-  /* The bump is for the bundled faces only. The System preset is the desktop's
-     own font (Cantarell, Noto Sans, Ubuntu), already tuned for its renderer,
-     and at 450 it read heavier than every other window. */
-  html[data-os="linux"]:not([data-font="apple"]) {
+
+  /* Bundled variable fonts under grayscale AA render slightly thin on Windows
+     and Linux. System fonts (SF Pro, Segoe UI, desktop sans) and native OS
+     smoothing already render at their designed weight, so never synthesize
+     weights on them. */
+  html[data-os="windows"][data-smoothing="grayscale"]:not([data-font="apple"]) {
+    font-weight: 430;
+  }
+  html[data-os="linux"][data-smoothing="grayscale"]:not([data-font="apple"]) {
     font-weight: 450;
   }
   /* Small UI text: let the face's own kerning and contextual forms apply on
@@ -716,7 +706,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     font-optical-sizing: auto;
   }
 
-  html[data-os='windows'] :is(
+  html[data-os='windows'][data-smoothing='grayscale']:not([data-font='apple']) :is(
     [data-slot='context-menu-content'],
     [data-slot='dropdown-menu-content'],
     [data-slot='select-content'],
@@ -729,7 +719,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     font-weight: 430;
   }
 
-  html[data-os='linux'] :is(
+  html[data-os='linux'][data-smoothing='grayscale']:not([data-font='apple']) :is(
     [data-slot='context-menu-content'],
     [data-slot='dropdown-menu-content'],
     [data-slot='select-content'],
@@ -740,12 +730,23 @@ html[data-os="linux"]   { --window-radius: 8px; }
     [role='listbox']
   ) {
     font-weight: 450;
-    -webkit-font-smoothing: antialiased;
   }
 
-  /* Appearance > Font smoothing > System: the OS's own text rendering instead
-     of the thin grayscale the app uses everywhere else (on a Mac, the heavier
-     default macOS smoothing). After every rule above that forces grayscale. */
+  html[data-smoothing='grayscale'] :is(
+    [data-slot='context-menu-content'],
+    [data-slot='dropdown-menu-content'],
+    [data-slot='select-content'],
+    [data-slot='dialog-content'],
+    [data-slot='popover-content'],
+    [role='dialog'],
+    [role='menu'],
+    [role='listbox']
+  ) {
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Appearance > Font smoothing > System: explicit OS default text rendering. */
   html[data-smoothing='system'],
   html[data-smoothing='system'] :is(
     [data-slot='context-menu-content'],
@@ -1521,27 +1522,36 @@ label,
 /* A full-window viewer (diagram, fullscreen chart) covers the title bar, and on
    macOS the OS still draws the traffic lights over its top-left corner. Its
    header takes the title bar's place: the same 38px row, the lights' room on
-   the left (they end at ~66px), and it drags the window like the bar it hides. */
+   the left (they end at ~68px), and it drags the window like the bar it hides. */
 html[data-os='macos'] .window-overlay-head {
-  min-height: 52px;
-  padding-left: 92px;
+  min-height: 38px;
+  padding-left: 78px;
 }
 
-/* ── Icon scale (T3-sized) ───────────────────────────────────────────────────
-   Every icon one step up: 12→14, 14→16, 16→18px. Icons read as the controls
-   rather than as specks beside the text. One rule, so every icon in the app
-   moves together; rem, so it follows the zoom. Unlayered so it wins over the
-   `size-*` utilities on the icons themselves. */
-svg.size-3 { width: calc(14px * var(--app-scale, 1)); height: calc(14px * var(--app-scale, 1)); }
-svg.size-3\.5 { width: calc(17px * var(--app-scale, 1)); height: calc(17px * var(--app-scale, 1)); }
-svg.size-4 { width: calc(19px * var(--app-scale, 1)); height: calc(19px * var(--app-scale, 1)); }
+/* ── Inactive window dimming ─────────────────────────────────────────────────
+   Native desktop windows subtly recede their title bar, tab strip, and status
+   bar when unfocused so you can tell at a glance which window owns keyboard
+   input. Content stays at full contrast for reading side-by-side. */
+html[data-window-focused='false'] [data-studio-region='titlebar'] > *,
+html[data-window-focused='false'] [data-studio-region='statusbar'] > *,
+html[data-window-focused='false'] [role='tablist'] > * {
+  opacity: 0.65;
+}
+
+/* ── Linux frameless window edge ─────────────────────────────────────────────
+   Without OS decorations, a dark window blends into dark windows behind it on
+   Linux compositors that don't draw CSD borders. A crisp 1px inner hairline
+   restores the physical window edge while windowed. */
+html[data-os='linux']:not([data-maximized='true']):not([data-fullscreen='true']) #app {
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 14%, transparent);
+}
 
 /* The sidebar's tab row, moved into the macOS title bar: it fills the bar's
    height and the slot's width, with no padding of its own. */
 .titlebar-tabs { height: 100% !important; flex: 1 1 0%; min-width: 0; padding: 0 calc(8px * var(--app-scale, 1)) 0 calc(4px * var(--app-scale, 1)) !important; }
 
-/* The tab strip living in the title row: fills it, no surface of its own. */
-.titlebar-tabstrip > header[role="tablist"] { flex: 1 1 0%; min-width: 0; height: 100%; background: transparent; padding-left: 0.5rem; }
+/* The tab strip living in the title row: fills it, no surface or bottom border of its own. */
+.titlebar-tabstrip > header[role="tablist"] { flex: 1 1 0%; min-width: 0; height: 100%; background: transparent; border-bottom: 0; padding-left: 0.5rem; }
 
 /* The new-tab hero reads in the system face, as T3 and native Mac apps do,
    whatever the app font: a mono headline made it read like a terminal. */
@@ -1640,20 +1650,12 @@ pre code,
   --chip: var(--foreground);
   display: inline-flex;
   align-items: center;
-  border-radius: 0.3125rem;
+  border-radius: var(--radius-sm);
   line-height: 1;
   letter-spacing: 0.01em;
-  color: color-mix(in oklch, var(--chip) 92%, var(--foreground));
-  background: linear-gradient(
-    to bottom,
-    color-mix(in oklch, var(--foreground) 11%, var(--background)),
-    color-mix(in oklch, var(--foreground) 4%, var(--background))
-  );
-  box-shadow:
-    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 26%, transparent),
-    inset 0 1px 0 color-mix(in oklch, white 20%, transparent),
-    inset 0 -1px 0 rgb(0 0 0 / 0.22),
-    0 1px 2px rgb(0 0 0 / 0.3);
+  color: color-mix(in oklch, var(--chip) 90%, var(--foreground));
+  background: color-mix(in oklch, var(--foreground) 7%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent);
 }
 .chip-gloss.chip-warning { --chip: var(--warning); }
 /* ── Glossy key ──────────────────────────────────────────────────────────────
@@ -1664,21 +1666,12 @@ pre code,
 .key-gloss {
   --key-dot: var(--success);
   position: relative;
-  isolation: isolate;
-  overflow: hidden;
   display: inline-flex;
   align-items: center;
-  border-radius: 7px;
+  border-radius: var(--radius-sm);
   color: var(--foreground);
-  background: linear-gradient(
-    to bottom,
-    color-mix(in oklch, var(--foreground) 13%, var(--background)),
-    color-mix(in oklch, var(--foreground) 5%, var(--background))
-  );
-  box-shadow:
-    inset 0 1px 0 color-mix(in oklch, white 16%, transparent),
-    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent),
-    0 1px 2px rgb(0 0 0 / 0.22);
+  background: color-mix(in oklch, var(--foreground) 6%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 14%, transparent);
 }
 .key-gloss::before,
 .key-gloss::after {
@@ -1708,81 +1701,51 @@ pre code,
   box-shadow: 0 0 6px color-mix(in oklch, var(--key-dot) 70%, transparent);
 }
 .chip-gloss.chip-muted { --chip: var(--muted-foreground); }
-/* ── Keycap button ────────────────────────────────────────────────────────────
-   The Pro chip's dark key, at button size: the same lifted fill, hairline
-   ring, sheen on top and shade at the foot. A press sinks the cap 1px and
-   flattens its drop, the way a key goes down. Built from --foreground and
-   --background, so it reads as a key in every theme. */
+/* ── Native control button ───────────────────────────────────────────────────
+   Clean hairline button surface with instant native press tint (no bounce). */
 .keycap-btn {
   color: var(--foreground);
-  background: linear-gradient(
-    to bottom,
-    color-mix(in oklch, var(--foreground) 14%, var(--background)),
-    color-mix(in oklch, var(--foreground) 6%, var(--background))
-  );
-  box-shadow:
-    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 22%, transparent),
-    inset 0 1px 0 color-mix(in oklch, white 18%, transparent),
-    inset 0 -2px 0 rgb(0 0 0 / 0.22),
-    0 1px 2px rgb(0 0 0 / 0.3);
-  transition: transform 100ms cubic-bezier(0.165, 0.84, 0.44, 1), box-shadow 100ms cubic-bezier(0.165, 0.84, 0.44, 1), background 150ms ease-out;
+  background: color-mix(in oklch, var(--foreground) 7%, var(--background));
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent);
 }
 @media (hover: hover) and (pointer: fine) {
   .keycap-btn:not(:disabled):hover {
-    background: linear-gradient(
-      to bottom,
-      color-mix(in oklch, var(--foreground) 18%, var(--background)),
-      color-mix(in oklch, var(--foreground) 9%, var(--background))
-    );
+    background: color-mix(in oklch, var(--foreground) 11%, var(--background));
   }
 }
 .keycap-btn:not(:disabled):active {
-  transform: translateY(1px);
-  box-shadow:
-    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 22%, transparent),
-    inset 0 1px 0 color-mix(in oklch, white 10%, transparent),
-    inset 0 -1px 0 rgb(0 0 0 / 0.18);
+  background: color-mix(in oklch, var(--foreground) 15%, var(--background));
 }
 .keycap-btn:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 2px;
 }
 .keycap-btn:disabled { color: var(--muted-foreground); opacity: 0.6; }
-/* Light themes: a white key on a pale page, with a lighter shade at its foot. */
 html:not(.dark) .keycap-btn {
-  background: linear-gradient(to bottom, var(--background), color-mix(in oklch, var(--foreground) 5%, var(--background)));
-  box-shadow:
-    inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent),
-    inset 0 -2px 0 rgb(0 0 0 / 0.06),
-    0 1px 2px rgb(0 0 0 / 0.08);
+  background: var(--background);
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent);
 }
 @media (hover: hover) and (pointer: fine) {
   html:not(.dark) .keycap-btn:not(:disabled):hover {
-    background: linear-gradient(to bottom, var(--background), color-mix(in oklch, var(--foreground) 8%, var(--background)));
+    background: color-mix(in oklch, var(--foreground) 4%, var(--background));
   }
 }
 html:not(.dark) .keycap-btn:not(:disabled):active {
-  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent), inset 0 1px 1px rgb(0 0 0 / 0.06);
+  background: color-mix(in oklch, var(--foreground) 8%, var(--background));
 }
-html:not(.dark) .key-well { box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06), inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent); }
-html:not(.dark) .key-well:focus-within { box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.06), 0 0 0 2px var(--ring); }
-@media (prefers-reduced-motion: reduce) {
-  .keycap-btn { transition: background 150ms ease-out; }
-  .keycap-btn:not(:disabled):active { transform: none; }
-}
-/* A field drawn as a well: a step darker than its surface, no border, a
-   faint inner shade. Focus deepens it and adds the ring. */
+html:not(.dark) .key-well { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 14%, transparent); }
+html:not(.dark) .key-well:focus-within { box-shadow: inset 0 0 0 1px var(--ring); }
+/* A field drawn as a well: a step darker than its surface, hairline edge. */
 .key-well {
   background: color-mix(in oklch, var(--foreground) 4%, var(--background));
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), inset 0 0 0 1px color-mix(in oklch, var(--foreground) 8%, transparent);
-  transition: box-shadow 150ms ease-out, background 150ms ease-out;
+  box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent);
 }
 .key-well:focus-within {
   background: color-mix(in oklch, var(--foreground) 2%, var(--background));
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), 0 0 0 2px var(--ring);
+  box-shadow: inset 0 0 0 1px var(--ring);
 }
 .key-well[data-invalid] {
-  box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.25), inset 0 0 0 1px var(--destructive);
+  box-shadow: inset 0 0 0 1px var(--destructive);
 }
 .chip-gloss.chip-primary { --chip: var(--primary); }
 .mark-grain::after {
@@ -1846,70 +1809,11 @@ html:not(.dark) .key-well:focus-within { box-shadow: inset 0 1px 2px rgb(0 0 0 /
   .ai-gen-sweep, .ai-gen-bar, .ai-gen-node, .ai-gen-line, .ai-gen-dots i { animation: none; }
 }
 
-/* Press feedback, app-wide: compact controls only. Icon buttons (sized
-   with a size-* utility), the shared Button and menu, popover and select
-   triggers shrink to 0.97 while held, so a click always answers.
-
-   Only real <button>s, and never a wide one. A right-click menu's trigger
-   wraps a whole area (the sidebar, the tab bar, the data grid), and full-width
-   rows, headers and size-full hit areas are buttons too; shrinking those made
-   the panel jump on every click. A component's own active:scale-* (a utility)
-   still wins over this base rule. */
-@layer base {
-  :where(
-      button[class*="size-"],
-      button[data-slot="button"],
-      a[data-slot="button"],
-      button[data-slot="dropdown-menu-trigger"],
-      button[data-slot="popover-trigger"],
-      button[data-slot="select-trigger"],
-      button[data-slot="dialog-trigger"]
-    ):not(
-      :disabled,
-      [aria-disabled="true"],
-      [data-no-press],
-      [class*="size-full"],
-      [class*="w-full"],
-      [class*="flex-1"],
-      [class*="inset-0"]
-    ) {
-    transition-property: color, background-color, border-color, box-shadow, opacity, scale;
-    transition-duration: 120ms;
-    transition-timing-function: cubic-bezier(0.23, 1, 0.32, 1);
-  }
-  :where(
-      button[class*="size-"],
-      button[data-slot="button"],
-      a[data-slot="button"],
-      button[data-slot="dialog-trigger"]
-    ):not(
-      :disabled,
-      [aria-disabled="true"],
-      [data-no-press],
-      /* Menu, popover and select triggers: bits-ui opens them on pointerdown
-         and anchors to the button's box at that moment, scaled to 97%, so the
-         popup moved down a pixel when the button sprang back. */
-      [aria-haspopup],
-      [class*="size-full"],
-      [class*="w-full"],
-      [class*="flex-1"],
-      [class*="inset-0"]
-    ):active {
-    scale: 0.97;
-  }
-  @media (prefers-reduced-motion: reduce) {
-    :where(button, a[data-slot="button"]):active {
-      scale: none;
-    }
-  }
-}
-
-/* Popup triggers never take a press scale, from any class. bits-ui opens a
-   menu, popover or select on pointerdown and anchors it to the trigger's box
-   at that instant; scaled to 97% the popup was placed against a smaller box
-   and moved a pixel when the button sprang back. Unlayered and !important so
-   it wins over every `active:scale-*` utility on a trigger. */
-[aria-haspopup]:active {
+/* ── Native press feedback (no web button squash) ────────────────────────────
+   Desktop controls respond to clicks by snapping their tint/background, never
+   by shrinking or bouncing. Neutralise any stray `active:scale-*` utility on
+   buttons/controls unlayered so clicks always feel immediate and solid. */
+:is(button, a[data-slot="button"], [role="button"]):active {
   scale: none !important;
 }
 

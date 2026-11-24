@@ -688,7 +688,7 @@ pub async fn open_local_servers_window(app: AppHandle, from: String) -> Result<(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        builder = builder.decorations(false);
+        builder = builder.decorations(false).shadow(true);
     }
     let window = builder.build().map_err(|e| e.to_string())?;
     let surface = crate::surface_for_theme(window.theme().unwrap_or(tauri::Theme::Dark));

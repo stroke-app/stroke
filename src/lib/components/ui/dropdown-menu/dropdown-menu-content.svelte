@@ -19,7 +19,7 @@
 		{sideOffset}
 		{align}
 		class={cn(
-			" data-closed:animate-out data-closed:fade-out-0 [transform-origin:var(--bits-floating-transform-origin)] ease-out duration-100 border border-border/60 bg-popover text-popover-foreground min-w-[max(9rem,var(--bits-dropdown-menu-anchor-width,0px))] max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim z-50 overflow-x-hidden overflow-y-auto outline-none data-closed:overflow-hidden",
+			"data-closed:animate-out data-closed:fade-out-0 ease-out duration-75 border border-border/70 bg-popover text-popover-foreground min-w-[max(9rem,var(--bits-dropdown-menu-anchor-width,0px))] max-w-(--menu-max-w) rounded-lg p-1 elevate-2-rim z-50 overflow-x-hidden overflow-y-auto outline-none data-closed:overflow-hidden",
 			className
 		)}
 		{...restProps}
