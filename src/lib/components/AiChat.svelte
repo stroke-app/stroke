@@ -149,7 +149,7 @@
   import GitBranch from "@lucide/svelte/icons/git-branch";
   import BarChart3 from "@lucide/svelte/icons/chart-column";
   import ImageIcon from "@lucide/svelte/icons/image";
-  import { loadLayout, setNavSidebarWidth, clampNavSidebarWidth, NAV_SIDEBAR_MIN, NAV_WIDTH_EVENT } from "$lib/stores/layout.js";
+  import { loadLayout, setNavSidebarWidth, clampNavSidebarWidth, DEFAULT_LAYOUT, NAV_WIDTH_EVENT } from "$lib/stores/layout.js";
   import Brain from "@lucide/svelte/icons/brain";
   import AiModelPicker from "./AiModelPicker.svelte";
   import { publishChatList, aiChatPending, aiChatList, takeChatRequest } from "$lib/stores/ai-chat-bridge.js";
@@ -4756,7 +4756,7 @@
       {/if}
     </aside>
     <!-- Drag, or arrow keys when focused, to widen the chat list; double-click resets. -->
-    <div class="-ml-1 flex" ondblclick={() => { sidebarWidth = externalToggle ? NAV_SIDEBAR_MIN : SIDEBAR_DEFAULT_W; saveSidebarWidth(); }} role="presentation">
+    <div class="-ml-1 flex" ondblclick={() => { sidebarWidth = externalToggle ? DEFAULT_LAYOUT.navSidebarWidth : SIDEBAR_DEFAULT_W; saveSidebarWidth(); }} role="presentation">
       <ResizeHandle
         axis="x"
         edge="end"
