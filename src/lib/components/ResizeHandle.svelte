@@ -1,11 +1,16 @@
 <script>
   import { cn } from '$lib/utils.js'
+  import { beginPanelResize, endPanelResize } from '$lib/panel-motion.js'
 
   let {
     /** @type {'x' | 'y'} */
     axis = 'x',
     /** @type {'start' | 'end'} */
     edge = 'end',
+    /** Optional double-click handler to reset the panel to its default size. @type {(() => void) | undefined} */
+    onreset = undefined,
+    /** Extra classes on the handle root. */
+    class: className = '',
     onresizestart = () => {},
     onresize = () => {},
     onresizeend = () => {},
@@ -19,9 +24,10 @@
 
     const bodyClass = axis === 'x' ? 'is-resizing-x' : 'is-resizing-y'
     document.body.classList.add(bodyClass)
+    beginPanelResize(axis)
 
     const el = /** @type {HTMLElement} */ (e.currentTarget)
-    el.setPointerCapture(e.pointerId)
+    try { el.setPointerCapture(e.pointerId) } catch { /* synthetic or detached pointer */ }
     const startX = e.clientX
     const startY = e.clientY
 
@@ -41,6 +47,7 @@
     let rafId = 0
     let pending = 0
     let hasPending = false
+    let ended = false
 
     const flush = () => {
       rafId = 0
@@ -59,21 +66,28 @@
 
     /** @param {PointerEvent} ev */
     function onUp(ev) {
+      if (ended) return
+      ended = true
       document.body.classList.remove(bodyClass)
-      el.releasePointerCapture(ev.pointerId)
+      try {
+        if (el.hasPointerCapture?.(ev.pointerId)) el.releasePointerCapture(ev.pointerId)
+      } catch { /* already released */ }
       el.removeEventListener('pointermove', onMove)
       el.removeEventListener('pointerup', onUp)
       el.removeEventListener('pointercancel', onUp)
+      el.removeEventListener('lostpointercapture', onUp)
       // Land on the last position the pointer actually reached, rather than on
       // whichever frame happened to win the race with pointerup.
       if (rafId) cancelAnimationFrame(rafId)
       flush()
       onresizeend()
+      endPanelResize()
     }
 
     el.addEventListener('pointermove', onMove)
     el.addEventListener('pointerup', onUp)
     el.addEventListener('pointercancel', onUp)
+    el.addEventListener('lostpointercapture', onUp)
   }
 
   const STEP = 20
@@ -106,10 +120,20 @@
   class={cn(
     'studio-resize-handle group relative z-20 shrink-0 touch-none select-none focus-visible:outline-none',
     axis === 'x' ? 'h-full w-1 cursor-col-resize' : 'h-1 w-full cursor-row-resize',
+    className,
   )}
   onpointerdown={handlePointerDown}
   onkeydown={handleKeydown}
+  ondblclick={onreset}
 >
+  <!-- Invisible hit-area expansion along the hairline so grabbing the edge feels effortless. -->
+  <div
+    class={cn(
+      'absolute',
+      axis === 'x' && (edge === 'start' ? 'inset-y-0 -left-1.5 right-0' : 'inset-y-0 left-0 -right-1.5'),
+      axis === 'y' && (edge === 'start' ? 'inset-x-0 -top-1.5 bottom-0' : 'inset-x-0 top-0 -bottom-1.5'),
+    )}
+  ></div>
   <!-- Visual-only line, pointer-events-none so it never shadows the cursor -->
   <div
     class={cn(
@@ -117,7 +141,7 @@
       // title bar's edge line above it. It used to be rounded, translucent,
       // inset 8px at each end and centred 2px inside the grab area: a short,
       // soft line that never lined up with anything.
-      'pointer-events-none absolute bg-border/50 group-hover:bg-primary/70 group-active:bg-primary group-focus-visible:bg-primary/70',
+      'pointer-events-none absolute bg-border/50 transition-colors duration-75 group-hover:bg-primary/70 group-active:bg-primary group-focus-visible:bg-primary/70',
       axis === 'x' && 'inset-y-0 w-px',
       axis === 'x' && (edge === 'start' ? 'left-0' : 'right-0'),
       axis === 'y' && 'inset-x-0 h-px',

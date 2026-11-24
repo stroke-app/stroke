@@ -4,7 +4,7 @@ const STORAGE_KEY = 'stroke:layout'
 
 /** @typedef {'normal' | 'json'} InspectorView */
 
-/** @typedef {{ navSidebarWidth: number, navSidebarOpen: boolean, navSidebarSide: 'left' | 'right', navSidebarPanel: string, inspectorWidth: number, inspectorView: InspectorView, sqlEditorHeight: number, logPanelWidth: number, logPanelOpen: boolean, aiSidebarWidth: number, aiSidebarOpen: boolean, statusBarVisible: boolean, tabBarVisible: boolean, tableToolbarVisible: boolean }} PanelLayout */
+/** @typedef {{ navSidebarWidth: number, navSidebarOpen: boolean, navSidebarSide: 'left' | 'right', navSidebarPanel: string, inspectorWidth: number, inspectorView: InspectorView, sqlEditorHeight: number, terminalDockHeight: number, logPanelWidth: number, logPanelOpen: boolean, aiSidebarWidth: number, aiSidebarOpen: boolean, statusBarVisible: boolean, tabBarVisible: boolean, tableToolbarVisible: boolean }} PanelLayout */
 
 export const DEFAULT_LAYOUT = {
   navSidebarWidth: 320, // every tab in the header row shows
@@ -14,6 +14,7 @@ export const DEFAULT_LAYOUT = {
   inspectorWidth: 300,
   inspectorView: 'normal',
   sqlEditorHeight: 320,
+  terminalDockHeight: 260,
   logPanelWidth: 300,
   logPanelOpen: false,
   aiSidebarWidth: 400,
@@ -62,6 +63,9 @@ export const INSPECTOR_MIN = 220
 export const INSPECTOR_MAX = 640
 export const SQL_EDITOR_MIN = 120
 export const SQL_EDITOR_RESULTS_MIN = 120
+export const TERMINAL_DOCK_MIN = 120
+export const TERMINAL_DOCK_DEFAULT = 260
+export const TERMINAL_DOCK_CONTENT_MIN = 120
 export const LOG_PANEL_MIN = 220
 export const LOG_PANEL_MAX = 600
 export const AI_SIDEBAR_MIN = 320
@@ -96,6 +100,15 @@ export function clampSqlEditorHeight(height, containerHeight = 0) {
   return Math.round(Math.min(max, Math.max(SQL_EDITOR_MIN, height)))
 }
 
+/** @param {number} height @param {number} [containerHeight] */
+export function clampTerminalDockHeight(height, containerHeight = 0) {
+  const max =
+    containerHeight > 0
+      ? Math.max(TERMINAL_DOCK_MIN, containerHeight - TERMINAL_DOCK_CONTENT_MIN)
+      : 720
+  return Math.round(Math.min(max, Math.max(TERMINAL_DOCK_MIN, height)))
+}
+
 /** @returns {PanelLayout} */
 export function loadLayout() {
   try {
@@ -105,11 +118,13 @@ export function loadLayout() {
     let navSidebarWidth = Number(parsed.navSidebarWidth)
     let inspectorWidth = Number(parsed.inspectorWidth)
     let sqlEditorHeight = Number(parsed.sqlEditorHeight)
+    let terminalDockHeight = Number(parsed.terminalDockHeight)
     let logPanelWidth = Number(parsed.logPanelWidth)
     let aiSidebarWidth = Number(parsed.aiSidebarWidth)
     if (!Number.isFinite(navSidebarWidth)) navSidebarWidth = DEFAULT_LAYOUT.navSidebarWidth
     if (!Number.isFinite(inspectorWidth)) inspectorWidth = DEFAULT_LAYOUT.inspectorWidth
     if (!Number.isFinite(sqlEditorHeight)) sqlEditorHeight = DEFAULT_LAYOUT.sqlEditorHeight
+    if (!Number.isFinite(terminalDockHeight)) terminalDockHeight = DEFAULT_LAYOUT.terminalDockHeight
     if (!Number.isFinite(logPanelWidth)) logPanelWidth = DEFAULT_LAYOUT.logPanelWidth
     if (!Number.isFinite(aiSidebarWidth)) aiSidebarWidth = DEFAULT_LAYOUT.aiSidebarWidth
     const inspectorView = parsed.inspectorView === 'json' ? 'json' : 'normal'
@@ -129,6 +144,7 @@ export function loadLayout() {
       inspectorWidth: clampInspectorWidth(inspectorWidth),
       inspectorView,
       sqlEditorHeight: clampSqlEditorHeight(sqlEditorHeight),
+      terminalDockHeight: clampTerminalDockHeight(terminalDockHeight),
       logPanelWidth: clampLogPanelWidth(logPanelWidth),
       logPanelOpen,
       aiSidebarWidth: clampAiSidebarWidth(aiSidebarWidth),

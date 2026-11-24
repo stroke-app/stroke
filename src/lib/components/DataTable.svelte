@@ -1,5 +1,6 @@
 <script>
   import { isReadOnly, guardWrite } from '$lib/stores/read-only.js';
+  import { isPanelResizing } from '$lib/panel-motion.js';
   import { tick, onDestroy, untrack } from "svelte";
   import {
     pgArrayElem, pgArrayText, isSqlArrayType, isVectorType, foldLines, valuesEqual,
@@ -8059,7 +8060,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // the viewport has been, clipped by the scroll container - but never taller
     // than the content, so it can never add scroll range the table did not
     // already have. Short tables still follow the viewport exactly.
-    if (_viewportHeight > _tallestViewportH) _tallestViewportH = _viewportHeight
+    if (_viewportHeight > _tallestViewportH) {
+      // Growing the canvas backing store clears and reallocates it. During a
+      // live panel drag (e.g. pulling the terminal dock down), step up in 256px
+      // increments so the drag reallocates at most once or twice instead of
+      // every single frame. Still capped by spacerHeight below.
+      _tallestViewportH = isPanelResizing()
+        ? Math.ceil(_viewportHeight / 256) * 256
+        : _viewportHeight
+    }
     const cssH = Math.max(1, Math.round(Math.max(_viewportHeight, Math.min(spacerHeight, _tallestViewportH))))
     const dpr = Math.min(window.devicePixelRatio || 1, 2)
     _surfaceDpr = dpr
@@ -8446,21 +8455,21 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     void zoomState.value; void canvasZoom
     const { ok, resized } = syncCanvasSurface()
     // The canvas can outgrow the viewport (see syncCanvasSurface), and what sits
-    // below the fold is stale - a dock closing has to paint it in the same frame.
-    const vhChanged = _viewportHeight !== _lastLayoutVh
+    // below the fold is stale - a dock closing or shrinking downward has to paint
+    // the newly revealed rows in the same frame. Shrinking the viewport while
+    // dragging a bottom dock upward only clips already-painted rows, so skip the
+    // redundant repaint. And when draw() already ran synchronously, don't queue a
+    // duplicate rAF scheduleDraw() right behind it.
+    const vhGrew = _viewportHeight > _lastLayoutVh
+    const vhShrank = _viewportHeight < _lastLayoutVh
     _lastLayoutVh = _viewportHeight
     if (ok) {
-      // Paint synchronously only on the FIRST mount (so a fresh canvas never
-      // composites as an untransformed, unpainted "black" grid) and whenever the
-      // backing store was actually resized (assigning canvas.width/height clears
-      // it - without a sync repaint the grid would blank for a frame). Every other
-      // structural change leaves the last frame's pixels intact, so the
-      // rAF-coalesced scheduleDraw() below is enough and the previously
-      // unconditional synchronous draw() (which double-painted every update) is
-      // skipped.
-      if (!_firstPaintDone || resized || vhChanged) draw()
-      _firstPaintDone = true
-      scheduleDraw()
+      if (!_firstPaintDone || resized || vhGrew) {
+        draw()
+        _firstPaintDone = true
+      } else if (!(vhShrank && isPanelResizing())) {
+        scheduleDraw()
+      }
     }
   })
 
