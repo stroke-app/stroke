@@ -170,7 +170,7 @@
       sideOffset={4}
       onOpenAutoFocus={(e) => { e.preventDefault(); inputEl?.focus(); }}
       class={cn(
-        "z-[100] overflow-hidden rounded-[10px] border border-border/60 bg-popover text-popover-foreground elevate-2-rim outline-none",
+        "z-[100] overflow-hidden rounded-menu border border-border/60 bg-popover text-popover-foreground elevate-2-rim outline-none",
         contentClass,
       )}
     >
@@ -216,7 +216,7 @@
               onSelect={() => handleSelect(it)}
               onpointerenter={onhover ? () => onhover?.(it) : undefined}
               class={cn(
-                "flex min-h-7 w-full min-w-0 cursor-default items-center gap-2 rounded-sm px-2 py-1 text-ui-xs outline-hidden select-none",
+                "flex min-h-7 w-full min-w-0 cursor-default items-center gap-2 rounded-menu-item px-2 py-1 text-ui-xs outline-hidden select-none",
                 "text-foreground/85 hover:bg-accent hover:text-foreground data-selected:bg-accent data-selected:text-foreground",
                 "data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-40",
                 "[&_svg]:pointer-events-none [&_svg]:shrink-0",

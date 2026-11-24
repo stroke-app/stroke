@@ -435,6 +435,11 @@ html[data-os="linux"]   { --window-radius: 8px; }
   --radius-sm: calc(var(--radius) - 2px);
   --radius-md: var(--radius);
   --radius-lg: calc(var(--radius) + 2px);
+  /* Menus (dropdown, context, select, searchable): the panel and its rows.
+     The rows sit in the panel's p-1, so their radius is the panel's minus that
+     padding and the two corners stay concentric at any --radius and zoom. */
+  --radius-menu: calc(var(--radius) + 0.25rem);
+  --radius-menu-item: max(2px, calc(var(--radius-menu) - 0.25rem));
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-card: var(--card);

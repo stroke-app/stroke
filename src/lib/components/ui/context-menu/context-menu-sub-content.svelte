@@ -16,6 +16,6 @@
 <ContextMenuPrimitive.SubContent
 	bind:ref
 	data-slot="context-menu-sub-content"
-	class={cn("data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 border border-border/60 bg-popover text-popover-foreground min-w-32 max-w-(--menu-max-w) rounded-[10px] p-1 elevate-2-rim duration-75 z-50 overflow-x-hidden overflow-y-auto outline-none", className)}
+	class={cn("data-open:animate-in data-closed:animate-out data-closed:fade-out-0 data-open:fade-in-0 border border-border/60 bg-popover text-popover-foreground min-w-32 max-w-(--menu-max-w) rounded-menu p-1 elevate-2-rim duration-75 z-50 overflow-x-hidden overflow-y-auto outline-none", className)}
 	{...restProps}
 />

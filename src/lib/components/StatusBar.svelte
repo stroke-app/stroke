@@ -566,7 +566,7 @@
             <div class="border-t border-border/50 p-1">
               <button
                 type="button"
-                class="flex min-h-7 w-full items-center gap-2 rounded-sm px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                class="flex min-h-7 w-full items-center gap-2 rounded-menu-item px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                 onclick={() => { connOpen = false; onconnect() }}
               >
                 <Icon name="wifi-off" class="size-3.5 shrink-0 text-muted-foreground" />
@@ -574,7 +574,7 @@
               </button>
               <button
                 type="button"
-                class="flex min-h-7 w-full items-center gap-2 rounded-sm px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+                class="flex min-h-7 w-full items-center gap-2 rounded-menu-item px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
                 onclick={() => { connOpen = false; ondisconnect() }}
               >
                 <Icon name="unplug" class="size-3.5 shrink-0" />
@@ -681,7 +681,7 @@
                     data-hl={dbHl === i ? '' : undefined}
                     aria-current={isCurrent ? 'true' : undefined}
                     class={cn(
-                      'flex h-7 w-full cursor-default items-center gap-2 rounded-sm px-2 text-left font-mono text-ui-xs transition-colors',
+                      'flex h-7 w-full cursor-default items-center gap-2 rounded-menu-item px-2 text-left font-mono text-ui-xs transition-colors',
                       isCurrent ? 'text-foreground' : 'text-foreground/80',
                       dbHl === i && 'bg-accent text-foreground',
                     )}
@@ -1048,7 +1048,7 @@
         <div class="border-t border-border/50 p-1">
           <button
             type="button"
-            class="flex min-h-7 w-full items-center gap-1.5 rounded-sm px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="flex min-h-7 w-full items-center gap-1.5 rounded-menu-item px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             onclick={() => { aiModelMenuOpen = false; onopenmodelsettings() }}
           >
             <Icon name="settings-2" class="size-3.5 shrink-0 text-muted-foreground" />

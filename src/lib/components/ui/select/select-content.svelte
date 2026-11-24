@@ -15,9 +15,9 @@
 	} = $props();
 </script>
 
-<!-- rounded-[10px] against the viewport's p-1 (4px) puts rounded-sm items at 6px - outer
-	 radius minus padding - so item corners sit concentric inside the panel
-	 instead of leaving a crescent of gap at each one.
+<!-- rounded-menu against the viewport's p-1 puts rounded-menu-item items at the
+	 panel's radius minus that padding (app.css), so item corners sit concentric
+	 inside the panel instead of leaving a crescent of gap at each one.
 	 The exit runs quicker than the enter: a menu should get out of the way faster
 	 than it arrives. -->
 <SelectPortal {...portalProps}>
@@ -27,7 +27,7 @@
 		{preventScroll}
 		data-slot="select-content"
 		class={cn(
-			"bg-popover text-popover-foreground data-closed:animate-out data-closed:fade-out-0 ease-out data-closed:duration-75 border border-border/70 min-w-36 max-w-(--menu-max-w) rounded-lg elevate-2-rim relative isolate z-50 overflow-x-hidden overflow-y-auto",
+			"bg-popover text-popover-foreground data-closed:animate-out data-closed:fade-out-0 ease-out data-closed:duration-75 border border-border/70 min-w-36 max-w-(--menu-max-w) rounded-menu elevate-2-rim relative isolate z-50 overflow-x-hidden overflow-y-auto",
 			className
 		)}
 		{...restProps}
