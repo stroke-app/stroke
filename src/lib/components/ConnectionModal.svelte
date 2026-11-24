@@ -137,29 +137,7 @@
     ondisconnect = () => {},
     /** A saved connection was deleted here; the shell ends its session if open. */
     onremoved = (/** @type {string} */ id) => {},
-    /**
-     * Labs, connection page in a tab: drawn in place (a tab's pane, or the
-     * window when nothing is connected) instead of as a dialog over the app.
-     */
-    inline = false,
-    /** Inline only: show the saved-connections rail. Off in a tab, where the
-     *  studio's own sidebar lists the connections. */
-    showRail = true,
-    /** Inline only: whether this view is the one on screen (its tab is the
-     *  active one). The page's keyboard and mouse chords only act when it is. */
-    active = true,
-    /** Inline only: bumped by the shell to start over (a new "Edit…" or
-     *  engine request) while the view stays open. */
-    resetKey = 0,
-    /** Inline only: drawn above the form, in place of the dialog's title row
-     *  (the shell's tab strip when nothing is connected). */
-    top = undefined,
   } = $props();
-  // Inline the app's own title bar is above, so nothing makes room for the
-  // traffic lights.
-  const macChrome = $derived(isMacChrome && !inline);
-  // The page's global chords act only while it is open and on screen.
-  const live = $derived(open && (!inline || active));
 
   /** The logos on the New connection button. */
   const NEW_CONN_STACK = ["postgres", "mysql", "mongodb", "sqlite"];
@@ -1082,7 +1060,7 @@
   // when there is nowhere to go - left alone the webview walks its own document
   // history, which in a Tauri window navigates away from the app.
   $effect(() => {
-    if (!live) return;
+    if (!open) return;
     /** @param {MouseEvent} e */
     function onMouseNav(e) {
       if (e.button !== 3 && e.button !== 4) return;
@@ -1090,7 +1068,7 @@
       e.stopPropagation();
       if (e.button !== 3) return; // nothing to go forward to
       if (step === "form") backToPick();
-      else if (!inline) requestClose();
+      else requestClose();
     }
     /** Swallow the paired auxclick/mouseup so the webview cannot act on them. */
     function swallowAux(/** @type {MouseEvent} */ e) {
@@ -2348,7 +2326,6 @@
 
   $effect(() => {
     if (!open) return;
-    void resetKey;
     untrack(() => {
       // The first provider call pays DNS + TCP + TLS; start those now, while
       // the dialog is still being read, so a listing or connect doesn't.
@@ -2614,8 +2591,6 @@
   const _rail = loadRail();
   let railWidth = $state(_rail.width);
   let railOpen = $state(_rail.open);
-  // The rail as drawn: a tab never shows it.
-  const railShown = $derived(inline ? showRail : railOpen);
   function saveRail() {
     try {
       localStorage.setItem(
@@ -2645,7 +2620,7 @@
    * @param {KeyboardEvent} e
    */
   function onRefreshKey(e) {
-    if (!live) return;
+    if (!open) return;
     if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
     const key = e.key.toLowerCase();
     /** @param {() => void} run */
@@ -2669,8 +2644,6 @@
     } else if (key === "n") {
       take(() => newConnectionForm());
     } else if (key === "f") {
-      // In a tab the studio's sidebar is the list: its own Mod+F finds there.
-      if (inline && !showRail) return;
       take(() => {
         if (!railOpen) { railOpen = true; saveRail(); }
         void tick().then(() => { savedSearchEl?.focus(); savedSearchEl?.select?.(); });
@@ -3465,7 +3438,7 @@
 <svelte:window
   onkeydowncapture={onRefreshKey}
   onkeydown={(e) => {
-    if (!live || inline) return;
+    if (!open) return;
     if (
       (e.ctrlKey || e.metaKey) &&
       !e.altKey &&
@@ -3978,15 +3951,57 @@
   </label>
 {/snippet}
 
-{#snippet panelBody()}
+<DialogPrimitive.Root bind:open>
+  <DialogPrimitive.Portal>
+    <DialogPrimitive.Overlay
+      style={modalInset}
+      class="fixed inset-x-0 z-50 bg-black/65 data-open:animate-in data-closed:animate-out data-open:fade-in-0 data-closed:fade-out-0 ease-out duration-150"
+    />
+    <DialogPrimitive.Content
+      bind:ref={dialogContentEl}
+      data-connection-modal
+      style={modalInset}
+      class="fixed inset-x-0 z-50 flex bg-background text-foreground outline-none data-open:animate-in data-closed:animate-out data-open:fade-in-0 data-closed:fade-out-0 data-open:zoom-in-[0.98] data-closed:zoom-out-[0.98] ease-out duration-200"
+      onOpenAutoFocus={(e) => {
+        // Start in the connection filter. Left to the dialog, focus went to
+        // its first button, the rail's Hide toggle, and opened from the
+        // keyboard it drew a focus box around that icon in the header.
+        if (!savedSearchEl) return;
+        e.preventDefault();
+        savedSearchEl.focus();
+      }}
+      onEscapeKeydown={(e) => {
+        if (isDirty && !isBusy) {
+          e.preventDefault();
+          confirmDiscardOpen = true;
+        }
+      }}
+      onFocusOutside={(e) => {
+        // Never let focus leaving the content dismiss the modal. Starting a native
+        // window drag/resize from the titlebar makes the webview lose focus, which
+        // bits-ui treats as focus-outside and closes the dialog. The modal is only
+        // meant to close via ×, Escape, or a genuine outside pointer interaction
+        // (handled below) - not because the OS took focus for a window drag.
+        e.preventDefault();
+      }}
+      onInteractOutside={(e) => {
+        // Nothing outside the content dismisses this dialog. It is inset to leave
+        // the titlebar and status bar usable, so "outside" is window chrome:
+        // dragging the window to move or resize it, or a stray click on the tab
+        // bar, would otherwise throw away a half-filled connection form. Closing
+        // is deliberate only - the × button, Escape, or a successful connect.
+        e.preventDefault();
+      }}
+    >
+      <DialogPrimitive.Title class="sr-only">Connections</DialogPrimitive.Title>
       <div
         class="grid h-full w-full min-h-0 grid-rows-[minmax(0,1fr)] overflow-hidden"
-        style="grid-template-columns: {railShown
+        style="grid-template-columns: {railOpen
           ? railWidth
           : 0}px minmax(0, 1fr)"
       >
         <!-- ── Sidebar ─────────────────────────────────────────────── -->
-        {#if !railShown}
+        {#if !railOpen}
           <div></div>
         {:else}
           <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
@@ -4015,12 +4030,9 @@
                  the rail's far end, and in a 48px row against the panel's 40px,
                  it jumped across and down on every collapse. -->
             <div
-              class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1.5 ps-3 pe-2", macChrome && "ps-[78px]")}
+              class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1.5 ps-3 pe-2", isMacChrome && "ps-[78px]")}
               data-tauri-drag-region="deep"
             >
-              <!-- Inline (nothing connected) the rail is the window's only list
-                   and there is no title row to bring it back from. -->
-              {#if !inline}
               <button
                 type="button"
                 onclick={() => {
@@ -4033,7 +4045,6 @@
               >
                 <Icon name="panel-left-close" class="size-4 shrink-0" />
               </button>
-              {/if}
               <h2 class="text-ui-sm font-medium leading-none text-foreground" data-tauri-drag-region>Connections</h2>
               <!-- The workspace row below already shows the count; here it only
                    appears while filtering, as matches. -->
@@ -4345,13 +4356,8 @@
                lights sit in it; 40px elsewhere), so its buttons share the
                lights' centre line instead of floating at an offset. It is also
                the window's drag area here. -->
-          {#if inline}
-            <!-- Inline there is no dialog chrome: the shell's tab strip (when
-                 nothing is connected) or nothing, under the studio's own tabs. -->
-            {#if top}{@render top()}{/if}
-          {:else}
           <div
-            class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1 px-3", macChrome && !railOpen && "ps-[78px]")}
+            class={cn("flex h-(--app-titlebar-h) shrink-0 items-center gap-1 px-3", isMacChrome && !railOpen && "ps-[78px]")}
             data-tauri-drag-region="deep"
           >
             {#if !railOpen}
@@ -4380,8 +4386,7 @@
               <Icon name="x" class="size-3.5 shrink-0" />
             </button>
           </div>
-          {/if}
-                    <!-- Connecting: the panel gives way to what is being dialled, the same
+          <!-- Connecting: the panel gives way to what is being dialled, the same
                look as the launch reconnect. The saved list on the left stays
                visible; the footer's Stop and this Cancel both end the attempt. -->
           {#if dialing}
@@ -6387,7 +6392,7 @@
                     <span class="min-w-0 truncate text-ui-2xs text-muted-foreground">
                       {saved.length === 0
                         ? "Everything stays on this machine"
-                        : railOpen || inline
+                        : railOpen
                           ? "Or pick a saved connection on the left"
                           : "Saved connections are hidden - reopen them from the top left"}
                     </span>
@@ -6674,64 +6679,9 @@
           </div>
         </div>
       {/if}
-{/snippet}
-
-{#if inline}
-  <!-- Labs, connection page in a tab: the same page drawn in place. -->
-  {#if open}
-    <div data-connection-modal class="relative flex h-full min-h-0 w-full min-w-0 flex-1 bg-background text-foreground">
-      {@render panelBody()}
-    </div>
-  {/if}
-{:else}
-<DialogPrimitive.Root bind:open>
-  <DialogPrimitive.Portal>
-    <DialogPrimitive.Overlay
-      style={modalInset}
-      class="fixed inset-x-0 z-50 bg-black/65 data-open:animate-in data-closed:animate-out data-open:fade-in-0 data-closed:fade-out-0 ease-out duration-150"
-    />
-    <DialogPrimitive.Content
-      bind:ref={dialogContentEl}
-      data-connection-modal
-      style={modalInset}
-      class="fixed inset-x-0 z-50 flex bg-background text-foreground outline-none data-open:animate-in data-closed:animate-out data-open:fade-in-0 data-closed:fade-out-0 data-open:zoom-in-[0.98] data-closed:zoom-out-[0.98] ease-out duration-200"
-      onOpenAutoFocus={(e) => {
-        // Start in the connection filter. Left to the dialog, focus went to
-        // its first button, the rail's Hide toggle, and opened from the
-        // keyboard it drew a focus box around that icon in the header.
-        if (!savedSearchEl) return;
-        e.preventDefault();
-        savedSearchEl.focus();
-      }}
-      onEscapeKeydown={(e) => {
-        if (isDirty && !isBusy) {
-          e.preventDefault();
-          confirmDiscardOpen = true;
-        }
-      }}
-      onFocusOutside={(e) => {
-        // Never let focus leaving the content dismiss the modal. Starting a native
-        // window drag/resize from the titlebar makes the webview lose focus, which
-        // bits-ui treats as focus-outside and closes the dialog. The modal is only
-        // meant to close via ×, Escape, or a genuine outside pointer interaction
-        // (handled below) - not because the OS took focus for a window drag.
-        e.preventDefault();
-      }}
-      onInteractOutside={(e) => {
-        // Nothing outside the content dismisses this dialog. It is inset to leave
-        // the titlebar and status bar usable, so "outside" is window chrome:
-        // dragging the window to move or resize it, or a stray click on the tab
-        // bar, would otherwise throw away a half-filled connection form. Closing
-        // is deliberate only - the × button, Escape, or a successful connect.
-        e.preventDefault();
-      }}
-    >
-      <DialogPrimitive.Title class="sr-only">Connections</DialogPrimitive.Title>
-      {@render panelBody()}
     </DialogPrimitive.Content>
   </DialogPrimitive.Portal>
 </DialogPrimitive.Root>
-{/if}
 
 <ConfirmDialog
   bind:open={confirmDeleteOpen}

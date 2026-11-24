@@ -44,7 +44,7 @@
   import { isTypingTarget } from '$lib/focus-search.js'
   import { slashFocusTarget } from '$lib/slash-focus.js'
   import QuitHint from './QuitHint.svelte'
-  import { appRelationColumns, appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, appConnectInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
+  import { appRelationColumns, appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
   import { isTextEntryTarget, setVimSubMode } from '$lib/vim/vim.js'
   import { normalizeColumn, columnType } from '$lib/column.js'
@@ -227,8 +227,6 @@
     createMigrationsTab,
     findMigrationsTab,
     createLicenseTab,
-    createConnectTab,
-    findConnectTab,
     createAiTab,
     findAiTab,
     findLicenseTab,
@@ -687,14 +685,6 @@
   let objectsFocusSearch = $state(/** @type {() => void} */ (() => {}))
   let dbSearchFocusInput = $state(/** @type {() => void} */ (() => {}))
   let showConnectionModal = $state(false)
-  // Labs, connection page in a tab (connectInTab). `showConnectionModal` stays
-  // the one way to ask for the page; with the option on, the request opens the
-  // Connect tab instead (or, with nothing connected, resets the page the window
-  // already shows), so the dialog never opens and none of its callers change.
-  // The inline page's own open flag: it clears it to close itself.
-  let connectInlineOpen = $state(true)
-  // Bumped to start the page over (a new Edit… or engine request) in place.
-  let connectResetKey = $state(0)
   /** Engine chosen on the welcome screen - the modal opens straight into its form. */
   let connectionModalEngine = $state('')
   /** A saved connection the dialog opens into its form (sidebar Edit…). */
@@ -896,7 +886,7 @@
     if (importDataOpen) dialogMounted.importData = true
     if ($shareRequest) dialogMounted.share = true
     if (showDockerModal) dialogMounted.docker = true
-    if (showConnectionModal && !$appConnectInTab) dialogMounted.connection = true
+    if (showConnectionModal) dialogMounted.connection = true
     if (showOnboarding) dialogMounted.onboarding = true
     if (showCreateDbDialog) dialogMounted.createDb = true
     if (generateSqlOpen) dialogMounted.generateSql = true
@@ -3491,7 +3481,7 @@ let rowSearch = $state('')
     // `sqlLoading` true (only the owning tab's state is patched), and the next
     // snapshot of ANY sql tab would then capture that stale true as its own.
     if (tab.kind !== 'sql') sqlLoading = false
-    if (tab.kind === 'welcome' || tab.kind === 'ai' || tab.kind === 'schema' || tab.kind === 'orm' || tab.kind === 'ddl' || tab.kind === 'connect') {
+    if (tab.kind === 'welcome' || tab.kind === 'ai' || tab.kind === 'schema' || tab.kind === 'orm' || tab.kind === 'ddl') {
       clearTableEditor()
       return
     }
@@ -5268,58 +5258,6 @@ let rowSearch = $state('')
   function openSchemaTab() {
     openSingletonTab({ find: findSchemaTab, create: createSchemaTab, capability: () => hasSchemaExplorer })
   }
-
-  /**
-   * Labs, connection page in a tab: open the Connect tab (or bring it forward)
-   * and start its page over, picking up any engine or Edit… request. Free, like
-   * the dialog it stands in for, so no Pro gate.
-   */
-  function openConnectTab() {
-    if (aiMode) exitAiMode()
-    connectInlineOpen = true
-    connectResetKey += 1
-    const existing = findConnectTab(tabs)
-    if (existing) { void activateTab(existing.id); return }
-    saveActiveTabState()
-    dropWelcomeTabs()
-    const tab = createConnectTab()
-    tabs = [...tabs, tab]
-    activeTabId = tab.id
-    clearTableEditor()
-  }
-
-  // A request for the connection page, with the Labs option on: never the
-  // dialog. Connected, it is the Connect tab; with nothing connected the window
-  // already shows the page, which starts over to take the request.
-  $effect(() => {
-    if (!showConnectionModal || !$appConnectInTab) return
-    untrack(() => {
-      showConnectionModal = false
-      if (connection) openConnectTab()
-      else { connectInlineOpen = true; connectResetKey += 1 }
-    })
-  })
-
-  // The option turned off with a Connect tab open: the tab has nothing to draw.
-  $effect(() => {
-    if ($appConnectInTab) return
-    untrack(() => {
-      const tab = findConnectTab(tabs)
-      if (tab) void closeTab(tab.id)
-    })
-  })
-
-  // The inline page closed itself (its hand-over after a connect, or a Cancel):
-  // its tab goes with it. With nothing connected the page is the window, so it
-  // simply stays.
-  $effect(() => {
-    if (connectInlineOpen) return
-    untrack(() => {
-      connectInlineOpen = true
-      const tab = connection ? findConnectTab(tabs) : null
-      if (tab) void closeTab(tab.id)
-    })
-  })
 
   function openOrmTab() {
     openSingletonTab({ find: findOrmTab, create: createOrmTab })
@@ -9727,8 +9665,7 @@ let rowSearch = $state('')
       label: sessionLabel(connection),
       // The tab on screen keeps its rows, so coming back to it is instant;
       // the others refetch when shown, so a kept database costs little.
-      // The Connect tab belongs to the window, not to this database.
-      tabs: tabs.filter((t) => t.kind !== 'connect').map((t) => {
+      tabs: tabs.map((t) => {
         if (!(t.kind === 'table' && t.state && t.id !== activeTabId)) return t
         _liveRowsByTab.delete(t.id)
         return { ...t, state: { ...t.state, rows: [], selected: new Set(), windowedHead: false, windowedLoaded: [], windowCount: 0, loadingRows: false, evicted: true } }
@@ -10966,7 +10903,7 @@ let rowSearch = $state('')
 {#if dialogMounted.connection}
   {#await lazyDialogs.connection() then { default: ConnectionModal }}
 <ConnectionModal
-  bind:open={() => showConnectionModal && !$appConnectInTab, (v) => (showConnectionModal = v)}
+  bind:open={showConnectionModal}
   bind:initialEngine={connectionModalEngine}
   bind:initialEditId={connectionModalEditId}
   bind:initialUri={connectionModalUri}
@@ -11541,18 +11478,6 @@ let rowSearch = $state('')
         {/await}
       </div>
     {/if}
-    {#snippet connectStrip()}
-      <!-- The studio's tab strip with its one tab, so the page reads as a tab
-           before anything is connected too. Not the real TabBar: its new-SQL,
-           close and pin actions mean nothing without a database. -->
-      <div class="studio-chrome flex h-9 shrink-0 items-center border-b border-border/50 bg-panel px-2" data-studio-chrome data-tauri-drag-region role="tablist" aria-label="Open editors">
-        <div role="tab" aria-selected="true" class="flex h-6 min-w-24 shrink-0 items-center gap-2 rounded-md bg-sidebar-accent px-2.5 text-ui-xs leading-none text-foreground shadow-[inset_0_0_0_1px_var(--color-border)]">
-          <Icon name="plug" class="size-3.5 shrink-0" />
-          <span class="truncate leading-normal">Connect</span>
-        </div>
-      </div>
-    {/snippet}
-
     {#snippet tabError(/** @type {unknown} */ error, /** @type {() => void} */ reset)}
       <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-3 p-8 text-center">
         <AlertTriangle class="size-8 text-destructive" />
@@ -11572,28 +11497,7 @@ let rowSearch = $state('')
       </div>
     {/snippet}
 
-    {#if !connection && $appConnectInTab}
-      <!-- Labs, connection page in a tab: with nothing connected the window is
-           the connect page and its saved connections, under one Connect tab,
-           instead of the launcher and a dialog over it. -->
-      {#await lazyDialogs.connection() then { default: ConnectionModal }}
-        <ConnectionModal
-          inline
-          bind:open={connectInlineOpen}
-          resetKey={connectResetKey}
-          bind:initialEngine={connectionModalEngine}
-          bind:initialEditId={connectionModalEditId}
-          bind:initialUri={connectionModalUri}
-          bind:initialName={connectionModalName}
-          onconnected={(conn, id) => onConnected(conn, id)}
-          maxConnections={$hasPro ? Infinity : FREE_CONNECTION_LIMIT}
-          activeConnectionName=""
-          ondisconnect={requestDisconnect}
-          onremoved={handleConnectionRemoved}
-          top={connectStrip}
-        />
-      {/await}
-    {:else if !connection}
+    {#if !connection}
       <LauncherScreen
         {savedConnections}
         dialogOpen={showConnectionModal}
@@ -11713,8 +11617,6 @@ let rowSearch = $state('')
       {#snippet sharedContent()}
       {#if activeTab?.kind === 'ai'}
         <!-- AI in a tab: drawn by the kept-alive block below -->
-      {:else if activeTab?.kind === 'connect'}
-        <!-- Connect tab: drawn by the kept-alive block below -->
       {:else if activeTab?.kind === 'schema'}
         <svelte:boundary failed={tabError}>
           {#await import('./SchemaPage.svelte')}<TabLoading />{:then { default: SchemaPage }}
@@ -11772,37 +11674,6 @@ let rowSearch = $state('')
           <svelte:boundary failed={tabError}>
             {#await import('./BackupPage.svelte')}<TabLoading />{:then { default: BackupPage }}
               <BackupPage dbType={dbType} activeSchema={activeSchema} {schemas} savedConnection={savedConnections.find((c) => c.id === activeConnectionId) ?? null} tables={tables.filter((t) => !/view|foreign/i.test(t.kind ?? '')).map((t) => ({ name: t.name, rowCount: t.rowCount }))} onrestored={async () => { await loadSchemas(); await loadTables({ force: true }); bumpObjects() }} />
-            {/await}
-          </svelte:boundary>
-        </div>
-      {/if}
-
-      <!-- Labs, connection page in a tab. Kept mounted while the tab is open,
-           so a half-filled form or a provider sign-in survives a look at
-           another tab. No rail: the studio's sidebar lists the connections. -->
-      {#if $appConnectInTab && tabs.some((t) => t.kind === 'connect')}
-        <div
-          class={activeTab?.kind === 'connect' ? 'flex min-h-0 flex-1 flex-col' : 'hidden'}
-          inert={activeTab?.kind !== 'connect' || undefined}
-        >
-          <svelte:boundary failed={tabError}>
-            {#await lazyDialogs.connection()}<TabLoading />{:then { default: ConnectionModal }}
-              <ConnectionModal
-                inline
-                showRail={false}
-                active={activeTab?.kind === 'connect'}
-                bind:open={connectInlineOpen}
-                resetKey={connectResetKey}
-                bind:initialEngine={connectionModalEngine}
-                bind:initialEditId={connectionModalEditId}
-                bind:initialUri={connectionModalUri}
-                bind:initialName={connectionModalName}
-                onconnected={(conn, id) => onConnected(conn, id)}
-                maxConnections={$hasPro ? Infinity : FREE_CONNECTION_LIMIT}
-                activeConnectionName={connection ? (connection.name || connection.database || connection.host || connection.filePath || 'Connected') : ''}
-                ondisconnect={requestDisconnect}
-                onremoved={handleConnectionRemoved}
-              />
             {/await}
           </svelte:boundary>
         </div>

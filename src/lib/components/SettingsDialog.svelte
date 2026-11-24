@@ -896,14 +896,6 @@
       () => { settings = updateSettings({ treeFocusOnSwitch: settings.treeFocusOnSwitch !== true }) },
     )}
   {/if}
-  {#if show('Connection page in a tab', 'Labs, open new connections and edits as a tab, and start in the app instead of a separate connection page')}
-    {@render switchRow(
-      'Connection page in a tab',
-      'Adding or editing a connection opens a Connect tab beside your tables and queries. With nothing connected, the window shows your saved connections and the connect page in one view instead of a separate first page.',
-      settings.connectInTab === true,
-      () => { settings = updateSettings({ connectInTab: settings.connectInTab !== true }) },
-    )}
-  {/if}
   {#if show('Boring connection bar', 'Labs, group saved connections into a folder per database kind')}
     {@render switchRow(
       'Boring connection bar',
