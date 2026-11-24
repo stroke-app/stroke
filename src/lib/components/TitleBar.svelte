@@ -3,12 +3,11 @@
   import { onMount } from 'svelte'
   import MessageSquare from '@lucide/svelte/icons/message-square'
   import { cn } from '$lib/utils.js'
-  import { getAppScale } from '$lib/app-zoom.js'
   import { detectOs } from '$lib/platform.js'
   import { isTrialActive, licenseStatus } from '$lib/stores/license.js'
   import Logo from './Logo.svelte'
   import AppMenuBar from './AppMenuBar.svelte'
-  import { appMenuBar, appZoom } from '$lib/stores/settings.js'
+  import { appMenuBar } from '$lib/stores/settings.js'
   import WindowControls from './WindowControls.svelte'
   import TitleBarMenu from './TitleBarMenu.svelte'
   import WorkspaceSwitcher from './WorkspaceSwitcher.svelte'
@@ -95,24 +94,12 @@
   let titleW = $state(0)
   const showTitle = $derived(crumbRoom > 0 && crumbRoom >= Math.min(titleW, 96))
 
-  // Fixed px like the bar itself: the macOS bar is a fixed 38px, so a rem
-  // control (42px at 150%) overflowed it. One 28px row at every zoom.
-  // The title bar never zooms, like the OS's own: the traffic lights beside it
-  // are drawn at 100% whatever the app zoom, so a bar that grew with the UI
-  // overflowed them (menus, workspace name and buttons all ballooned). It is
-  // counter-zoomed by 1/scale; its few px sizes are written × scale above so
-  // they land back on whole pixels. Menus it opens are portaled and still zoom.
-  // Tailwind's spacing (p-*, gap-*, h-*, size-*) is rem, and WebKitGTK does
-  // not apply `zoom` to rem lengths: on Linux the counter-zoom shrank the text
-  // back but left padding and gaps at the zoomed size, so the menu row spread
-  // out at every zoom step. Inside the bar the spacing unit is px x scale
-  // instead (style below), which every engine zooms back to the same 4px.
-  // Read in the same frame: applySettings sets --app-scale before it updates
-  // appZoom. Deferring it a frame made the bar jump after every zoom step.
-  const chromeZoom = $derived.by(() => {
-    void $appZoom
-    return 1 / getAppScale()
-  })
+  // The bar zooms with the rest of the UI. It used to be counter-zoomed to stay
+  // at 100% like an OS title bar, but at 200% that left the menus, workspace
+  // switcher and (on macOS) the open tabs at half the size of everything below
+  // them. Its height is --app-titlebar-h (StudioShell), which scales too, so the
+  // sidebar's top row and the inset pages stay level with it. Inside the bar the
+  // spacing unit is 4px x scale, the size it always had at 100%.
 
   const iconBtn = 'inline-flex size-[calc(26px*var(--app-scale))] items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground active:bg-foreground/[0.1]'
 </script>
@@ -124,9 +111,8 @@
   style) floating over this bar, so it only reserves space for them here.
 -->
 <div
-  class="studio-chrome relative flex shrink-0 items-center border-b border-border/50 bg-panel {isMac ? 'h-[calc(38px*var(--app-scale))] pr-[calc(10px*var(--app-scale))]' : 'h-[calc(36px*var(--app-scale))] pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
+  class="studio-chrome relative flex shrink-0 items-center border-b border-border/50 bg-panel h-(--app-titlebar-h) {isMac ? 'pr-[calc(10px*var(--app-scale))]' : 'pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
   data-studio-chrome
-  style:zoom={chromeZoom}
   style:--spacing="calc(4px * var(--app-scale, 1))"
   data-studio-region="titlebar"
   bind:clientWidth={barW}
@@ -142,7 +128,8 @@
     <!-- The lights sit over the sidebar's top row when it is open; with it
          hidden they are over this bar, so it leaves them room. -->
     <div class="flex shrink-0 items-center self-stretch" bind:clientWidth={leftW}>
-      {#if !sidebarWidth && !fullscreen}<div class="w-[calc(78px*var(--app-scale))] shrink-0"></div>{/if}
+      <!-- 78px at every zoom: the OS draws the lights at a fixed size. -->
+      {#if !sidebarWidth && !fullscreen}<div class="w-[78px] shrink-0"></div>{/if}
     </div>
 
     <!-- The content's top row: where you are, left-aligned from the sidebar's

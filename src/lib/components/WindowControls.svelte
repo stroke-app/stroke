@@ -42,10 +42,11 @@
   const toggleMaximizeWindow = () => windowAction('toggleMaximize', (w) => w.toggleMaximize())
   const closeWindow = () => windowAction('close', (w) => w.close())
 
-  // Windows 11 caption buttons: 46px wide, full titlebar height, square, crisp 10px
+  // Windows 11 caption buttons: 46px wide at 100% (scaled with the zoom, like
+  // the bar's height, so they keep their shape), full titlebar height, square, crisp 10px
   // geometric Fluent glyphs, light hover fill and Windows red behind Close.
   const winBtn =
-    'inline-flex h-full w-[46px] items-center justify-center text-foreground/80 hover:bg-foreground/[0.08] hover:text-foreground active:bg-foreground/[0.14]'
+    'inline-flex h-full w-[calc(46px*var(--app-scale))] items-center justify-center text-foreground/80 hover:bg-foreground/[0.08] hover:text-foreground active:bg-foreground/[0.14]'
 
   // Linux (GNOME / GTK / Adwaita style): circular subtle controls inset cleanly
   // from the window corner instead of Windows' sharp rectangular caption strip.
