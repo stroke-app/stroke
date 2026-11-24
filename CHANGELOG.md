@@ -4,6 +4,15 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.7.8] - 2026-11-24
+
+### Bug Fixes
+- **Connections are shared by Stroke and Stroke Nightly** - A connection added in one app was missing in the other, and opening Stable then dropped Nightly's saved passwords from the keychain the two share. Both apps now use one saved list, and each save merges with it, so both can stay open side by side: coming back to a window shows what the other one added, edited or deleted, with its password. Nightly's own list is merged in on first launch, and a copy of it is kept.
+
+### Changes
+- **Stroke Nightly looks like Nightly** - Its title bar has a night sky behind it: a violet glow from the left, stars that twinkle out of step, and now and then a shooting star. A 1px violet to amber line runs along the top of the window. Light themes keep the glow and the line without the stars. Stable looks as before, and the sky holds still with reduced motion turned on.
+
+
 ## [3.7.7] - 2026-11-24
 
 ### Bug Fixes

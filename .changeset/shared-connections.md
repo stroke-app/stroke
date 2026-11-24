@@ -1,2 +1,0 @@
-### Bug Fixes
-- **Connections are shared by Stroke and Stroke Nightly** - A connection added in one app was missing in the other, and opening Stable then dropped Nightly's saved passwords from the keychain the two share. Both apps now use one saved list, and each save merges with it, so both can stay open side by side: coming back to a window shows what the other one added, edited or deleted, with its password. Nightly's own list is merged in on first launch, and a copy of it is kept.
