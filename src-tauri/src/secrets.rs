@@ -420,10 +420,102 @@ pub async fn conn_secrets_write(app: tauri::AppHandle, json: String) -> Result<(
     .await
 }
 
+// Stroke and Stroke Nightly share this vault (same keychain service) and can
+// run at once, but each process trusts its own session cache. A write built
+// from that cache put back whatever the process read at launch, so one track
+// silently dropped passwords the other had saved since. The connection
+// secrets are therefore read fresh from the durable store before a merge, and
+// written as a merge: ids this app sends are replaced, ids it names as deleted
+// are removed, and every other id is left as the other app saved it.
+
+/// The connection secrets as the durable store holds them right now, or `None`
+/// when it can't be read (then the session cache is the best answer).
+fn fresh_conn_secrets(app: &tauri::AppHandle) -> Option<Option<String>> {
+    let path = legacy_path(app);
+    if let Some(map) = std::fs::read_to_string(&path).ok().and_then(|s| parse_map(&s)) {
+        return Some(map.get(CONN_SECRETS_KEY).cloned());
+    }
+    match read_vault(&Keychain) {
+        Ok(map) => Some(map.and_then(|m| m.get(CONN_SECRETS_KEY).cloned())),
+        Err(_) => None,
+    }
+}
+
+/// `base` (the stored `{ id: { field: secret } }`) with `set` applied (an empty
+/// object clears that id) and `removed` ids dropped. `None` when nothing is left.
+fn merge_conn_secrets(base: Option<&str>, set: &serde_json::Map<String, serde_json::Value>, removed: &[String]) -> Option<String> {
+    let mut map: serde_json::Map<String, serde_json::Value> = base
+        .and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok())
+        .and_then(|v| v.as_object().cloned())
+        .unwrap_or_default();
+    for (id, sec) in set {
+        if sec.as_object().is_some_and(|o| !o.is_empty()) {
+            map.insert(id.clone(), sec.clone());
+        } else {
+            map.remove(id);
+        }
+    }
+    for id in removed {
+        map.remove(id);
+    }
+    (!map.is_empty()).then(|| serde_json::Value::Object(map).to_string())
+}
+
+/// Like `conn_secrets_read`, but from the durable store, so secrets the other
+/// track saved after this one started are seen. Refreshes the session cache.
+#[tauri::command]
+pub async fn conn_secrets_read_fresh(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    update_async(&app.clone(), move |map| {
+        if let Some(fresh) = fresh_conn_secrets(&app) {
+            match &fresh {
+                Some(v) => map.insert(CONN_SECRETS_KEY.to_string(), v.clone()),
+                None => map.remove(CONN_SECRETS_KEY),
+            };
+        }
+        map.get(CONN_SECRETS_KEY).cloned()
+    })
+    .await
+}
+
+/// Merge this app's connection secrets into the vault: `set` is
+/// `{ id: { field: secret } }` for every connection this app has (an empty
+/// object clears that id), `removed` the ids it deleted.
+#[tauri::command]
+pub async fn conn_secrets_merge(app: tauri::AppHandle, set: String, removed: Vec<String>) -> Result<(), String> {
+    let set: serde_json::Value = serde_json::from_str(&set).map_err(|e| format!("Not JSON: {e}"))?;
+    let set = set.as_object().cloned().ok_or("Expected an object of connection secrets")?;
+    update_async(&app.clone(), move |map| {
+        let base = match fresh_conn_secrets(&app) {
+            Some(fresh) => fresh,
+            None => map.get(CONN_SECRETS_KEY).cloned(),
+        };
+        match merge_conn_secrets(base.as_deref(), &set, &removed) {
+            Some(v) => map.insert(CONN_SECRETS_KEY.to_string(), v),
+            None => map.remove(CONN_SECRETS_KEY),
+        };
+    })
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::cell::RefCell;
+
+    #[test]
+    fn connection_secrets_merge_keeps_the_other_tracks_ids() {
+        let base = r#"{"stable":{"password":"s"},"nightly":{"password":"n"},"old":{"password":"o"}}"#;
+        let set: serde_json::Map<String, serde_json::Value> =
+            serde_json::from_str(r#"{"stable":{"password":"s2"},"cleared":{},"new":{"apiKey":"k"}}"#).unwrap();
+        let out: serde_json::Value =
+            serde_json::from_str(&merge_conn_secrets(Some(base), &set, &["old".into()]).unwrap()).unwrap();
+        assert_eq!(out["stable"]["password"], "s2");
+        assert_eq!(out["nightly"]["password"], "n", "an id this app never had is left alone");
+        assert_eq!(out["new"]["apiKey"], "k");
+        assert!(out.get("old").is_none() && out.get("cleared").is_none());
+        let empty = serde_json::Map::new();
+        assert_eq!(merge_conn_secrets(Some(r#"{"a":{"password":"x"}}"#), &empty, &["a".into()]), None);
+    }
 
     /// In-memory keychain with Windows' per-credential limit, and switches to
     /// make it refuse writes.

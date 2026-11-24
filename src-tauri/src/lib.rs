@@ -964,6 +964,8 @@ pub fn run() {
             commands::connections_store_write,
             secrets::conn_secrets_read,
             secrets::conn_secrets_write,
+            secrets::conn_secrets_read_fresh,
+            secrets::conn_secrets_merge,
             metrics::get_app_metrics,
             metrics::set_process_title,
             commands::enable_autostart,

@@ -310,6 +310,7 @@
     setWasDisconnected,
     upsertConnection,
     engineFamily,
+    refreshConnectionsFromDisk,
   } from '$lib/stores/connections.js'
   import { workspaces, activeWorkspaceId, setActiveWorkspace, workspaceOf } from '$lib/stores/workspaces.js'
   import { hasPro, FREE_CONNECTION_LIMIT } from '$lib/stores/license.js'
@@ -774,6 +775,21 @@
     const reload = () => { savedConnections = loadSavedConnections() }
     window.addEventListener('stroke:connections-synced', reload)
     return () => window.removeEventListener('stroke:connections-synced', reload)
+  })
+  // Stroke and Stroke Nightly share the saved list: coming back to this window,
+  // show what the other one added, edited or deleted in the meantime.
+  $effect(() => {
+    if (!('__TAURI_INTERNALS__' in window)) return
+    let busy = false
+    const onFocus = () => {
+      if (busy) return
+      busy = true
+      void refreshConnectionsFromDisk()
+        .then((changed) => { if (changed) savedConnections = loadSavedConnections() })
+        .finally(() => { busy = false })
+    }
+    window.addEventListener('focus', onFocus)
+    return () => window.removeEventListener('focus', onFocus)
   })
   let showSettingsModal = $state(false)
   /** Settings category to open on next (e.g. 'keybindings'); the dialog clears it. */
