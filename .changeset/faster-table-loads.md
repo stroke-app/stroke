@@ -1,5 +1,0 @@
-### Fixes
-- **Tables with large JSON or text columns open in a fraction of the time** - A big value is now sent as its size, decided from Postgres's stored size without reading the value, and loads when you open the cell. Before, each medium-sized value was decompressed and converted to text twice just to cut a short preview: a 1,762-row resume table took 12.6 s to load, and now takes under a second on the server.
-- **Rows on screen come first** - Windows of rows are about 600 KB instead of 2 MB, and rows you scroll to while their window is still downloading are fetched on their own, so a slow link no longer leaves the grid on skeletons for seconds.
-- **Medium tables stream in full** - A table of a few thousand wide rows streams in windows instead of one large response, and a table under 10,000 rows keeps loading the rest in the background until every row is in.
-- **No double fetch on first open** - The first page of a table now comes back in the order the rest of the table loads in, so it is kept instead of fetched again. When that order is not known yet, the first fetch is a 20-row measure instead of a full screen.
