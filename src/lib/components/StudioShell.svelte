@@ -1,5 +1,6 @@
 <script>
   import { formatApiCall } from '$lib/dynamo-json.js'
+  import { isNightly } from '$lib/build-track.js'
   import { sqlFamily, SQL_SNIPPETS } from '$lib/sql-complete-data.js'
   import { spannerIsPg } from '$lib/sql-ident.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
@@ -2931,7 +2932,8 @@ let rowSearch = $state('')
    */
   const windowTitle = $derived.by(() => {
     const c = connection
-    if (!c) return 'Stroke'
+    // Nightly says so where the app's name shows, so it isn't taken for Stable.
+    if (!c) return $isNightly ? 'Stroke Nightly' : 'Stroke'
     // A provider connection is named after where it lives ("Railway ·
     // luminous-flexibility / MySQL"). Its database name is usually the
     // template's generic one - Railway's `railway`, Supabase's `postgres`,

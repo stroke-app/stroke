@@ -3,7 +3,6 @@
   import { onMount } from 'svelte'
   import { Toaster } from '$lib/components/ui/sonner/index.js'
   import ZoomIndicator from '$lib/components/ZoomIndicator.svelte'
-  import NightlyEdge from '$lib/components/NightlyEdge.svelte'
   import StudioShell from './lib/components/StudioShell.svelte'
 
 
@@ -95,7 +94,6 @@
 <!-- The corner is a setting (Appearance → Notifications). Top corners clear
      the titlebar, bottom ones the status bar. -->
 <ZoomIndicator />
-<NightlyEdge />
 <Toaster
   position={$toastPosition}
   offset={{ top: '42px', bottom: '32px', left: '12px', right: '12px' }}
