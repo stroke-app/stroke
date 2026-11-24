@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { facesFor, faceStack, normalizeFontSettings, systemLabels, DEFAULT_FONT_SETTINGS } from './fonts.js'
+import { facesFor, faceStack, normalizeFontSettings, systemLabels, cleanFamily, DEFAULT_FONT_SETTINGS } from './fonts.js'
 
 describe('facesFor', () => {
   const all = () => true
@@ -35,5 +35,33 @@ describe('normalizeFontSettings', () => {
     expect(faceStack('menlo')).toBe('Menlo, monospace')
     expect(faceStack('')).toBeNull()
     expect(faceStack('nope')).toBeNull()
+  })
+})
+
+describe('installed families', () => {
+  const all = () => true
+  const system = [
+    { family: 'Adwaita Mono', mono: true },
+    { family: 'Adwaita Sans', mono: false },
+    { family: 'Ubuntu', mono: false },
+    { family: 'Inter', mono: false },
+  ]
+  it('follow the curated faces, once each, mono-only where the surface is', () => {
+    const code = facesFor(['mono'], { os: 'linux', installed: all, system })
+    expect(code.filter((f) => f.installed).map((f) => f.label)).toEqual(['Adwaita Mono'])
+    const ui = facesFor(['sans', 'serif'], { os: 'linux', installed: all, system }).filter((f) => f.installed)
+    // Ubuntu is curated and Inter is bundled: neither is listed again.
+    expect(ui.map((f) => f.label)).toEqual(['Adwaita Mono', 'Adwaita Sans'])
+    expect(ui[0].id).toBe('sys:Adwaita Mono')
+  })
+  it('fall back to the face they replace', () => {
+    expect(faceStack('sys:Adwaita Mono', '"JetBrains Mono Variable", monospace')).toBe('"Adwaita Mono", "JetBrains Mono Variable", monospace')
+  })
+  it('are kept through normalising, and cannot break out of the CSS string', () => {
+    const n = normalizeFontSettings({ separate: true, code: 'sys:Adwaita Mono', app: 'sys:Liberation Mono', appMono: true })
+    expect(n).toMatchObject({ code: 'sys:Adwaita Mono', app: 'sys:Liberation Mono', appMono: true })
+    expect(normalizeFontSettings({ app: 'sys:', appMono: true })).toMatchObject({ app: '', appMono: false })
+    expect(cleanFamily('Evil"; } body { x: "')).toBe('Evil  body  x:')
+    expect(faceStack('sys:a"b')).toBe('"ab", system-ui, sans-serif')
   })
 })

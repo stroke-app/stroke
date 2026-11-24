@@ -28,7 +28,7 @@ export default {
   "settings.pagination.desc": "Como a grade pagina as linhas: offset, cursor, keyset ou temporal.",
   "settings.defaultView.desc": "Em qual visualização uma tabela abre: Tabela, JSON, Registro, Texto ou Gráfico.",
   "settings.theme.desc": "Tema de cores do app inteiro.",
-  "settings.font.desc": "Fonte da interface e do editor.",
+  "settings.font.desc": "O app inteiro: interface, grade de dados, editor SQL e terminal.",
   "settings.maxQueryHistory": "Máximo do histórico de consultas",
   "settings.maxQueryHistory.desc": "Quantas consultas executadas guardar por conexão.",
   "settings.maxAllowedPacket": "Pacote máximo permitido",

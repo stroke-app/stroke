@@ -4,7 +4,10 @@
   // regardless of how many items it holds (see `searchThreshold` there).
   // Drop-in replacement for bits-ui <Select> in the common case.
   //
-  //   <SelectMenu value={x} onValueChange={setX} items={[{value,label,icon?,hint?}]} />
+  //   <SelectMenu value={x} onValueChange={setX} items={[{value,label,icon?,hint?,desc?,font?}]} />
+  //
+  // `desc` is muted text after the label (a row's detail); `font` draws the
+  // label in that CSS font-family, as font pickers show each face in itself.
   //
   // For custom leading visuals (font preview, variable-weight icon, brand icon)
   // pass a `lead` snippet - it receives the full item and renders both the
@@ -63,14 +66,16 @@
     >
       <span class="flex min-w-0 items-center gap-2">
         {#if lead && selected}{@render lead(selected)}{:else if selected?.icon}<Icon name={selected.icon} class="size-3.5 shrink-0 text-muted-foreground" />{/if}
-        <span class="truncate font-medium">{selected?.label ?? placeholder}</span>
+        <span class="truncate font-medium" style:font-family={selected?.font}>{selected?.label ?? placeholder}</span>
       </span>
       <Icon name="chevron-down" class="size-3.5 shrink-0 text-muted-foreground" />
     </button>
   {/snippet}
   {#snippet item(it)}
     {#if lead}{@render lead(it)}{:else if it.icon}<Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground" />{/if}
-    <span class="min-w-0 flex-1 truncate">{it.label}</span>
+    <!-- Fixed line height, label top-aligned: a face with tall metrics drawn
+         in its own font would otherwise make its row taller than the rest. -->
+    <span class="min-w-0 flex-1 truncate leading-5"><span class="align-top" style:font-family={it.font}>{it.label}</span>{#if it.desc}<span class="ml-2 text-muted-foreground">{it.desc}</span>{/if}</span>
     {#if it.hint}<span class="shrink-0 text-ui-3xs text-muted-foreground">{it.hint}</span>{/if}
     {#if String(it.value) === String(value)}<Icon name="check" class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
   {/snippet}

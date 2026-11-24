@@ -20,6 +20,9 @@ tauri-build = { version = "2.6.2", features = [] }
 [dependencies]
 serde_json = { version = "1.0", features = ["preserve_order", "raw_value"] }
 serde = { version = "1.0", features = ["derive"] }
+# Lists the installed font families for the font pickers (system_fonts.rs).
+fontdb = "0.24"
+ttf-parser = "0.25"
 log = "0.4"
 tauri = { version = "2.11.2", features = ["macos-private-api", "image-png"] }
 tauri-plugin-opener = "2"

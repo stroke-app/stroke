@@ -38,6 +38,7 @@ mod proc;
 pub(crate) mod proxy;
 mod providers;
 mod secrets;
+mod system_fonts;
 mod sync;
 mod updates;
 mod quit;
@@ -966,6 +967,7 @@ pub fn run() {
             secrets::conn_secrets_write,
             secrets::conn_secrets_read_fresh,
             secrets::conn_secrets_merge,
+            system_fonts::system_fonts,
             metrics::get_app_metrics,
             metrics::set_process_title,
             commands::enable_autostart,
