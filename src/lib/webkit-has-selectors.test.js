@@ -26,7 +26,7 @@ describe('non-subject :has() selectors', () => {
         .replace(/<!--[\s\S]*?-->/g, '')
         .replace(/\/\*[\s\S]*?\*\//g, '')
         .replace(/^\s*\/\/.*$/gm, '')
-      for (const re of [/\bgroup-has-[\w[\]>=-]*\//g, /\bhas-\[[^\]\s]*\]\]?:\[&/g, /:has\([^)]*\)\s+[[.\w*]/g]) {
+      for (const re of [/\bgroup-has-[\w[\]>=-]*\//g, /\bhas-\[[^\]\s]*\]\]?:\[&/g, /:has\([^)]*\)\s+[[.\w*:]/g]) {
         for (const m of src.matchAll(re)) bad.push(`${path.relative(root, f)}: ${m[0]}`)
       }
     }
