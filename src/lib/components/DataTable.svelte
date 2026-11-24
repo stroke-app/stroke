@@ -9533,8 +9533,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                      comment above describes, in the other axis, and one that
                      showed up on every platform because nothing about it was
                      platform-specific. -->
+                <!-- And the colour it drew it in: the canvas paints values at
+                     86% of the foreground (cText), so a field at full
+                     --foreground made the value look brighter and heavier, as if
+                     it grew, the moment you started editing. -->
                 {@const eShift = editorTextShift(_fonts?.cell)}
-                {@const eFontStyle = `font-family:var(--grid-font, var(--font-mono));font-size:${gridMetrics.cellPx}px;font-weight:400;letter-spacing:0;font-optical-sizing:none;${eShift ? `transform:translateY(${eShift}px);` : ''}`}
+                {@const eFontStyle = `font-family:var(--grid-font, var(--font-mono));font-size:${gridMetrics.cellPx}px;font-weight:400;letter-spacing:0;font-optical-sizing:none;color:color-mix(in oklch, var(--foreground) 86%, transparent);${eShift ? `transform:translateY(${eShift}px);` : ''}`}
                 {@const eFieldStyle = `padding-left:${CELL_PAD_X}px;padding-right:${CELL_PAD_X}px;text-align:${eAlignRight ? 'right' : 'left'};${eFontStyle}`}
                 <!-- The date editor carries a calendar button beside its field, so
                      it pads only the side the text is anchored to and lets the
