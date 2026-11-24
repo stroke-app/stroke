@@ -1,3 +1,0 @@
-### Bug Fixes
-- **Title bar at high zoom** - The title bar zooms with the rest of the app again. At 200% its menus, workspace switcher, window buttons and, on macOS, the open tabs stayed at 100% next to a 200% sidebar. The sidebar's top row now stays level with the bar and fits its buttons at every zoom.
-- **Zoom pill no longer sticks** - The zoom level pill could stay on screen for good after clicking Reset or when it opened under the pointer. It now closes 2 seconds after the pointer leaves it, and right away on Reset, Escape, a click elsewhere, or when the window loses focus. It sits just under the title bar.
