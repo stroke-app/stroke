@@ -106,7 +106,7 @@ export const FONT_SURFACES = /** @type {const} */ ([
 /** @typedef {{ separate: boolean, ui: string, code: string, grid: string, chat: string, terminal: string, smoothing: 'grayscale' | 'system' }} FontSettings */
 
 /** @type {FontSettings} */
-export const DEFAULT_FONT_SETTINGS = { separate: false, ui: '', code: '', grid: '', chat: '', terminal: '', smoothing: 'grayscale' }
+export const DEFAULT_FONT_SETTINGS = { separate: false, ui: '', code: '', grid: '', chat: '', terminal: '', smoothing: 'system' }
 
 /** @param {unknown} v @returns {FontSettings} */
 export function normalizeFontSettings(v) {
@@ -119,6 +119,6 @@ export function normalizeFontSettings(v) {
     grid: face(o.grid),
     chat: face(o.chat),
     terminal: face(o.terminal),
-    smoothing: o.smoothing === 'system' ? 'system' : 'grayscale',
+    smoothing: o.smoothing === 'grayscale' ? 'grayscale' : 'system',
   }
 }

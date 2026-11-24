@@ -38,14 +38,14 @@
 <div class={cn('fixed inset-0 z-[9999] flex flex-col bg-background transition-opacity duration-200 ease-out', leaving && 'opacity-0')}>
   <!-- Bare title bar: this screen replaces the app, TitleBar included. -->
   <div
-    class="flex shrink-0 items-center select-none {isMac ? 'h-[52px] px-[10px]' : 'h-10 pl-[10px]'}"
+    class="flex h-(--app-titlebar-h) shrink-0 items-center select-none {isMac ? 'px-2.5' : 'pl-2.5'}"
     data-tauri-drag-region
     role="toolbar"
     aria-label="Window title bar"
     tabindex="-1"
     ondblclick={onDragRegionDblClick}
   >
-    {#if isMac}<div class="w-[92px] shrink-0"></div>{/if}
+    {#if isMac}<div class="w-[78px] shrink-0"></div>{/if}
     <div class="min-w-0 flex-1" data-tauri-drag-region></div>
     <WindowControls />
   </div>

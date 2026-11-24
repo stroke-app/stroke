@@ -114,7 +114,7 @@
     return 1 / getAppScale()
   })
 
-  const iconBtn = 'inline-flex size-[calc(28px*var(--app-scale))] items-center justify-center rounded-md text-muted-foreground transition-[color,scale] duration-[120ms] ease-[var(--ease-out)] hover:text-foreground active:scale-[0.97]'
+  const iconBtn = 'inline-flex size-[calc(26px*var(--app-scale))] items-center justify-center rounded-md text-muted-foreground hover:bg-foreground/[0.06] hover:text-foreground active:bg-foreground/[0.1]'
 </script>
 
 <!--
@@ -124,7 +124,7 @@
   style) floating over this bar, so it only reserves space for them here.
 -->
 <div
-  class="studio-chrome relative flex shrink-0 items-center bg-panel {isMac ? 'h-[calc(52px*var(--app-scale))] pr-[calc(10px*var(--app-scale))]' : 'h-[calc(40px*var(--app-scale))] border-b border-border/40 pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
+  class="studio-chrome relative flex shrink-0 items-center border-b border-border/50 bg-panel {isMac ? 'h-[calc(38px*var(--app-scale))] pr-[calc(10px*var(--app-scale))]' : 'h-[calc(36px*var(--app-scale))] pl-[calc(10px*var(--app-scale))] pr-0'} select-none"
   data-studio-chrome
   style:zoom={chromeZoom}
   style:--spacing="calc(4px * var(--app-scale, 1))"
@@ -138,19 +138,11 @@
 
   {#if isMac}
     <!-- Room for the native traffic lights (inset set in mac_chrome.rs: they end
-         ~68px in). Full screen hides them, so the room goes too. -->
-    <!-- Pixels, not rem: the traffic lights are drawn by the OS and ignore the
-         app's zoom (which scales the root font size), so anything sized in rem
-         here drifted toward or away from them as you zoomed. The lights end at
-         ~66px; the bar's own 10px padding plus this spacer leaves a steady 12px
-         before the toggle. -->
-    <!-- The sidebar's top: same width and surface as the sidebar under it, so
-         the sidebar reads as one full-height column (as in T3 Code). Collapsed,
-         it is just the lights and the toggle, and the rest slides left. -->
+         ~66px in). Full screen hides them, so the room goes too. -->
     <!-- The lights sit over the sidebar's top row when it is open; with it
          hidden they are over this bar, so it leaves them room. -->
     <div class="flex shrink-0 items-center self-stretch" bind:clientWidth={leftW}>
-      {#if !sidebarWidth && !fullscreen}<div class="w-[calc(92px*var(--app-scale))] shrink-0"></div>{/if}
+      {#if !sidebarWidth && !fullscreen}<div class="w-[calc(78px*var(--app-scale))] shrink-0"></div>{/if}
     </div>
 
     <!-- The content's top row: where you are, left-aligned from the sidebar's

@@ -9,25 +9,20 @@
 /**
  * Root font size at 100%, on every platform.
  *
- * It used to be per-OS - 14px on macOS, 18px elsewhere - which shipped the same
- * screen at two different sizes. 14px was also too small to hold the scale
- * together: below 100% the ten steps could not stay distinct on a whole-pixel
- * grid, so captions and labels collapsed onto one size. 16px keeps the smallest
- * step above 9px at the lowest rung, and is the web's own default reading size.
+ * 14px matches native desktop UI density (DESIGN_SYSTEM.md: text-ui = 14px,
+ * text-ui-sm = 13px, text-ui-xs = 12px, text-ui-2xs = 11px, text-ui-3xs = 10px)
+ * while keeping every rung distinct on a whole-pixel grid down to 90%.
  */
-export const ROOT_BASE_PX = 16
+export const ROOT_BASE_PX = 14
 
 /**
  * UI zoom scale (font + layout). 1 = 100%.
  *
- * Rungs are spaced so each one lands on its own whole-pixel root at that base.
- * 5% rungs could not: 5% of 16px is 0.8px, so half of them rounded onto the rung
- * next door and rendered identically. The old code worked around that by
- * stepping one pixel per rung INDEX, which made every label but 100% a lie -
- * "150%" rendered at 136%. Coarser rungs that each mean what they say are worth
- * more than ten rungs where only some of them move.
+ * Rungs are spaced so each one lands on its own whole-pixel root at 14px
+ * within 3pp of its advertised label, and the lowest rung (90%, 13px) keeps
+ * the smallest step at 9px with every step strictly ordered.
  */
-export const ZOOM_STEPS = [0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2]
+export const ZOOM_STEPS = [0.9, 1, 1.1, 1.2, 1.35, 1.5, 1.7, 2]
 
 /** Root size for a zoom rung. Whole pixels: WebKit rasterises fractional text soft. */
 export const rootPxFor = (zoom) => Math.max(1, Math.round(ROOT_BASE_PX * zoom))

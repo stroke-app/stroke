@@ -27,8 +27,9 @@ describe('facesFor', () => {
 describe('normalizeFontSettings', () => {
   it('defaults, and drops unknown faces', () => {
     expect(normalizeFontSettings(undefined)).toEqual(DEFAULT_FONT_SETTINGS)
-    const n = normalizeFontSettings({ separate: true, ui: 'inter', code: 'comic-sans', smoothing: 'system' })
-    expect(n).toMatchObject({ separate: true, ui: 'inter', code: '', smoothing: 'system' })
+    const n = normalizeFontSettings({ separate: true, ui: 'inter', code: 'comic-sans', smoothing: 'grayscale' })
+    expect(n).toMatchObject({ separate: true, ui: 'inter', code: '', smoothing: 'grayscale' })
+    expect(normalizeFontSettings({ smoothing: 'system' }).smoothing).toBe('system')
   })
   it('stacks for known faces only', () => {
     expect(faceStack('menlo')).toBe('Menlo, monospace')

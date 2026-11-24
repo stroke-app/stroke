@@ -109,7 +109,7 @@
     transition:fade={{ duration: 160 }}
   >
     <!-- Top row: drag region on macOS (traffic lights sit at its left), Skip at the right. -->
-    <header class="flex h-[52px] shrink-0 items-center justify-end px-5" data-tauri-drag-region>
+    <header class="flex h-(--app-titlebar-h) shrink-0 items-center justify-end px-4" data-tauri-drag-region>
       <!-- Plain text, no filled hover: skipping is the quiet way out, not an
            action that should compete with the step's own button. -->
       <button

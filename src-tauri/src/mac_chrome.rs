@@ -42,7 +42,7 @@ const ACCEL_EVENT: &str = "native-menu-accelerators";
 /// them (19 and 17 left them high). Shared by the main window and
 /// `open_new_window`.
 pub(crate) fn traffic_light_position() -> LogicalPosition<f64> {
-    LogicalPosition::new(16.0, 28.0)
+    LogicalPosition::new(14.0, 21.0)
 }
 
 /// One app item: (action, label, accelerator, needs a connection).

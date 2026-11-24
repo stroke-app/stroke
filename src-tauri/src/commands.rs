@@ -320,7 +320,7 @@ pub async fn open_dashboard_window(app: tauri::AppHandle, dashboard_id: String, 
     }
     #[cfg(not(target_os = "macos"))]
     {
-        builder = builder.decorations(false);
+        builder = builder.decorations(false).shadow(true);
     }
     let window = builder.build().map_err(|e| e.to_string())?;
     let surface = crate::surface_for_theme(window.theme().unwrap_or(tauri::Theme::Dark));
@@ -367,7 +367,7 @@ pub async fn open_new_window(app: tauri::AppHandle) -> Result<(), String> {
     }
     #[cfg(not(target_os = "macos"))]
     {
-        builder = builder.decorations(false);
+        builder = builder.decorations(false).shadow(true);
     }
 
     let window = builder.build().map_err(|e| e.to_string())?;
@@ -2572,12 +2572,9 @@ pub fn set_window_glass(window: tauri::WebviewWindow, enabled: bool, dark: bool)
                 .set_effects(
                     EffectsBuilder::new()
                         .effect(Effect::Sidebar)
-                        // Always frosted. Following the window's active state
-                        // turned the glass into flat grey whenever another app
-                        // had focus - which read as the theme not working, most
-                        // of all in light, where the inactive material is a
-                        // plain pale grey.
-                        .state(EffectState::Active)
+                        // Follow native macOS active/inactive material dimming
+                        // just like Finder and system windows.
+                        .state(EffectState::FollowsWindowActiveState)
                         .build(),
                 )
                 .map_err(|e| e.to_string())?;
@@ -2589,7 +2586,21 @@ pub fn set_window_glass(window: tauri::WebviewWindow, enabled: bool, dark: bool)
             window.set_background_color(Some(surface)).map_err(|e| e.to_string())?;
         }
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(target_os = "windows")]
+    {
+        use tauri::window::{Effect, EffectsBuilder};
+        let theme = if dark { tauri::Theme::Dark } else { tauri::Theme::Light };
+        if enabled {
+            let _ = window.set_theme(Some(theme));
+            let _ = window.set_effects(EffectsBuilder::new().effect(Effect::Mica).build());
+        } else {
+            let _ = window.set_effects(None);
+            let _ = window.set_theme(None);
+            let surface = crate::surface_for_theme(theme);
+            let _ = window.set_background_color(Some(surface));
+        }
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
     let _ = (window, enabled, dark);
     Ok(())
 }

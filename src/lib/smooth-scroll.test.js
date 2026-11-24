@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createSmoothScroll, wheelPixels } from './smooth-scroll.js'
+import { createSmoothScroll, isTrackpadWheel, wheelPixels } from './smooth-scroll.js'
 
 /**
  * A scroll container that QUANTIZES its offset, the way a real element does.
@@ -159,5 +159,19 @@ describe('createSmoothScroll - horizontal', () => {
     s.push(5_000, 0)
     runFrames()
     expect(el.scrollLeft).toBe(300) // scrollWidth 800 - clientWidth 500
+  })
+})
+
+describe('isTrackpadWheel', () => {
+  it('treats smooth small, fractional, or diagonal deltas as trackpad gestures', () => {
+    expect(isTrackpadWheel(wheel({ deltaY: 12 }))).toBe(true)
+    expect(isTrackpadWheel(wheel({ deltaY: 53.5 }))).toBe(true)
+    expect(isTrackpadWheel(wheel({ deltaX: 40, deltaY: 40 }))).toBe(true)
+  })
+
+  it('treats line-mode or large notched integer wheel ticks as discrete mouse wheels', () => {
+    expect(isTrackpadWheel(wheel({ deltaMode: 1, deltaY: 3 }))).toBe(false)
+    expect(isTrackpadWheel(wheel({ deltaMode: 0, deltaY: 100 }))).toBe(false)
+    expect(isTrackpadWheel(wheel({ deltaMode: 0, deltaY: -120 }))).toBe(false)
   })
 })

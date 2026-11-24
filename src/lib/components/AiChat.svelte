@@ -4523,7 +4523,7 @@
       <!-- Sidebar header: collapse + new chat. In the window's AI mode this is
            the top of a full-height column (T3): the traffic lights sit in it. -->
       <div
-        class={cn("flex shrink-0 items-center gap-1", externalToggle && isMacChrome ? "h-[52px] pr-2 pl-[92px]" : "border-b border-border/50 px-2 py-2")}
+        class={cn("flex shrink-0 items-center gap-1", externalToggle && isMacChrome ? "h-(--app-titlebar-h) border-b border-border/50 pr-2 pl-[78px]" : "border-b border-border/50 px-2 py-2")}
         data-tauri-drag-region={externalToggle ? '' : undefined}
       >
         {#if !externalToggle}
@@ -4923,7 +4923,7 @@
     {#if externalToggle && isMacChrome}
       <!-- The window's top row over the conversation: drags the window, and
            leaves the lights room when the chat list is hidden. -->
-      <div class="h-[52px] shrink-0" data-tauri-drag-region></div>
+      <div class="h-(--app-titlebar-h) shrink-0" data-tauri-drag-region></div>
     {/if}
     <!-- No header row: its four buttons cost a 48px band above the transcript.
          In full mode they float over the transcript's top corners; docked, they
@@ -4973,7 +4973,7 @@
     {/snippet}
 
     {#if !showTabBar}
-      <div class={cn("pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-2", externalToggle && isMacChrome && "pt-2.5", externalToggle && isMacChrome && !sidebarVisible && "pl-[92px]")}>
+      <div class={cn("pointer-events-none absolute inset-x-0 top-0 z-20 flex items-start justify-between p-2", externalToggle && isMacChrome && "pt-1.5", externalToggle && isMacChrome && !sidebarVisible && "pl-[78px]")}>
         <div class="pointer-events-auto flex items-center gap-0.5 rounded-lg bg-background/90 p-0.5">
           {@render chatListButton()}
           {#if !sidebarVisible}

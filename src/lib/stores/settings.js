@@ -30,28 +30,18 @@ import { DEFAULT_EDITOR_THEME, normalizeEditorTheme } from '$lib/themes/editor-t
 const STORAGE_KEY = 'stroke:settings'
 
 /**
- * Whether the OS should own scrolling, when the user has expressed no preference.
- *
- * Eased scrolling is ours: wheel deltas are accumulated and `scrollTop` is walked
- * toward the target one frame at a time. That is a real improvement over a
- * discrete mouse wheel, which otherwise jumps a fixed notch with no motion at all.
- *
- * It is the wrong thing on macOS. The OS has ALREADY applied momentum and rubber
- * banding to a trackpad's deltas by the time they reach us, so easing them again
- * is a second filter on top of a filter: every gesture trails its fingers by the
- * length of our ease, which is exactly what "the scrolling feels laggy" describes.
- * It also costs a non-passive wheel listener, which puts the main thread in front
- * of every tick on the one platform whose compositor did not need it.
- *
- * So: OS-owned on macOS, eased elsewhere. Either way Settings → Appearance →
- * Native scrolling is the override, and an explicit choice always wins over this.
+ * Native OS scrolling by default on every platform (macOS, Windows, Linux).
+ * Modern desktops and Precision Touchpads already apply native momentum and
+ * scroll physics; intercepting wheel events with a non-passive JS listener
+ * feels floaty and adds latency. Users with a notched desktop mouse who prefer
+ * JS easing can still opt in via Settings -> Appearance -> Native scrolling.
  */
 export function defaultNativeScroll() {
-  return detectOs() === 'macos'
+  return true
 }
 
 /** One-shot marker for the migration in `loadSettings` (see there for why). */
-const SCROLL_DEFAULT_KEY = 'stroke:scroll-default-v2'
+const SCROLL_DEFAULT_KEY = 'stroke:scroll-default-v3'
 const scrollDefaultApplied = () => {
   try { return localStorage.getItem(SCROLL_DEFAULT_KEY) === '1' } catch { return true }
 }
@@ -277,7 +267,7 @@ export const FONT_PRESETS = {
 // UI here, each hinted for its platform's renderer. Geist, a web font, drew
 // thin and soft on Windows next to everything else on screen. Linux keeps
 // Geist, since its system UI font varies by desktop.
-export const DEFAULT_FONT = IS_MAC || IS_WINDOWS ? 'apple' : 'geist'
+export const DEFAULT_FONT = 'apple'
 /** @returns {FontId} */
 function normalizeFont(/** @type {unknown} */ id) {
   return FONT_PRESETS[/** @type {FontId} */ (id)] ? /** @type {FontId} */ (id) : DEFAULT_FONT
@@ -979,11 +969,15 @@ export function loadSettings() {
       if (font === 'claude' || font === 'mono') { font = DEFAULT_FONT; settingsMigrated = true }
       markFontGeistDefaultApplied()
     }
-    // Windows moves to its system face once, from the Geist default it had.
+    // Windows & Linux move to the OS system face once, from the Geist default they had.
     try {
       if (IS_WINDOWS && localStorage.getItem('stroke:font-windows-system-v1') !== '1') {
         if (font === 'geist') { font = DEFAULT_FONT; settingsMigrated = true }
         localStorage.setItem('stroke:font-windows-system-v1', '1')
+      }
+      if (!IS_MAC && !IS_WINDOWS && localStorage.getItem('stroke:font-linux-system-v1') !== '1') {
+        if (font === 'geist') { font = DEFAULT_FONT; settingsMigrated = true }
+        localStorage.setItem('stroke:font-linux-system-v1', '1')
       }
     } catch {}
     const iconStyle = normalizeIconStyle(parsed.iconStyle)
@@ -1138,7 +1132,7 @@ function applyFontSurfaces(root, fonts, preset) {
   setOrClearVar(root, '--editor-font-family', pick(fonts.code))
   setOrClearVar(root, '--grid-font', pick(fonts.grid))
   setOrClearVar(root, '--terminal-font', pick(fonts.terminal))
-  setAttr(root, 'data-smoothing', fonts.smoothing === 'system' ? 'system' : null)
+  setAttr(root, 'data-smoothing', fonts.smoothing === 'grayscale' ? 'grayscale' : 'system')
 }
 
 /** @param {HTMLElement} el @param {string} prop @param {string | null} value */
