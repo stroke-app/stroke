@@ -439,27 +439,10 @@ pub fn run() {
     // Wayland or X11, before GTK starts and before any thread (display_backend.rs).
     display_backend::choose();
 
-    // Linux WebKitGTK GPU compositing - set before any threads spawn.
-    #[cfg(target_os = "linux")]
-    // SAFETY: called before any threads are spawned.
-    unsafe {
-        // Keep hardware DMA-buf compositing enabled on healthy Linux GPU setups
-        // so scrolling, resizing and dialogs stay fluid (our type scale now
-        // lands on whole pixels, avoiding fractional texture resampling). Only
-        // fall back to Cairo software rendering if a previous launch failed to
-        // draw (display_backend::using_fallback()) or the user explicitly sets
-        // WEBKIT_DISABLE_DMABUF_RENDERER=1.
-        match std::env::var("WEBKIT_DISABLE_DMABUF_RENDERER").as_deref() {
-            Ok("0") | Ok("") => std::env::remove_var("WEBKIT_DISABLE_DMABUF_RENDERER"),
-            Ok(_) => {}
-            Err(_) if display_backend::using_fallback() => {
-                std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
-            }
-            Err(_) => {}
-        }
-        // GDK_SCALE is intentionally NOT forced here - overriding it breaks HiDPI
-        // setups (2× displays) and can cause rendering panics on Wayland compositors.
-    }
+    // WEBKIT_DISABLE_DMABUF_RENDERER is decided in main.rs, before anything
+    // else runs. GDK_SCALE is intentionally NOT forced - overriding it breaks
+    // HiDPI setups (2x displays) and can cause rendering panics on Wayland
+    // compositors.
 
     // Set a human-readable process title so the app shows as "stroke" in
     // htop / ps / /proc - makes it easy to identify among WebKit helper processes.
