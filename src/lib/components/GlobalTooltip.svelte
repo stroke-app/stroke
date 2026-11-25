@@ -80,6 +80,15 @@
     const vw = window.innerWidth
     const vh = window.innerHeight
 
+    // `data-tip-side="right"`: beside the trigger, for list rows, where a tip
+    // below covered the next row's name. Falls back to below when it won't fit.
+    if (el.getAttribute('data-tip-side') === 'right' && r.right + GAP + tw <= vw - EDGE) {
+      left = r.right + GAP
+      top = Math.max(EDGE, Math.min(r.top + (r.height - th) / 2, vh - th - EDGE))
+      shown = true
+      return
+    }
+
     // Prefer below; flip above when it would clip the bottom edge.
     if (r.bottom + GAP + th > vh - EDGE && r.top - GAP - th > EDGE) {
       top = r.top - GAP - th
@@ -99,6 +108,17 @@
     if (el === currentEl) return
     if (currentEl) hide()
     if (!el || el.hasAttribute('data-no-tip')) return
+    // `data-tip-overflow`: the tip only repeats a label, so show it only when
+    // that label is cut off (its `.truncate` text overflows).
+    if (el.hasAttribute('data-tip-overflow')) {
+      const label = el.querySelector('.truncate')
+      if (label && label.scrollWidth <= label.clientWidth) {
+        // Still take the title, or the native tooltip shows in our place.
+        readTip(el)
+        currentEl = el
+        return
+      }
+    }
 
     const value = readTip(el)
     if (!value) return

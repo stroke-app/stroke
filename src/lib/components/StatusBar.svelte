@@ -825,6 +825,31 @@
         </button>
       {/if}
 
+      <!-- Jump to the grid's edges. #133 dropped these for a quieter bar, and
+           the shortcuts alone left no way to find them. Below the timing in
+           priority: they go first at high zoom. -->
+      {#if showTableNav}
+        <div class="contents @max-[48rem]/sb:hidden">
+        {@render sep()}
+        <div class="flex items-center gap-px">
+          <button type="button" class={iconBtn} onclick={onscrolltabletop} title={`Go to top (${comboTitle('Mod+Up')})`} aria-label="Scroll to top">
+            <Icon name="chevrons-up" class="size-3.5 shrink-0" />
+          </button>
+          <button type="button" class={iconBtn} onclick={onscrolltablebottom} title={`Go to bottom (${comboTitle('Mod+Down')})`} aria-label="Scroll to bottom">
+            <Icon name="chevrons-down" class="size-3.5 shrink-0" />
+          </button>
+          <!-- Disabled rather than removed when the grid fits, so nothing to
+               their right shifts on every table open. -->
+          <button type="button" class={cn(iconBtn, 'disabled:pointer-events-none disabled:opacity-40')} disabled={!canScrollTableHorizontally} onclick={onscrolltableleft} title={`Go to first column (${comboTitle('Mod+Alt+Left')})`} aria-label="Scroll to first column">
+            <Icon name="chevrons-left" class="size-3.5 shrink-0" />
+          </button>
+          <button type="button" class={cn(iconBtn, 'disabled:pointer-events-none disabled:opacity-40')} disabled={!canScrollTableHorizontally} onclick={onscrolltableright} title={`Go to last column (${comboTitle('Mod+Alt+Right')})`} aria-label="Scroll to last column">
+            <Icon name="chevrons-right" class="size-3.5 shrink-0" />
+          </button>
+        </div>
+        </div>
+      {/if}
+
       <!-- Last fetch timing, updates on every table load / refresh / query -->
       {#if showTableNav || queryMs > 0}
         <!-- Below the connection and database in priority: it goes before they
