@@ -4,6 +4,29 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.8.3] - 2026-11-25
+
+### Bug Fixes
+
+#### Account
+- **Sign-in page in the browser** - The tab that opens after signing in to Stroke now uses the same card as the database-provider sign-ins: the Stroke name and mark, a status pill, the next step, and light and dark themes.
+
+#### Settings
+- **No System Events prompt on macOS** - Opening Settings no longer asks to let Stroke control System Events. Launch at login now uses a LaunchAgent file instead of an AppleScript login item, so it needs no permission. Re-enable the switch once if it was on before.
+
+#### Interface
+- **Title bar lines up with the traffic lights when zoomed** - On macOS the title bar row grew with the app zoom while the traffic lights stayed put, so above 100% the icons sat below them. The row now only grows as much as its buttons need.
+- **Nullable column in the structure editor** - The YES/NO picker drew its own boxed field inside each cell. It is flush with the cell again, like the type and default columns, and its chevron shows on hover.
+- **Smoother window zoom and resize** - Double-clicking the title bar on macOS, maximizing, or dragging the window edge no longer reallocates the data grid's canvas and refits the terminal on every frame. The grid grows its canvas in steps and the terminal refits once the window settles, the way panel drags already worked.
+
+#### Terminal
+- **Terminal on password-less connections** - The terminal no longer fails with "missing field `password`" on a connection that saves no password (local trust auth), and it now passes the keychain password through to psql, mysql and sqlcmd.
+
+#### Window
+- **Title-bar double-click follows macOS settings** - Double-clicking the title bar now does what System Settings > Desktop & Dock > "Double-click a window's title bar to" says: zoom, fill, minimize, or nothing, with the system's own animation. It always zoomed before.
+- **No disk write during a resize** - Saving the window's size and position no longer writes to disk on the main thread while the window is resizing or zooming.
+
+
 ## [3.8.2] - 2026-11-24
 
 ### Changes
