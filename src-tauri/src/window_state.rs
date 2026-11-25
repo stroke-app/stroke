@@ -145,7 +145,11 @@ pub(crate) fn attach(window: &WebviewWindow, data_dir: PathBuf) {
                     if let Ok(mut t) = last_saved.lock() {
                         *t = now;
                     }
-                    save(&data_dir, &st);
+                    // Off the main thread: this handler runs there on every
+                    // frame of a live resize or the macOS zoom animation, and a
+                    // disk write would stall that frame.
+                    let dir = data_dir.clone();
+                    std::thread::spawn(move || save(&dir, &st));
                 }
             }
         }
