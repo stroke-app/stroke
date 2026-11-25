@@ -1545,9 +1545,12 @@ html[data-window-focused='false'] [role='tablist'] > * {
    rather than as specks beside the text. One rule, so every icon in the app
    moves together; rem, so it follows the zoom. Unlayered so it wins over the
    `size-*` utilities on the icons themselves. */
-svg.size-3 { width: calc(14px * var(--app-scale, 1)); height: calc(14px * var(--app-scale, 1)); }
-svg.size-3\.5 { width: calc(17px * var(--app-scale, 1)); height: calc(17px * var(--app-scale, 1)); }
-svg.size-4 { width: calc(19px * var(--app-scale, 1)); height: calc(19px * var(--app-scale, 1)); }
+/* `.icon-box` is a wrapper that stacks icons with `absolute inset-0` (the
+   sidebar's table/select icons). It must be the icon's size, or the icon
+   overflowed its 14px box down and to the right and sat below the row's text. */
+:is(svg, .icon-box).size-3 { width: calc(14px * var(--app-scale, 1)); height: calc(14px * var(--app-scale, 1)); }
+:is(svg, .icon-box).size-3\.5 { width: calc(17px * var(--app-scale, 1)); height: calc(17px * var(--app-scale, 1)); }
+:is(svg, .icon-box).size-4 { width: calc(19px * var(--app-scale, 1)); height: calc(19px * var(--app-scale, 1)); }
 
 /* ── Linux frameless window edge ─────────────────────────────────────────────
    Without OS decorations, a dark window blends into dark windows behind it on

@@ -2903,7 +2903,7 @@
                           }}
                         >
                           <span
-                            class="group/sel relative size-4 shrink-0"
+                            class="icon-box group/sel relative size-4 shrink-0"
                             onclick={(e) => { e.stopPropagation(); selectItem(tableName, e.shiftKey) }}
                             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(tableName, e.shiftKey); } }}
                             role="checkbox"
@@ -3134,9 +3134,11 @@
                         else { lastSelectedName = table.name; ontableselect(table.name) }
                       }}
                       title={comments.get(table.name) ? `${table.name}\n${comments.get(table.name)}` : table.name}
+                      data-tip-side="right"
+                      data-tip-overflow={comments.get(table.name) ? undefined : ''}
                     >
                       <span
-                        class="group/sel relative size-4 shrink-0"
+                        class="icon-box group/sel relative size-4 shrink-0"
                         onclick={(e) => { e.stopPropagation(); selectItem(table.name, e.shiftKey) }}
                         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(table.name, e.shiftKey); } }}
                         role="checkbox"
@@ -3252,7 +3254,7 @@
                       title={mat ? `${v.name} (materialized view)` : `${v.name} (view)`}
                       onclick={() => ontableselect(v.name)}
                     >
-                      <span class="relative size-4 shrink-0"><Icon name={mat ? 'layers' : 'eye'} class={cn('absolute inset-0 size-4', mat ? 'text-warning' : 'text-muted-foreground')} /></span>
+                      <span class="icon-box relative size-4 shrink-0"><Icon name={mat ? 'layers' : 'eye'} class={cn('absolute inset-0 size-4', mat ? 'text-warning' : 'text-muted-foreground')} /></span>
                       <span class="truncate text-ui-sm leading-4 -my-1 py-1">{v.name}</span>
                       {#if showRowCount && mat && v.rowCount != null}
                         <span class="flex min-w-[4ch] shrink-0 items-center justify-end font-mono text-ui-2xs leading-4 tabular-nums text-muted-foreground">{formatTableRowCount(v.rowCount)}</span>
