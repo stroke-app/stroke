@@ -434,7 +434,11 @@ pub async fn refreshed_token() -> Option<String> {
 /// Return a valid access token, transparently refreshing via the refresh token if needed.
 #[tauri::command]
 pub async fn cloudflare_get_valid_token(app: tauri::AppHandle) -> Result<String, String> {
-    let map = crate::secrets::read_all_async(&app).await;
+    let mut map = crate::secrets::read_all_async(&app).await;
+    if map.get(KEY_ACCESS).map_or(true, |a| a.is_empty()) {
+        // Not in this app's copy: the other app may have signed in since launch.
+        map = crate::secrets::read_fresh_async(&app).await;
+    }
     let access = map.get(KEY_ACCESS).cloned().unwrap_or_default();
 
     if access.is_empty() {
