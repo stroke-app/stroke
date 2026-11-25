@@ -2020,7 +2020,7 @@
                   // the border, attached to neither.
                   // No colour transition: the rail snaps on the switch, so a fading
                   // pill and icon left two tabs half-lit for 150ms on every change.
-                  "group/tab relative inline-flex h-9 w-8 shrink-0 items-center justify-center disabled:pointer-events-none disabled:opacity-40",
+                  "group/tab relative inline-flex h-full w-8 shrink-0 items-center justify-center disabled:pointer-events-none disabled:opacity-40",
                   // Two cues, not one. Colour alone does not separate four line icons
                   // at this size, so the selected tab also carries a filled surface and
                   // an accent rail - the same "which panel am I in" signal the VS Code
@@ -2063,7 +2063,7 @@
             {#if stripTabs.more.length}
               <DropdownMenu.Root>
                 <DropdownMenu.Trigger
-                  class="group/tab relative inline-flex h-9 w-8 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40 data-[state=open]:text-foreground"
+                  class="group/tab relative inline-flex h-full w-8 shrink-0 items-center justify-center text-muted-foreground hover:text-foreground disabled:pointer-events-none disabled:opacity-40 data-[state=open]:text-foreground"
                   disabled={!connectionName}
                   title="More sections"
                   aria-label="More sections"
