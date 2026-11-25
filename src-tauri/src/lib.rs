@@ -479,7 +479,10 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::AppleScript, None))
+        // A LaunchAgent plist in ~/Library/LaunchAgents, not the AppleScript
+        // login item: reading that one asks System Events, and macOS showed a
+        // "wants access to control System Events" prompt each time Settings opened.
+        .plugin(tauri_plugin_autostart::init(tauri_plugin_autostart::MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_deep_link::init())
         .manage(db_state)

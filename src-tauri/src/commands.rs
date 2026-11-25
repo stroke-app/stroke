@@ -2398,7 +2398,7 @@ pub async fn disable_autostart(app: tauri::AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub async fn get_autostart_status(app: tauri::AppHandle) -> Result<bool, String> {
     use tauri_plugin_autostart::ManagerExt;
-    // On macOS this runs osascript (~300 ms measured): keep it off the async workers.
+    // Reads a file on macOS and Linux and the registry on Windows; kept off the async workers anyway.
     tokio::task::spawn_blocking(move || app.autolaunch().is_enabled().map_err(|e| e.to_string()))
         .await
         .map_err(|e| e.to_string())?
