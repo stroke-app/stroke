@@ -1208,7 +1208,11 @@
     // Windows and Linux at 100%, and grows with the app zoom like everything
     // under it, in AI mode too. The sidebar's top row and the inset pages use
     // the same value, so they stay level with the bar and fit their buttons.
-    root.style.setProperty('--app-titlebar-h', `calc(${IS_MAC ? 38 : 36}px * var(--app-scale, 1))`)
+    // On macOS the traffic lights stay where the window put them (centre ~20pt
+    // down; Tauri can't move them after launch), so the row only grows as much
+    // as its zoomed buttons need. Scaling it as 38px x zoom put the icons 6pt
+    // below the lights at 135%.
+    root.style.setProperty('--app-titlebar-h', IS_MAC ? 'max(38px, calc(24px * var(--app-scale, 1) + 8px))' : 'calc(36px * var(--app-scale, 1))')
     // The status bar is h-7 (28px at 100%), growing cleanly with app zoom.
     root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 9)' : '0px')
   })

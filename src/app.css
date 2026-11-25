@@ -341,7 +341,9 @@ textarea:not(.no-focus-ring):not(.no-field-frame) {
    Select triggers are `<button data-slot="select-trigger">`, so they need
    naming explicitly - the bare-input rule never reached them, which is how the
    nullable column ended up the only one still wearing a full pill. */
-.cell-fields :is(input, textarea, [data-slot="select-trigger"]) {
+/* FieldSelect's trigger (a SearchableMenu button since #224) carries
+   `.field-surface` but no `data-slot`, so it is named here too. */
+.cell-fields :is(input, textarea, [data-slot="select-trigger"], .field-surface) {
   /* `!important` because the frame rule above cannot be out-specified by a
      container class. Its seven `:not([type=...])` guards each count as an
      attribute selector, so it lands at (0,9,1) while `.cell-fields input` is
@@ -373,7 +375,7 @@ textarea:not(.no-focus-ring):not(.no-field-frame) {
 /* The controls inside have already given up their own frame; they must not draw
    a focus outline on top of the cell's highlight either. Two indicators for one
    focus is what the field frame was doing before. */
-.cell-fields td:focus-within :is(input, textarea, [data-slot="select-trigger"]) {
+.cell-fields td:focus-within :is(input, textarea, [data-slot="select-trigger"], .field-surface) {
   outline: none !important;
   box-shadow: none !important;
 }
@@ -1568,7 +1570,7 @@ html[data-os='linux']:not([data-maximized='true']):not([data-fullscreen='true'])
 
 /* Structure grid: dropdown arrows only on the row you are on, not on every
    cell of every row - the value is the content, the arrow is the affordance. */
-.cell-fields tbody tr:not(:hover):not(:focus-within) [data-slot="select-trigger"] > svg { opacity: 0; }
+.cell-fields tbody tr:not(:hover):not(:focus-within) :is([data-slot="select-trigger"], .field-surface) > svg { opacity: 0; }
 .cell-fields tbody tr:not(:hover):not(:focus-within) [data-slot="dropdown-menu-trigger"] > svg:last-child { opacity: 0; }
 
 /* Terminal scrollbar. xterm 6 draws its own (VS Code's scrollable element), so

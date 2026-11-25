@@ -673,7 +673,7 @@
                 <div class="relative flex h-full items-center px-3">
                   <FieldSelect mono
                     size="sm"
-                    class="w-full px-0 font-mono text-ui-xs {displayNullable ? 'text-foreground' : 'text-muted-foreground'} {stagedValues['nullable:' + col.name] !== undefined ? 'text-warning' : ''}"
+                    class="w-full px-0 hover:bg-transparent data-[state=open]:bg-transparent font-mono text-ui-xs {displayNullable ? 'text-foreground' : 'text-muted-foreground'} {stagedValues['nullable:' + col.name] !== undefined ? 'text-warning' : ''}"
                     value={displayNullable ? 'YES' : 'NO'}
                     disabled={isPk || !canEdit}
                     onchange={(v) => stageNullable(col.name, v === 'YES')}
