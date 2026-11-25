@@ -544,22 +544,8 @@ pub fn parse_callback(target: &str, expected_state: &str) -> Option<Callback> {
 /// The page the browser shows after it hands the sign-in back to the app.
 /// `box-sizing` matters: `min-height: 100vh` plus body padding overflowed by
 /// the padding and put a scrollbar on a page with one sentence on it.
-fn callback_page(heading: &str, body: &str) -> String {
-    let ok = heading.starts_with("You're");
-    let failed = heading.contains("didn't");
-    // A check for success, a dash for cancelled, an exclamation for a failure.
-    let (icon, tone) = if ok {
-        ("<path d=\"M5 12.5l4.5 4.5L19 7.5\"/>", "ok")
-    } else if failed {
-        ("<path d=\"M12 6.5v7\"/><path d=\"M12 17.5h.01\"/>", "bad")
-    } else {
-        ("<path d=\"M7 12h10\"/>", "")
-    };
-    format!(
-        r#"<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta name="color-scheme" content="dark light"><title>{heading} · Stroke</title>
-<style>*,*::before,*::after{{box-sizing:border-box}}html,body{{height:100%}}body{{margin:0;display:grid;place-items:center;padding:24px;font:15px/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;background:#0b0b0c;color:#ededee;-webkit-font-smoothing:antialiased;overflow:hidden}}main{{width:100%;max-width:360px;display:flex;flex-direction:column;align-items:center;text-align:center}}.mark{{width:44px;height:44px;border-radius:50%;display:grid;place-items:center;background:#1a1a1d;box-shadow:inset 0 0 0 1px #2a2a2e,inset 0 1px 0 rgb(255 255 255/.06);color:#a1a1a8}}.mark.ok{{color:#4ade80;background:#0f1f15;box-shadow:inset 0 0 0 1px #1d3b26}}.mark.bad{{color:#f87171;background:#221212;box-shadow:inset 0 0 0 1px #3d1d1d}}svg{{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2.25;stroke-linecap:round;stroke-linejoin:round}}h1{{font-size:20px;font-weight:600;letter-spacing:-.01em;margin:18px 0 6px}}p{{margin:0;color:#a1a1a8;text-wrap:pretty}}small{{margin-top:28px;font-size:12px;color:#6b6b73}}@media (prefers-color-scheme: light){{body{{background:#f6f6f7;color:#18181b}}p{{color:#5b5b63}}small{{color:#8b8b93}}.mark{{background:#fff;box-shadow:inset 0 0 0 1px #e4e4e7;color:#5b5b63}}.mark.ok{{background:#ecfdf3;box-shadow:inset 0 0 0 1px #bbf7d0;color:#16a34a}}.mark.bad{{background:#fef2f2;box-shadow:inset 0 0 0 1px #fecaca;color:#dc2626}}}}</style></head>
-<body><main><span class="mark {tone}" aria-hidden="true"><svg viewBox="0 0 24 24">{icon}</svg></span><h1>{heading}</h1><p>{body}</p><small>Stroke</small></main></body></html>"#
-    )
+fn callback_page(outcome: crate::oauth_page::Outcome, heading: &str, body: &str) -> String {
+    crate::oauth_page::account_page(outcome, heading, body)
 }
 
 async fn respond(stream: &mut TcpStream, status: &str, html: &str) {
@@ -607,13 +593,15 @@ pub async fn wait_for_callback(listener: TcpListener, expected_state: &str) -> R
                     }
                     Some(Callback::Code(code)) => {
                         respond(&mut stream, "200 OK", &callback_page(
-                            "You're signed in",
-                            "Head back to Stroke. You can close this tab.",
+                            crate::oauth_page::Outcome::Ok,
+                            "You're signed in to Stroke",
+                            "Switch back to the app to keep going. This tab can be closed.",
                         )).await;
                         return Ok(code);
                     }
                     Some(Callback::Cancelled) => {
                         respond(&mut stream, "200 OK", &callback_page(
+                            crate::oauth_page::Outcome::Cancelled,
                             "Sign-in cancelled",
                             "You can close this tab and return to Stroke.",
                         )).await;
@@ -621,6 +609,7 @@ pub async fn wait_for_callback(listener: TcpListener, expected_state: &str) -> R
                     }
                     Some(Callback::Error(msg)) => {
                         respond(&mut stream, "400 Bad Request", &callback_page(
+                            crate::oauth_page::Outcome::Failed,
                             "Sign-in didn't finish",
                             "Close this tab and start the sign-in again from Stroke.",
                         )).await;
@@ -1214,7 +1203,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(page.status(), 200);
-        assert!(page.text().await.unwrap().contains("Head back to Stroke"));
+        assert!(page.text().await.unwrap().contains("Switch back to the app"));
         assert_eq!(waiter.await.unwrap(), Ok("c0de".to_string()));
 
         // Cancel from the website.
