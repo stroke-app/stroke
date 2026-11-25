@@ -1,4 +1,5 @@
 <script>
+  import { titleBarDoubleClick } from '$lib/titlebar-double-click.js'
   import { onMount } from 'svelte'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
@@ -23,7 +24,7 @@
     if (e.target === e.currentTarget) return
     if (/** @type {Element} */ (e.target).hasAttribute?.('data-tauri-drag-region')) return
     if (/** @type {Element} */ (e.target).closest('button')) return
-    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().toggleMaximize()).catch(() => {})
+    void titleBarDoubleClick()
   }
 
   /** @typedef {import('$lib/studio-tabs.js').StudioTab} StudioTab */

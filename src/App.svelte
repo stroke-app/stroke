@@ -22,6 +22,7 @@
   import { installPlatformClass, installWindowStateListeners } from '$lib/platform.js'
   import { installClipboardBridge } from '$lib/clipboard.js'
   import { trackWindowResize } from '$lib/panel-motion.js'
+  import { installTitleBarDoubleClick } from '$lib/titlebar-double-click.js'
   import { installShiftWheel } from '$lib/shift-wheel.js'
   import { installSlashFocus } from '$lib/slash-focus.js'
 
@@ -32,6 +33,8 @@
     installZoomShortcuts()
     // A window resize burst (macOS zoom, edge drag) counts as a panel drag.
     trackWindowResize()
+    // macOS: a title-bar double-click follows the Desktop & Dock setting.
+    installTitleBarDoubleClick()
     // Shift + wheel scrolls sideways in every scroll area, whatever the webview does.
     installShiftWheel()
     // `/` focuses the search field in view.

@@ -1,4 +1,5 @@
 <script>
+  import { titleBarDoubleClick } from '$lib/titlebar-double-click.js'
   // Full-screen PIN gate, drawn over everything while the app is locked. On a
   // cold start the app is not mounted behind it at all (see AppLockGate); after
   // an idle auto-lock the session is still there, covered and key-deaf.
@@ -29,7 +30,7 @@
     if (!isTauri) return
     if (e.target === e.currentTarget) return
     if (/** @type {Element} */ (e.target).closest('button')) return
-    import('@tauri-apps/api/window').then(({ getCurrentWindow }) => getCurrentWindow().toggleMaximize())
+    void titleBarDoubleClick()
   }
 
   /** @param {string} entered */

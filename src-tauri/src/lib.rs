@@ -976,6 +976,7 @@ pub fn run() {
             commands::enable_autostart,
             commands::disable_autostart,
             commands::get_autostart_status,
+            commands::title_bar_double_click,
             commands::advisor_scan,
             commands::cancel_query,
             quit::quit_now,
