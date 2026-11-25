@@ -142,3 +142,30 @@ export function endPanelResize() {
 export function isPanelResizing() {
   return activeResizes > 0 || (typeof document !== 'undefined' && document.documentElement.hasAttribute('data-resizing'))
 }
+
+/** Quiet time after the last window `resize` that ends a burst. */
+const WINDOW_RESIZE_SETTLE_MS = 150
+let windowResizeTracked = false
+
+/**
+ * Treat a burst of window resizes (the macOS zoom on a title-bar double-click,
+ * an edge drag, a maximize) as one panel drag: the data grid grows its canvas
+ * in steps instead of reallocating a full-window bitmap every frame, and the
+ * terminal holds its grid and refits once when the burst settles. Without it
+ * the zoom animation reflowed both on each of its frames and stuttered.
+ * Installs one listener per page; later calls do nothing.
+ */
+export function trackWindowResize() {
+  if (windowResizeTracked || typeof window === 'undefined') return
+  windowResizeTracked = true
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let timer = null
+  window.addEventListener('resize', () => {
+    if (timer === null) beginPanelResize('window')
+    else clearTimeout(timer)
+    timer = setTimeout(() => {
+      timer = null
+      endPanelResize()
+    }, WINDOW_RESIZE_SETTLE_MS)
+  })
+}
