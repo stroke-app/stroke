@@ -281,14 +281,24 @@ html[data-icon-style="bold"]  svg.lucide { stroke-width: 2.5px; }
      outside it (a halo beside a hover-gray border read as two outlines) and
      no layout shift. --ring measures 4.63:1 against --background. */
   outline: none;
-  border-color: var(--ring);
+  border-color: var(--field-focus-edge);
   box-shadow: none;
 }
 /* Bare text fields wear the same frame (the rule below), so the same focus. */
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="submit"]):not([type="button"]):not(.no-focus-ring):not(.no-field-frame):focus-visible,
 textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
   outline: none;
-  border-color: var(--ring);
+  border-color: var(--field-focus-edge);
+}
+/* The focused field's edge. On a Retina Mac the 1px line is two device pixels
+   with smooth corners. On a 1x screen, which most Linux and Windows monitors
+   are, it is one hard pixel: Mono's light grey ring (#b7b7b7 on #050505) read
+   as a white outline with fuzzy corners. There it is blended toward the
+   resting border, which keeps it about 5:1 on Mono and above 3:1 on light
+   themes. */
+:root { --field-focus-edge: var(--ring); }
+@media (max-resolution: 1.5dppx) {
+  :root { --field-focus-edge: color-mix(in oklch, var(--ring) 65%, var(--field-border)); }
 }
 
 /* The search row at the top of a dropdown: borderless, with the hairline under
@@ -1401,7 +1411,7 @@ html[data-motion="reduced"] .animate-spin {
   .search-box:hover:not(:disabled):not(:focus) { border-color: color-mix(in oklch, var(--foreground) 32%, transparent); }
   /* Focus is one crisp accent edge, hovered or not: no halo outside it. */
   .search-box:focus {
-    border-color: var(--ring);
+    border-color: var(--field-focus-edge);
     background-color: color-mix(in oklab, var(--muted) 45%, transparent);
     box-shadow: none;
   }
@@ -1418,7 +1428,7 @@ html[data-motion="reduced"] .animate-spin {
   }
   .search-shell:hover:not(:focus-within) { border-color: color-mix(in oklch, var(--foreground) 32%, transparent); }
   .search-shell:focus-within {
-    border-color: var(--ring);
+    border-color: var(--field-focus-edge);
     background-color: color-mix(in oklab, var(--muted) 45%, transparent);
     box-shadow: none;
   }
