@@ -13,6 +13,7 @@
    * (terminal-highlight.js), and suggests as you type (terminal-complete.js).
    */
   import { onDestroy, onMount, untrack } from 'svelte'
+  import { withSecrets } from '$lib/stores/connections.js'
   import { Terminal } from '@xterm/xterm'
   import { WebglAddon } from '@xterm/addon-webgl'
   import { FitAddon } from '@xterm/addon-fit'
@@ -401,7 +402,11 @@
     phase = 'checking'
     await endSession()
     if (gen !== generation || !term) return
-    const config = { ...connection, type: dbType }
+    // The connection in hand can be the saved-list copy, whose password lives
+    // in the keychain: without it psql asked for one, or the backend refused a
+    // config with no password field at all.
+    const config = { ...(await withSecrets(connection)), type: dbType }
+    if (gen !== generation || !term) return
     // A restart on the same connection keeps the scrollback; a new connection
     // starts on a clean screen.
     if (sameConnection && !docked) term.write('\r\n')

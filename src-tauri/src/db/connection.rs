@@ -21,6 +21,8 @@ pub struct PgConfig {
     pub port: u16,
     pub database: String,
     pub user: String,
+    /// Missing when the connection has no password (local trust auth).
+    #[serde(default)]
     pub password: String,
     pub ssl: bool,
     /// libpq `sslmode`, for when `ssl` alone is not the whole answer: a managed
@@ -134,6 +136,8 @@ pub struct MysqlConfig {
     pub port: u16,
     pub database: String,
     pub user: String,
+    /// Missing when the connection has no password (local trust auth).
+    #[serde(default)]
     pub password: String,
     pub ssl: bool,
     /// MySQL `ssl-mode`: DISABLED | PREFERRED | REQUIRED | VERIFY_CA |
@@ -218,6 +222,8 @@ pub struct ClickhouseConfig {
     pub port: u16,
     pub database: String,
     pub user: String,
+    /// Missing when the connection has no password (local trust auth).
+    #[serde(default)]
     pub password: String,
     /// Use HTTPS (port 8443) instead of plain HTTP (port 8123).
     #[serde(default)]
@@ -324,6 +330,8 @@ pub struct MssqlConfig {
     pub port: u16,
     pub database: String,
     pub user: String,
+    /// Missing when the connection has no password (local trust auth).
+    #[serde(default)]
     pub password: String,
     /// Negotiate TLS encryption for the connection.
     #[serde(default)]
