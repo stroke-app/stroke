@@ -32,41 +32,78 @@ fn escape(s: &str) -> String {
 
 /// `utm_source` says the visit came from the app, `utm_medium` which surface
 /// sent it, `utm_campaign` which provider's sign-in, `utm_content` how it went.
-fn website_link(provider: &str, ok: bool) -> String {
+fn website_link(provider: &str, content: &str) -> String {
     let slug: String = provider
         .chars()
         .filter_map(|c| if c.is_ascii_alphanumeric() { Some(c.to_ascii_lowercase()) } else if c == ' ' { Some('-') } else { None })
         .collect();
     format!(
         "{WEBSITE}/?utm_source=stroke-app&amp;utm_medium=oauth-callback&amp;utm_campaign={slug}&amp;utm_content={}",
-        if ok { "success" } else { "error" }
+        content
     )
 }
 
-/// The full HTML for the callback tab. `provider` is the display name
-/// ("Neon", "Cloudflare"); `ok` picks the success or failure copy.
+/// How a sign-in ended, which picks the status pill's colour and icon.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Outcome {
+    Ok,
+    Cancelled,
+    Failed,
+}
+
+/// The full HTML for a provider's callback tab. `provider` is the display
+/// name ("Neon", "Cloudflare"); `ok` picks the success or failure copy.
 pub fn page(ok: bool, provider: &str) -> String {
-    let (logo_dark_ui, logo_light_ui) = logos();
-    let link = website_link(provider, ok);
+    let link = website_link(provider, if ok { "success" } else { "error" });
     let provider = escape(provider);
-    let (title, status, heading, body, tone, icon) = if ok {
-        (
-            format!("Signed in to {provider} · Stroke"),
+    if ok {
+        render(
+            Outcome::Ok,
+            &format!("Signed in to {provider} · Stroke"),
             "Signed in",
-            format!("You're connected to {provider}"),
+            &format!("You're connected to {provider}"),
             "Switch back to Stroke to pick a database. This tab can be closed.",
-            "ok",
-            r#"<path d="M20 6 9 17l-5-5"/>"#,
+            &link,
         )
     } else {
-        (
-            format!("{provider} sign-in failed · Stroke"),
+        render(
+            Outcome::Failed,
+            &format!("{provider} sign-in failed · Stroke"),
             "Not signed in",
-            format!("{provider} sign-in didn't finish"),
+            &format!("{provider} sign-in didn't finish"),
             "Nothing was saved. Close this tab and start the sign-in again from Stroke.",
-            "err",
-            r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#,
+            &link,
         )
+    }
+}
+
+/// The Stroke account's own callback tab (account.rs), in the same card as
+/// the provider pages. It used to be a lone centred check over two lines of
+/// text, which read like a different product from the rest of the sign-in.
+pub fn account_page(outcome: Outcome, heading: &str, body: &str) -> String {
+    let (status, content) = match outcome {
+        Outcome::Ok => ("Signed in", "success"),
+        Outcome::Cancelled => ("Cancelled", "cancelled"),
+        Outcome::Failed => ("Not signed in", "error"),
+    };
+    let heading = escape(heading);
+    render(
+        outcome,
+        &format!("{heading} · Stroke"),
+        status,
+        &heading,
+        &escape(body),
+        &website_link("account", content),
+    )
+}
+
+/// One card for every callback tab. Every argument is already HTML-safe.
+fn render(outcome: Outcome, title: &str, status: &str, heading: &str, body: &str, link: &str) -> String {
+    let (logo_dark_ui, logo_light_ui) = logos();
+    let (tone, icon) = match outcome {
+        Outcome::Ok => ("ok", r#"<path d="M20 6 9 17l-5-5"/>"#),
+        Outcome::Cancelled => ("neutral", r#"<path d="M6 12h12"/>"#),
+        Outcome::Failed => ("err", r#"<path d="M18 6 6 18"/><path d="m6 6 12 12"/>"#),
     };
 
     // One card, one leading edge: brand row, a status pill, the heading and the
@@ -86,7 +123,7 @@ pub fn page(ok: bool, provider: &str) -> String {
     --fg: #ededee; --muted: #a1a1a8;
     --ok: #3ecf8e; --ok-bg: rgb(62 207 142 / .12);
     --err: #f87171; --err-bg: rgb(248 113 113 / .12);
-    --ring: #7c93ff;
+    --ring: #7c93ff; --neutral-bg: rgb(255 255 255 / .06);
   }}
   @media (prefers-color-scheme: light) {{
     :root {{
@@ -94,7 +131,7 @@ pub fn page(ok: bool, provider: &str) -> String {
       --fg: #18181b; --muted: #5b5b63;
       --ok: #15803d; --ok-bg: rgb(21 128 61 / .10);
       --err: #b91c1c; --err-bg: rgb(185 28 28 / .10);
-      --ring: #3b5bdb;
+      --ring: #3b5bdb; --neutral-bg: rgb(0 0 0 / .05);
     }}
   }}
   * {{ box-sizing: border-box; }}
@@ -108,8 +145,8 @@ pub fn page(ok: bool, provider: &str) -> String {
   }}
   main {{
     width: 100%; max-width: 420px;
-    background: var(--surface); border: 1px solid var(--border); border-radius: 16px;
-    box-shadow: 0 1px 2px rgb(0 0 0 / .05), 0 12px 32px rgb(0 0 0 / .08);
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    box-shadow: 0 1px 2px rgb(0 0 0 / .06), 0 8px 24px rgb(0 0 0 / .10);
     overflow: hidden;
   }}
   .brand {{
@@ -133,6 +170,7 @@ pub fn page(ok: bool, provider: &str) -> String {
     stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }}
   .ok {{ color: var(--ok); background: var(--ok-bg); }}
   .err {{ color: var(--err); background: var(--err-bg); }}
+  .neutral {{ color: var(--muted); background: var(--neutral-bg); }}
   h1 {{ margin: 14px 0 6px; font-size: 19px; line-height: 1.3; font-weight: 600;
     letter-spacing: -0.015em; text-wrap: balance; }}
   p {{ margin: 0; color: var(--muted); text-wrap: pretty; }}
