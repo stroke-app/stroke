@@ -357,7 +357,9 @@ pub async fn cloudflare_start_oauth(app: tauri::AppHandle) -> Result<CfOAuthStat
 /// Returns the current OAuth status (connected + email) without side effects.
 #[tauri::command]
 pub async fn cloudflare_oauth_status(app: tauri::AppHandle) -> CfOAuthStatus {
-    let map = crate::secrets::read_all_async(&app).await;
+    // Fresh: a sign-in made in the other app (Stroke or Stroke Nightly) since
+    // this one started shows up here, and a later sign-out can remove it.
+    let map = crate::secrets::read_fresh_async(&app).await;
     let access = map.get(KEY_ACCESS).cloned().unwrap_or_default();
     if access.is_empty() {
         return CfOAuthStatus { connected: false, email: None };
@@ -403,7 +405,9 @@ pub async fn refreshed_token() -> Option<String> {
     let app = APP.get()?.clone();
     let before = crate::secrets::read_all_async(&app).await.get(KEY_REFRESH).cloned();
     let _guard = REFRESH_LOCK.lock().await;
-    let map = crate::secrets::read_all_async(&app).await;
+    // Fresh, not cached: Cloudflare rotates refresh tokens, and the other app
+    // may have used this one since launch.
+    let map = crate::secrets::read_fresh_async(&app).await;
     let refresh = map.get(KEY_REFRESH).cloned().unwrap_or_default();
     if refresh.is_empty() {
         return None;
@@ -447,8 +451,8 @@ pub async fn cloudflare_get_valid_token(app: tauri::AppHandle) -> Result<String,
     }
 
     let _guard = REFRESH_LOCK.lock().await;
-    // Whoever held the lock may already have refreshed.
-    let map = crate::secrets::read_all_async(&app).await;
+    // Whoever held the lock, or the other app, may already have refreshed.
+    let map = crate::secrets::read_fresh_async(&app).await;
     let expires_at = map
         .get(KEY_EXPIRES)
         .and_then(|s| s.parse::<u64>().ok())

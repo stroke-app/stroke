@@ -108,10 +108,15 @@
     ]).finally(() => clearTimeout(timer))
   }
 
+  // What the backend says when there is no sign-in left to use: no token
+  // stored ("Not connected to Cloudflare - please authorize first.") or none
+  // it can renew ("Cloudflare session expired.").
+  const SESSION_ENDED = /not signed in|not connected|authorize first|session expired|no.*token|unauthor/i
+
   /** Turn a raw backend error into a calm title + one-line explanation. */
   function friendlyError(msg) {
     const m = String(msg ?? '')
-    if (/not signed in|no.*token|unauthor/i.test(m))
+    if (SESSION_ENDED.test(m))
       return { title: 'Session expired', detail: 'Your Cloudflare sign-in is no longer valid. Sign in again to continue.' }
     if (/timed out/i.test(m))
       return { title: 'Authorization timed out', detail: 'The browser sign-in took too long. Start again when you are ready.' }
@@ -230,8 +235,13 @@
    */
   function fail(e, quiet) {
     const msg = String(e)
-    const ended = /not signed in|no.*token|unauthor/i.test(msg)
-    if (ended) clearProviderLists(CACHE)
+    const ended = SESSION_ENDED.test(msg)
+    if (ended) {
+      clearProviderLists(CACHE)
+      // The cached email is not a sign-in: show "Sign in", not a retry of a
+      // token read that can't succeed.
+      email = ''
+    }
     if (quiet && !ended) return
     phase = 'error'
     errorMsg = msg
@@ -444,7 +454,7 @@
         <div class="flex shrink-0 items-center gap-2">
           <Button variant="outline" class="group" onclick={() => (signedIn ? loadAccounts() : startAuth())}>
             <RefreshCw class="size-3.5 shrink-0" />
-            Try again
+            {signedIn ? 'Try again' : 'Sign in'}
           </Button>
           {#if signedIn}
             <Button variant="ghost" class="text-muted-foreground" onclick={() => (confirmSignOut = true)}>
