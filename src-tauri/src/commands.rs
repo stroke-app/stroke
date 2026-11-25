@@ -2701,3 +2701,79 @@ fn write_parquet(
     .map_err(|e| format!("Couldn't write the Parquet file: {e}"))?;
     Ok(())
 }
+
+/// What a title-bar double-click does, the way every Mac app does it: the
+/// System Settings choice "Double-click a window's title bar to" (Desktop &
+/// Dock), stored as `AppleActionOnDoubleClick` = `Maximize` (Zoom), `Fill`,
+/// `Minimize` or `None`. Tauri's drag-region script always zoomed instead, so a
+/// Mac set to minimize, or to do nothing, still got the zoom animation.
+///
+/// Runs AppKit's own `performZoom:` / `performMiniaturize:`, so the animation is
+/// the system's. Elsewhere it toggles maximize, which is what Windows and the
+/// Linux desktops do on a title-bar double-click.
+#[tauri::command]
+pub fn title_bar_double_click(window: tauri::WebviewWindow) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        let ns_window = window.ns_window().map_err(|e| e.to_string())? as usize;
+        window
+            .run_on_main_thread(move || unsafe { mac_title_bar_double_click(ns_window as *mut std::ffi::c_void) })
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        if !window.is_resizable().unwrap_or(true) {
+            return Ok(());
+        }
+        let result = if window.is_maximized().unwrap_or(false) { window.unmaximize() } else { window.maximize() };
+        result.map_err(|e| e.to_string())
+    }
+}
+
+/// `AppleActionOnDoubleClick` from the global domain, or `None` when unset.
+#[cfg(target_os = "macos")]
+unsafe fn mac_double_click_action() -> Option<String> {
+    use objc2::runtime::{AnyClass, AnyObject};
+    use objc2::msg_send;
+    let defaults_cls = AnyClass::get(c"NSUserDefaults")?;
+    let string_cls = AnyClass::get(c"NSString")?;
+    let defaults: *mut AnyObject = msg_send![defaults_cls, standardUserDefaults];
+    if defaults.is_null() {
+        return None;
+    }
+    let key: *mut AnyObject = msg_send![string_cls, stringWithUTF8String: c"AppleActionOnDoubleClick".as_ptr()];
+    let value: *mut AnyObject = msg_send![defaults, stringForKey: key];
+    if !value.is_null() {
+        let utf8: *const std::ffi::c_char = msg_send![value, UTF8String];
+        if !utf8.is_null() {
+            return Some(std::ffi::CStr::from_ptr(utf8).to_string_lossy().into_owned());
+        }
+    }
+    // Before macOS 10.11 the only choice was "minimize" (a bool).
+    let old_key: *mut AnyObject = msg_send![string_cls, stringWithUTF8String: c"AppleMiniaturizeOnDoubleClick".as_ptr()];
+    let minimize: bool = msg_send![defaults, boolForKey: old_key];
+    minimize.then(|| "Minimize".to_string())
+}
+
+#[cfg(target_os = "macos")]
+unsafe fn mac_title_bar_double_click(ns_window: *mut std::ffi::c_void) {
+    use objc2::runtime::AnyObject;
+    use objc2::msg_send;
+    let win = ns_window as *mut AnyObject;
+    if win.is_null() {
+        return;
+    }
+    let nil: *mut AnyObject = std::ptr::null_mut();
+    match mac_double_click_action().as_deref() {
+        Some("None") => {}
+        Some("Minimize") => {
+            let _: () = msg_send![win, performMiniaturize: nil];
+        }
+        // "Maximize" is the Zoom choice and the default. "Fill" (macOS 15)
+        // fills the screen, which is what zoom does for this window too.
+        _ => {
+            let _: () = msg_send![win, performZoom: nil];
+        }
+    }
+}
