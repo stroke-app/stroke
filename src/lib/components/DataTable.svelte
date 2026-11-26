@@ -5152,6 +5152,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   $effect(() => {
     function onCapture(/** @type {KeyboardEvent} */ e) {
       if (!isTableFocused || editingCell) return;
+      // Every case below is Ctrl/Cmd without Alt. Checked before the layout
+      // read under it, which arrow keys moving through the grid paid for.
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       // A grid kept mounted behind another tab is display:none, and hiding a
       // focused element does not reliably send focusout: its flag can still
       // say focused while the keys belong to the page on screen.
