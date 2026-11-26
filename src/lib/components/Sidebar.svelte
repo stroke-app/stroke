@@ -1276,12 +1276,14 @@
       if (!(e.target instanceof Element) || !e.target.closest('[aria-label^="Columns of "]')) peek = null
     }
     const onScroll = () => followPeek()
+    const onBlur = () => (peek = null)
     window.addEventListener('pointerdown', onDown, true)
     window.addEventListener('scroll', onScroll, { capture: true, passive: true })
-    window.addEventListener('blur', () => (peek = null), { once: true })
+    window.addEventListener('blur', onBlur)
     return () => {
       window.removeEventListener('pointerdown', onDown, true)
       window.removeEventListener('scroll', onScroll, { capture: true })
+      window.removeEventListener('blur', onBlur)
     }
   })
   // A schema or connection switch replaces the list: the peek goes with it.

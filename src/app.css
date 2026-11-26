@@ -2051,5 +2051,8 @@ html.dark[data-layout="inset"] [data-studio-region="sidebar"] {
 html.dark[data-layout="inset"] [data-studio-panel] {
   --background: var(--inset-raised);
   --panel: var(--inset-raised);
+  /* A side list inside the panel (AI mode's chats) keeps its step from the
+     page around it, recessed like the app's own sidebar. */
+  --sidebar: var(--inset-canvas);
   background-color: var(--inset-raised);
 }
