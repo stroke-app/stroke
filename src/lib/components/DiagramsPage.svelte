@@ -67,6 +67,8 @@
     switchDiagramsConnection(connection?.id ?? '')
   })
 
+  /** Names for the template chips; built from the keys they read "Erd" and "Mind Map". */
+  const TEMPLATE_LABELS = /** @type {Record<string, string>} */ ({ flowchart: 'Flowchart', class: 'Class', sequence: 'Sequence', erd: 'ERD', mindmap: 'Mind map' })
   const TEMPLATES = {
     flowchart: `flowchart TD\n    A[Start] --> B{Decision}\n    B -->|Yes| C[Action 1]\n    B -->|No| D[Action 2]\n    C --> E[End]\n    D --> E`,
     class: `classDiagram\n    class User {\n        +id: uuid\n        +name: string\n        +email: string\n    }\n    class Order {\n        +id: uuid\n        +userId: uuid\n        +status: string\n    }\n    User "1" --> "0..*" Order`,
@@ -136,7 +138,7 @@
     editing = true
     isNew = true
     draftCode = TEMPLATES.flowchart
-    draftName = 'Untitled Diagram'
+    draftName = 'Untitled diagram'
     draftGroup = 'Default'
     selectedId = null
   }
@@ -151,7 +153,7 @@
   }
 
   function saveChanges() {
-    const name = draftName.trim() || 'Untitled Diagram'
+    const name = draftName.trim() || 'Untitled diagram'
     if (isNew) {
       const d = saveDiagram(name, draftCode, draftGroup || 'Default')
       selectedId = d.id
@@ -342,7 +344,7 @@
                     : 'border-border/40 text-muted-foreground hover:border-border hover:text-foreground'
                 )}
               >
-                {key.charAt(0).toUpperCase() + key.slice(1).replace('map', ' Map')}
+                {TEMPLATE_LABELS[key] ?? key}
               </button>
             {/each}
           </div>
