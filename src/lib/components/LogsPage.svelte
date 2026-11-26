@@ -1,5 +1,7 @@
 <script>
   import { onMount } from "svelte";
+  import { Button } from "$lib/components/ui/button/index.js";
+  import EmptyState from "./EmptyState.svelte";
   import ScrollText from "@lucide/svelte/icons/scroll-text";
   import Trash2 from "@lucide/svelte/icons/trash-2";
   import Table2 from "@lucide/svelte/icons/table-2";
@@ -159,7 +161,7 @@
     class="studio-chrome flex h-9 shrink-0 items-center gap-2 border-b border-border bg-panel px-3"
   >
     <ScrollText class="size-3.5 shrink-0 text-muted-foreground" />
-    <span class="font-mono text-ui-sm font-medium">Activity log</span>
+    <span class="text-ui-sm font-medium">Activity log</span>
     {#if entries.length > 0}
       <span
         class="rounded-full bg-muted px-2 py-px font-mono text-ui-2xs text-muted-foreground"
@@ -196,7 +198,7 @@
       <input
         type="text"
         placeholder="Search logs…"
-        class="search-box no-field-frame h-7 w-full pl-7 pr-2.5 font-mono text-ui-xs"
+        class="search-box no-field-frame h-7 w-full pl-7 pr-2.5 text-ui-xs"
         bind:this={searchEl}
         bind:value={search}
       />
@@ -218,7 +220,7 @@
         <button
           type="button"
           class={cn(
-            "inline-flex h-6 items-center rounded-md px-2 font-mono text-ui-2xs transition-colors",
+            "inline-flex h-6 items-center rounded-md px-2 text-ui-2xs transition-colors",
             typeFilter === f.id
               ? "bg-card text-foreground ring-1 ring-border/50"
               : "text-muted-foreground hover:text-foreground",
@@ -234,19 +236,18 @@
   <!-- Log list -->
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto p-1.5 [will-change:transform]">
     {#if filtered.length === 0}
-      <div
-        class="flex h-full flex-col items-center justify-center gap-3 text-center"
+      <EmptyState
+        class="h-full justify-center"
+        icon={ScrollText}
+        title={entries.length === 0 ? "No activity yet" : "No entries match"}
+        description={entries.length === 0
+          ? "Queries, edits and connections show up here as you work."
+          : "Nothing in this log matches the filter."}
       >
-        <ScrollText class="size-10 shrink-0 text-muted-foreground" />
-        <p class="font-mono text-ui text-muted-foreground">
-          {entries.length === 0 ? "No activity yet" : "No entries match"}
-        </p>
-        <p class="text-ui-xs text-muted-foreground">
-          {entries.length === 0
-            ? "Operations will appear here as you use the app"
-            : "Try a different filter"}
-        </p>
-      </div>
+        {#if entries.length > 0}
+          <Button size="sm" variant="secondary" onclick={() => { typeFilter = "all"; search = ""; }}>Show all events</Button>
+        {/if}
+      </EmptyState>
     {:else}
       {#each filtered as entry (entry.id)}
         {@const Icon = icon(entry)}
