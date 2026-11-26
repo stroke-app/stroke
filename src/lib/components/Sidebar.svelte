@@ -1289,6 +1289,14 @@
   // A schema or connection switch replaces the list: the peek goes with it.
   $effect(() => { void activeSchema; void connectionName; peek = null; clearPeekCache() })
 
+  /** Copy a table's name, and say so: the menu item copied without a word. @param {string} name */
+  function copyTableName(name) {
+    void navigator.clipboard.writeText(name).then(
+      () => toast.success('Copied table name', { description: name, duration: 1500 }),
+      () => toast.error("Couldn't copy to the clipboard"),
+    )
+  }
+
   /**
    * Mod+C, P and X on a focused table row. True when the key was used.
    * @param {KeyboardEvent} e
@@ -1303,10 +1311,7 @@
       // A text selection inside the row is the user's to copy.
       if (String(window.getSelection?.() ?? '')) return false
       e.preventDefault()
-      void navigator.clipboard.writeText(name).then(
-        () => toast.success('Copied table name', { description: name, duration: 1500 }),
-        () => toast.error("Couldn't copy to the clipboard"),
-      )
+      copyTableName(name)
       return true
     }
     if (mod || e.shiftKey) return false
@@ -1913,7 +1918,7 @@
 <!-- The single-table context menu: the Tables list's, and the Tree sidebar's
      for tables in the open schema, so the two can never drift apart. -->
 {#snippet tableActions(/** @type {string} */ name, /** @type {boolean} */ inTree)}
-  <ContextMenu.Item onSelect={() => { navigator.clipboard.writeText(name) }}>
+  <ContextMenu.Item onSelect={() => copyTableName(name)}>
     <Icon name="clipboard-copy" />
     Copy name
     {#if !inTree}<ContextMenu.Shortcut combo="Mod+C" />{/if}
