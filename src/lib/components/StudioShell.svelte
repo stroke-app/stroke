@@ -3782,6 +3782,10 @@ let rowSearch = $state('')
   // Matching the modifier per platform rather than accepting either one matters
   // on macOS: Ctrl+B is the emacs "move backward" binding that text fields there
   // still honour, and swallowing it would break caret movement in every input.
+  /** A dialog is up (the command menu, Settings, a confirm): tab keys leave the tabs behind it alone. */
+  function dialogOpen() {
+    return commandOpen || showSettingsModal || showShortcutsModal || !!document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')
+  }
   function onWindowKeydownCapture(/** @type {KeyboardEvent} */ e) {
     if (onTabHistoryKey(e)) return
     // Ctrl+Tab / Ctrl+Shift+Tab cycle tabs on every platform - see the note
@@ -3790,7 +3794,7 @@ let rowSearch = $state('')
     // the direction, so both directions are one binding and cannot drift apart.
     const tabStep = matchesCommand(e, 'tab.next') ? 1 : matchesCommand(e, 'tab.prev') ? -1 : 0
     if (tabStep) {
-      if (!connection || tabs.length < 2) return
+      if (!connection || tabs.length < 2 || dialogOpen()) return
       e.preventDefault()
       e.stopPropagation()
       cycleTab(tabStep)
@@ -3891,7 +3895,7 @@ let rowSearch = $state('')
     if (!connection || aiMode || showConnectionModal) return false
     // Not behind an open dialog (the command menu, Settings): the tabs would
     // change under it.
-    if (commandOpen || showSettingsModal || showShortcutsModal || document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return false
+    if (dialogOpen()) return false
     const editor = e.target instanceof Element ? e.target.closest('.cm-editor') : null
     if (editor && editor === _engagedEditor) return false
     if (!goTabHistory(dir)) return false
