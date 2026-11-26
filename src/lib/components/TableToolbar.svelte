@@ -1795,7 +1795,6 @@
                   <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.diagram', 'Diagram')}</DropdownMenu.GroupHeading>
                   {#each DIAGRAM_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportdiagram(fmt.id)}>
-                      <Icon name={fmt.icon} class="size-3.5 shrink-0" />
                       {fmt.label}
                     </DropdownMenu.Item>
                   {/each}
@@ -1807,7 +1806,6 @@
                   <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.chart', 'Chart')}</DropdownMenu.GroupHeading>
                   {#each CHART_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportchart(fmt.id)}>
-                      <Icon name={fmt.icon} class="size-3.5 shrink-0" />
                       {fmt.label}
                     </DropdownMenu.Item>
                   {/each}
@@ -1818,9 +1816,10 @@
                 {#if dataViewMode === 'erd' || dataViewMode === 'chart'}
                   <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.rows', 'Rows')}</DropdownMenu.GroupHeading>
                 {/if}
+                <!-- Names only: eight rows with the same file icon said nothing
+                     the word Export above them had not. -->
                 {#each EXPORT_FORMATS as fmt (fmt.id)}
                   <DropdownMenu.Item disabled={total === 0} onSelect={() => onexport(fmt.id)}>
-                    <Icon name="file-down" class="size-3.5 shrink-0" />
                     {fmt.label}
                   </DropdownMenu.Item>
                 {/each}
