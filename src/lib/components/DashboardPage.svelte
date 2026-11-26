@@ -447,7 +447,6 @@
 
   onDestroy(() => {
     swapyInstance?.destroy();
-    if (confirmTimer) clearTimeout(confirmTimer);
   });
 
   // ── Grid layout ────────────────────────────────────────────────────────────
@@ -470,21 +469,25 @@
     return chartId ? ($savedCharts.find((c) => c.id === chartId) ?? null) : null;
   }
 
-  // ── Delete active dashboard ────────────────────────────────────────────────
-  let confirmDeleteDash = $state(false);
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let confirmTimer = null;
-
-  function handleDeleteDashboard() {
+  // ── Delete, with Undo instead of a confirm ─────────────────────────────────
+  /** @param {(() => boolean) | null} undo @param {string} what @param {string} name */
+  function offerUndo(undo, what, name) {
+    if (!undo) return;
+    toast.message(what, {
+      description: name,
+      duration: 8000,
+      action: { label: "Undo", onClick: () => { if (!undo()) toast.error("Couldn't undo: the dashboards changed since."); } },
+    });
+  }
+  function deleteActiveDashboard() {
     if (!activeDash) return;
-    if (confirmDeleteDash) {
-      deleteDashboard(activeDash.id);
-      confirmDeleteDash = false;
-    } else {
-      confirmDeleteDash = true;
-      if (confirmTimer) clearTimeout(confirmTimer);
-      confirmTimer = setTimeout(() => { confirmDeleteDash = false; }, 3000);
-    }
+    const name = activeDash.name;
+    offerUndo(deleteDashboard(activeDash.id), "Dashboard deleted", name);
+  }
+  /** @param {string} itemId @param {string} name */
+  function removeCard(itemId, name) {
+    if (!activeDash) return;
+    offerUndo(removeChartFromDashboard(activeDash.id, itemId), "Removed from dashboard", name);
   }
 </script>
 
@@ -514,7 +517,9 @@
     </button>
   {/if}
   <!-- Header -->
-  {#if !presenting}
+  <!-- With no dashboard at all the toolbar held only New, above an empty
+       page that offers New dashboard: it waits for the first one. -->
+  {#if !presenting && (activeDash || $dashboards.length)}
   <!-- Toolbar: which dashboard (searchable), New, one menu for the rest,
        then View only and Add chart. -->
   <div
@@ -567,7 +572,7 @@
             </DropdownMenu.DropdownMenuSubContent>
           </DropdownMenu.DropdownMenuSub>
           <DropdownMenu.DropdownMenuSeparator />
-          <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => { if (activeDash) deleteDashboard(activeDash.id); }}><Trash2 class="size-3.5 shrink-0" />Delete dashboard</DropdownMenu.DropdownMenuItem>
+          <DropdownMenu.DropdownMenuItem variant="destructive" onclick={deleteActiveDashboard}><Trash2 class="size-3.5 shrink-0" />Delete dashboard</DropdownMenu.DropdownMenuItem>
         </DropdownMenu.DropdownMenuContent>
       </DropdownMenu.DropdownMenu>
     {/if}
@@ -738,7 +743,7 @@
                           <DropdownMenu.DropdownMenuItem onclick={() => onopensql?.(item.query?.sql ?? chart?.sql ?? "", title)}><SquareTerminal class="size-3.5 shrink-0" />Open query</DropdownMenu.DropdownMenuItem>
                         {/if}
                         <DropdownMenu.DropdownMenuSeparator />
-                        <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => removeChartFromDashboard(activeDash.id, item.id)}><X class="size-3.5 shrink-0" />Remove from dashboard</DropdownMenu.DropdownMenuItem>
+                        <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => removeCard(item.id, title)}><X class="size-3.5 shrink-0" />Remove from dashboard</DropdownMenu.DropdownMenuItem>
                       </DropdownMenu.DropdownMenuContent>
                     </DropdownMenu.DropdownMenu>
                   </div>
