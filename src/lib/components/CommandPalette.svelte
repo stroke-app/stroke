@@ -641,13 +641,29 @@
       // loop (which runs real queries), and the transcript is never shown
       // again - reopening always starts back at root.
       stopAsk()
-      page = 'root'
-      paletteSearch = ''  // clear search so it never persists between opens
       askTurns = []
       askApi = []
       askError = ''
+      // Clear the search so it never persists between opens, but after the
+      // frame that shows the picked page: cleared at once, the list re-ranked
+      // and re-scrolled every row while the menu was on its way out, ahead of
+      // the page the Enter asked for.
+      _resetPending = true
+      let raf = requestAnimationFrame(() => {
+        raf = 0
+        setTimeout(() => { if (!open) resetSearch() }, 0)
+      })
+      return () => { if (raf) cancelAnimationFrame(raf) }
     }
+    // Opened again before the deferred clear ran: clear now, before it shows.
+    if (_resetPending) resetSearch()
   })
+  let _resetPending = false
+  function resetSearch() {
+    _resetPending = false
+    page = 'root'
+    paletteSearch = ''
+  }
 
   // Focus the search input when the dialog opens or navigates to a sub-page.
   // Command.Input is now first in DOM order so bits-ui's focus trap lands on it
