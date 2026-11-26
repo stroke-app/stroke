@@ -23,7 +23,7 @@
   import FileCode2 from '@lucide/svelte/icons/file-code-2'
   import Terminal from '@lucide/svelte/icons/terminal'
   import LayoutTemplate from '@lucide/svelte/icons/layout-template'
-  import { cn, errorText } from '$lib/utils.js'
+  import { cn, errorText, connectFailureText } from '$lib/utils.js'
   import Command from '@lucide/svelte/icons/command'
   import Keyboard from '@lucide/svelte/icons/keyboard'
   import Code2 from '@lucide/svelte/icons/code-2'
@@ -10254,7 +10254,7 @@ let rowSearch = $state('')
       switchingTo = ''
       // Say why, then put the user back where they were instead of leaving
       // them disconnected behind a dialog with no message in it.
-      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: e instanceof Error ? e.message : String(e) })
+      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: connectFailureText(/** @type {any} */ (conn), e) })
       const back = kept ? _sessions.get(kept) : undefined
       if (back && (await resumeKept(kept, back, null))) return
       let restored = false

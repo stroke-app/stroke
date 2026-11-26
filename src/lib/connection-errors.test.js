@@ -37,3 +37,25 @@ describe('errorText', () => {
     expect(errorText(42)).toBe('42')
   })
 })
+
+describe('connectFailureText', () => {
+  it('leads with a plain sentence when nothing answered', async () => {
+    const { connectFailureText } = await import('./utils.js')
+    const raw = 'Could not reach MongoDB: Kind: Server selection timeout: No available servers. Topology: { Type: Unknown, Servers: [ { Address: 127.0.0.1:27018, Type: Unknown, Error: Connection refused (os error 111) } ] }'
+    const text = connectFailureText({ host: '127.0.0.1', port: 27018 }, new Error(raw))
+    expect(text.startsWith('Nothing answered at 127.0.0.1:27018.')).toBe(true)
+    expect(text.length).toBeLessThan(260)
+  })
+  it('keeps any other error as it is', async () => {
+    const { connectFailureText } = await import('./utils.js')
+    expect(connectFailureText({ host: 'h' }, new Error('password authentication failed for user "x"'))).toBe('password authentication failed for user "x"')
+  })
+})
+
+describe('connectFailureText without a host', () => {
+  it('finds the address in the driver report or the URI', async () => {
+    const { connectFailureText } = await import('./utils.js')
+    expect(connectFailureText({}, 'Server selection timeout: No available servers. Topology: { Servers: [ { Address: 127.0.0.1:27018, Type: Unknown } ] }')).toMatch(/^Nothing answered at 127\.0\.0\.1:27018\./)
+    expect(connectFailureText(/** @type {any} */ ({ uri: 'mongodb://u:p@db.example:27017/app' }), 'connection refused')).toMatch(/^Nothing answered at db\.example:27017\./)
+  })
+})
