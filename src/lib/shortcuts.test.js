@@ -25,6 +25,15 @@ describe('comboTitle', () => {
     expect(comboTitle('Mod+Alt+Left')).toBe('Ctrl+Alt+←')
     expect(comboTitle('Mod+,')).toBe('Ctrl+,')
   })
+
+  it('leaves out the Shift a shifted symbol already implies', async () => {
+    const mac = await load('macos')
+    expect(mac.comboTitle('Mod+Shift+?')).toBe('⌘?')
+    expect(mac.keycaps('Shift+?')).toEqual(['?'])
+    const win = await load('windows')
+    expect(win.comboTitle('Mod+Shift+?')).toBe('Ctrl+?')
+    expect(win.comboTitle('Shift+K')).toBe('Shift+K')
+  })
 })
 
 describe('the shortcuts list', () => {
