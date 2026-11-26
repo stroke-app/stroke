@@ -3,7 +3,6 @@
   import EmptyState from './EmptyState.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import GitCompare from '@lucide/svelte/icons/git-compare'
-  import { getAppScale } from '$lib/app-zoom.js'
   import { appZoom } from '$lib/stores/settings.js'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Loader2 from '@lucide/svelte/icons/loader-2'
@@ -11,7 +10,7 @@
   import Plus from '@lucide/svelte/icons/plus'
   import Minus from '@lucide/svelte/icons/minus'
   import X from '@lucide/svelte/icons/x'
-  import ChevronDown from '@lucide/svelte/icons/chevron-down'
+  import SelectMenu from './SelectMenu.svelte'
   import Search from '@lucide/svelte/icons/search'
   import { onMount, untrack } from 'svelte'
   import { cn } from '$lib/utils.js'
@@ -73,32 +72,6 @@
   // svelte-ignore state_referenced_locally
   let R = $state(makeSource(currentConnectionId, '', _init))
 
-  // ── Dropdown ──────────────────────────────────────────────────────────────────
-  let openDropdown = $state('')
-  let dropdownSearch = $state('')
-  let ddTop = $state(0)
-  let ddLeft = $state(0)
-  let ddFlipUp = $state(false)
-  const DD_HEIGHT = 280
-
-  /** @param {string} id @param {MouseEvent} e */
-  function openDd(id, e) {
-    const rect = /** @type {HTMLElement} */ (e.currentTarget).getBoundingClientRect()
-    // The menu is sized in rem (w-56), so its footprint grows with the zoom;
-    // the flip and edge clamps have to grow with it or it runs off-screen.
-    const scale = getAppScale()
-    const ddHeight = DD_HEIGHT * scale
-    const spaceBelow = window.innerHeight - rect.bottom
-    ddFlipUp = spaceBelow < ddHeight && rect.top > ddHeight
-    ddTop = ddFlipUp ? rect.top - 4 : rect.bottom + 4
-    ddLeft = Math.min(rect.left, window.innerWidth - 248 * scale)
-    openDropdown = id
-    dropdownSearch = ''
-  }
-  function closeDd() { openDropdown = ''; dropdownSearch = '' }
-
-  /** @param {HTMLElement} node */
-  function focusNode(node) { setTimeout(() => node.focus(), 0) }
 
   // ── Key columns ───────────────────────────────────────────────────────────────
   /** @type {string[]} */
@@ -478,120 +451,42 @@
   onmouseup={onResizeUp}
 />
 
-<!-- Dropdown backdrop -->
-{#if openDropdown}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="fixed inset-0 z-30" onpointerdown={closeDd}></div>
-{/if}
 
 <!-- ── Searchable select ──────────────────────────────────────────────────────── -->
 {#snippet SearchSelect({ id, value, options, loading, placeholder = 'select…', onchange })}
-  {@const isOpen = openDropdown === id}
-  {@const filtered = dropdownSearch ? options.filter((o) => o.toLowerCase().includes(dropdownSearch.toLowerCase())) : options}
-  <div class="relative inline-flex">
-    <button
-      type="button"
-      onclick={(e) => { e.stopPropagation(); if (isOpen) closeDd(); else if (!loading && options.length > 0) openDd(id, e) }}
-      disabled={loading || (!value && options.length === 0 && !loading)}
-      class={cn(
-        'flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-ui-xs transition-colors select-none',
-        loading
-          ? 'border-border/30 bg-muted/15 text-muted-foreground'
-          : value
-            ? 'border-border/40 bg-muted/25 text-foreground/90 hover:bg-muted/45'
-            : options.length
-              ? 'border-dashed border-border/40 bg-transparent text-muted-foreground hover:border-border/60 hover:text-foreground'
-              : 'cursor-default border-border/20 bg-transparent text-muted-foreground pointer-events-none',
-        isOpen && 'border-border/70 bg-muted/50 text-foreground',
-      )}
-    >
-      {#if loading}
-        <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />
-        <span class="text-muted-foreground">{placeholder}</span>
-      {:else}
-        <span class={cn('max-w-[8.75rem] truncate', value && 'font-medium')}>{value || placeholder}</span>
-        {#if options.length > 0 || value}
-          <ChevronDown class={cn('ml-auto size-3 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
-        {/if}
-      {/if}
-    </button>
-    {#if isOpen}
-      <div
-        role="presentation"
-        class={cn('fixed z-40 w-56 overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim', ddFlipUp && '-translate-y-full')}
-        style="top:{ddTop}px;left:{ddLeft}px"
-        onpointerdown={(e) => e.stopPropagation()}
-      >
-        <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
-          <Search class="size-3 shrink-0 text-muted-foreground" />
-          <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search…"
-            class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
-          {#if dropdownSearch}<button aria-label="Clear search" title="Clear search" onclick={() => { dropdownSearch = '' }} class="text-muted-foreground hover:text-foreground"><X class="size-3 shrink-0" /></button>{/if}
-        </div>
-        <div class="max-h-52 overflow-y-auto py-1">
-          {#if filtered.length === 0}
-            <p class="px-3 py-2 text-ui-xs text-muted-foreground">No results</p>
-          {:else}
-            {#each filtered as opt}
-              <button type="button" onclick={() => { onchange(opt); closeDd() }}
-                class={cn('flex w-full items-center gap-2 px-3 py-1.5 text-ui-xs transition-colors hover:bg-muted/35', value === opt && 'text-primary')}
-              >
-                <span class={cn('w-3 shrink-0 text-center text-ui-3xs', value === opt ? 'text-primary' : 'opacity-0')}>✓</span>
-                {opt}
-              </button>
-            {/each}
-          {/if}
-        </div>
-      </div>
-    {/if}
-  </div>
+  <!-- The app's select menu (DESIGN_SYSTEM.md): arrow keys, a search, long
+       names cut short. A hand-built list here had none of those and scrolled
+       sideways on a long table name. -->
+  {#if loading}
+    <span class="flex h-7 items-center gap-1.5 rounded-md border border-border/30 bg-muted/15 px-2.5 text-ui-xs text-muted-foreground">
+      <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />{placeholder}
+    </span>
+  {:else}
+    <SelectMenu
+      ariaLabel={placeholder}
+      value={value || undefined}
+      onValueChange={(v) => onchange(v)}
+      items={options.map((o) => ({ value: o, label: o }))}
+      {placeholder}
+      disabled={!value && options.length === 0}
+      triggerClass={cn('h-7 w-auto min-w-24 max-w-[11rem] shrink-0', !value && 'text-muted-foreground')}
+      contentClass="min-w-[14rem] max-w-[20rem]"
+    />
+  {/if}
 {/snippet}
 
 <!-- ── Connection select ──────────────────────────────────────────────────────── -->
 {#snippet ConnSelect({ id, value, onchange })}
-  {@const isOpen = openDropdown === id}
-  {@const selected = connections.find((c) => c.id === value)}
-  {@const filtered = dropdownSearch ? connections.filter((c) => `${c.name} ${engineLabel(c.type)}`.toLowerCase().includes(dropdownSearch.toLowerCase())) : connections}
-  <div class="relative inline-flex">
-    <button type="button"
-      onclick={(e) => { e.stopPropagation(); if (isOpen) closeDd(); else openDd(id, e) }}
-      class={cn('flex h-7 max-w-[12.5rem] items-center gap-1.5 rounded-md border border-border/40 bg-muted/25 px-2.5 text-ui-xs font-medium text-foreground/90 transition-colors hover:bg-muted/45 select-none', isOpen && 'border-border/70 bg-muted/50 text-foreground')}
-    >
-      {#if value === currentConnectionId}<span class="size-1.5 shrink-0 rounded-full bg-info" title="Active connection"></span>{/if}
-      <span class="max-w-[8.75rem] truncate">{selected?.name ?? 'Connection'}</span>
-      <ChevronDown class={cn('ml-auto size-3 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
-    </button>
-    {#if isOpen}
-      <div
-        role="presentation"
-        class={cn('fixed z-40 w-64 overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim', ddFlipUp && '-translate-y-full')}
-        style="top:{ddTop}px;left:{ddLeft}px"
-        onpointerdown={(e) => e.stopPropagation()}
-      >
-        <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
-          <Search class="size-3 shrink-0 text-muted-foreground" />
-          <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search connections…"
-            class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
-        </div>
-        <div class="max-h-52 overflow-y-auto py-1">
-          {#if filtered.length === 0}
-            <p class="px-3 py-2 text-ui-xs text-muted-foreground">No results</p>
-          {:else}
-            {#each filtered as conn}
-              <button type="button" onclick={() => { onchange(conn.id); closeDd() }}
-                class={cn('flex w-full items-center gap-2 px-3 py-2 text-ui-xs transition-colors hover:bg-muted/35', value === conn.id && 'text-primary')}
-              >
-                <span class={cn('w-3 shrink-0 text-center text-ui-3xs', value === conn.id ? 'text-primary' : 'opacity-0')}>✓</span>
-                <span class="flex-1 truncate text-left">{conn.name}</span>
-                {#if conn.id === currentConnectionId}<span class="shrink-0 text-ui-3xs text-info">active</span>
-                {:else}<span class="shrink-0 text-ui-3xs text-muted-foreground">{engineLabel(conn.type)}</span>{/if}
-              </button>
-            {/each}
-          {/if}
-        </div>
-      </div>
-    {/if}
-  </div>
+  <SelectMenu
+    ariaLabel="Connection"
+    {value}
+    onValueChange={(v) => onchange(v)}
+    items={connections.map((c) => ({ value: c.id, label: c.name, hint: c.id === currentConnectionId ? 'active' : engineLabel(c.type) }))}
+    placeholder="Connection"
+    searchPlaceholder="Search connections…"
+    triggerClass="h-7 w-auto min-w-28 max-w-[12.5rem] shrink-0"
+    contentClass="min-w-[16rem] max-w-[22rem]"
+  />
 {/snippet}
 
 <!-- ── Mode toggle ────────────────────────────────────────────────────────────── -->
