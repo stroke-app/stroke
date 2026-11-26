@@ -924,7 +924,7 @@
           bind:this={structureSearchEl}
           type="text"
           aria-label="Search column"
-          class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm"
+          class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm placeholder:font-sans"
           placeholder={$tx('tb.searchColumn', 'Search column…')}
           value={structureSearch}
           oninput={(e) =>

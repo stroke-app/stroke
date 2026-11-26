@@ -615,7 +615,7 @@
                     type="text"
                     value={typeDraft[col.name] ?? displayType}
                     readonly={!canEdit}
-                    class="{INP} pr-6 {stagedValues['type:' + col.name] ? 'text-warning' : ''} {canEdit ? '' : 'cursor-default'}"
+                    class="{INP} pr-6 text-ellipsis {stagedValues['type:' + col.name] ? 'text-warning' : ''} {canEdit ? '' : 'cursor-default'}"
                     onfocus={() => {
                       if (!canEdit) return
                       typeDropOpen = { ...typeDropOpen, [col.name]: true }
