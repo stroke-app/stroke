@@ -31,6 +31,8 @@
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, diagram or schema snapshot asks nothing and offers Undo for 8 seconds instead.
 - Every dialog's main button is drawn in the accent colour.
+- Right-click menus use the same row size as the other menus, and shortcuts print the same way in every menu row.
+- The sidebar's database, recent and pinned rows are as tight as the table rows.
 - On a new install, notifications appear in the bottom right corner, clear of the tab bar. Settings, Appearance moves them.
 - Dialogs and the command menu are white in light themes (they took the grey of the page around the panel) and a step lighter than the page in dark ones. Every page in the content panel now shares one background; the AI view, Advisor and Diagrams sat a shade darker.
 - The command menu, the Schema explorer and switching between tables are faster.
