@@ -5,6 +5,7 @@
   import { cn } from '$lib/utils.js'
   import { t } from '$lib/i18n.js'
   import { tabDisplayTitle } from '$lib/studio-tabs.js'
+  import { withShortcut } from '$lib/stores/keybindings.js'
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
 
@@ -42,6 +43,11 @@
     /** Reset a table tab's view state - search, filters, sort, hidden columns, view mode. */
     onresettable = /** @param {string} _id */ (_id) => {},
     onreopenclosed = () => {},
+    /** Back and forward through the tabs visited, browser-style. Absent: no buttons. */
+    onback = /** @type {(() => void) | null} */ (null),
+    onforward = /** @type {(() => void) | null} */ (null),
+    canback = false,
+    canforward = false,
     /** Open a fresh query editor - the `+` at the end of the strip. */
     onnewsql = () => {},
     /** Whether the closed-tab stack has anything to reopen. */
@@ -103,6 +109,7 @@
 
   // Which edges have hidden tabs: those edges fade out instead of cutting a
   // title in half, and only while there is actually more to scroll to.
+  const navBtn = 'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
   let fadeLeft = $state(false)
   let fadeRight = $state(false)
   function updateFades() {
@@ -206,6 +213,18 @@
   aria-label={$t('tabs.openEditors')}
   ondblclick={handleDragAreaDblClick}
 >
+  {#if onback && onforward}
+    <!-- Back and forward through the tabs visited (Linear's ‹ ›). Buttons as
+         well as keys: Mod+[ and Mod+] stand aside inside a code editor. -->
+    <div class="mr-1 flex shrink-0 items-center gap-0.5">
+      <button type="button" class={navBtn} disabled={!canback} onclick={onback} title={withShortcut('Back', 'tab.back')} aria-label="Back">
+        <Icon name="chevron-left" class="size-4 shrink-0" />
+      </button>
+      <button type="button" class={navBtn} disabled={!canforward} onclick={onforward} title={withShortcut('Forward', 'tab.forward')} aria-label="Forward">
+        <Icon name="chevron-right" class="size-4 shrink-0" />
+      </button>
+    </div>
+  {/if}
   <!-- The strip's empty stretch drags the window too (macOS, Windows, Linux):
        only an element that carries the attribute itself starts a drag, and
        this one filled the bar to the right of the last tab. -->

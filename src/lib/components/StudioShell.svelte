@@ -3817,6 +3817,63 @@ let rowSearch = $state('')
     toggleStatusBar()
   })
 
+  // ── Tab history: back and forward, browser-style ─────────────────────────
+  // Every switch records the tab it left. Back returns to it, Forward undoes a
+  // Back; a new switch after going back drops the forward list, as a browser
+  // does. Closed tabs are skipped. The keys are Mod+[ and Mod+], which a code
+  // editor keeps for outdent and indent: with focus in one they stand aside.
+  /** @type {string[]} */
+  let _tabBack = $state([])
+  /** @type {string[]} */
+  let _tabFwd = $state([])
+  /** The tab a Back or Forward is moving to: arriving there is not a new visit. */
+  let _tabNavTarget = /** @type {string | null} */ (null)
+  let _tabPrev = /** @type {string | null} */ (null)
+  $effect(() => {
+    const id = activeTabId
+    untrack(() => {
+      if (id && _tabPrev && id !== _tabPrev) {
+        if (id === _tabNavTarget) _tabNavTarget = null
+        else {
+          _tabBack.push(_tabPrev)
+          if (_tabBack.length > 50) _tabBack.shift()
+          _tabFwd = []
+        }
+      }
+      _tabPrev = id
+    })
+  })
+  /** @param {-1 | 1} dir @returns {boolean} whether it moved */
+  function goTabHistory(dir) {
+    const from = dir < 0 ? _tabBack : _tabFwd
+    const to = dir < 0 ? _tabFwd : _tabBack
+    while (from.length) {
+      const id = /** @type {string} */ (from.pop())
+      if (id === activeTabId || !tabs.some((t) => t.id === id)) continue
+      if (activeTabId) to.push(activeTabId)
+      _tabNavTarget = id
+      void activateTab(id)
+      // A page that takes focus when it shows (the SQL editor, an empty JSON
+      // viewer) put the caret in a code editor, where Mod+[ outdents: the next
+      // Back went nowhere. After it has had its moment, focus goes to the
+      // tab itself, so Back and Forward keep walking.
+      setTimeout(() => {
+        if (activeTabId !== id || !(document.activeElement instanceof Element) || !document.activeElement.closest('.cm-editor')) return
+        /** @type {HTMLElement | null} */ (document.querySelector(`[data-tab-id="${CSS.escape(id)}"] [role="tab"], [data-tab-id="${CSS.escape(id)}"][role="tab"]`))?.focus()
+      }, 150)
+      return true
+    }
+    return false
+  }
+  /** @param {KeyboardEvent} e @param {-1 | 1} dir */
+  function onTabHistoryKey(e, dir) {
+    if (!connection || aiMode || e.defaultPrevented) return
+    if (e.target instanceof Element && e.target.closest('.cm-editor')) return
+    if (goTabHistory(dir)) e.preventDefault()
+  }
+  createCommandHotkey('tab.back', (e) => onTabHistoryKey(e, -1), { preventDefault: false, stopPropagation: false })
+  createCommandHotkey('tab.forward', (e) => onTabHistoryKey(e, 1), { preventDefault: false, stopPropagation: false })
+
   // Reopen the most recently closed tab (browser-style).
   createCommandHotkey('tab.reopen', (e) => {
     if (!connection) return
@@ -11482,6 +11539,10 @@ let rowSearch = $state('')
             onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
+            onback={() => goTabHistory(-1)}
+            onforward={() => goTabHistory(1)}
+            canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
+            canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
@@ -11762,6 +11823,10 @@ let rowSearch = $state('')
             onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
+            onback={() => goTabHistory(-1)}
+            onforward={() => goTabHistory(1)}
+            canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
+            canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
@@ -11785,6 +11850,10 @@ let rowSearch = $state('')
             onclose={(id) => (tabs.some((t) => t.id === id) ? void closeTabInGroup(group.id, id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
+            onback={() => goTabHistory(-1)}
+            onforward={() => goTabHistory(1)}
+            canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
+            canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
