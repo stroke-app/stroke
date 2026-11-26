@@ -3950,6 +3950,7 @@
   {#if connHover}
     <div
       bind:this={connCardEl}
+      data-surface-in
       class="pointer-events-none fixed z-[90] min-w-52 max-w-80 rounded-[10px] border border-border/60 bg-popover px-3 py-2.5 text-ui-xs elevate-2-rim"
       style:left="{connHover.x}px"
       style:top="{connCardEl ? connCardTop : connHover.y}px"

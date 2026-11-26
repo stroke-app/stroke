@@ -1998,6 +1998,13 @@ html:not([data-panel-motion="off"]) :is(
   transform-origin: var(--bits-floating-transform-origin, top center);
   animation: stroke-surface-in 120ms cubic-bezier(0.2, 0, 0, 1);
 }
+/* Floating cards that are not menu primitives (the connection hover card, the
+   table peek) opt in with data-surface-in; data-surface-origin says which
+   edge they grow from. */
+html:not([data-panel-motion="off"]) [data-surface-in] {
+  transform-origin: var(--surface-origin, left top);
+  animation: stroke-surface-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
 html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-state="open"] {
   animation: stroke-dialog-in 160ms cubic-bezier(0.2, 0, 0, 1);
 }

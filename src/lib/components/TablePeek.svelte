@@ -16,7 +16,6 @@
    * on a focused row (Linear's peek). The row keeps focus, so the arrows move
    * the peek down the list and Enter opens the table being looked at.
    */
-  import { fade } from 'svelte/transition'
   import { getTableColumnStructure } from '$lib/api.js'
   import Icon from './Icon.svelte'
   import Kbd from './Kbd.svelte'
@@ -77,7 +76,7 @@
   style:top="{top}px"
   role="dialog"
   aria-label="Columns of {table}"
-  in:fade={{ duration: 100 }}
+  data-surface-in
 >
   <div class="flex min-w-0 items-baseline gap-2 px-3 pt-2.5 pb-2">
     <p class="min-w-0 flex-1 truncate font-medium text-foreground">{table}</p>
