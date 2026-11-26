@@ -737,7 +737,9 @@
   // empty there, so it never rebuilds or re-sorts the list (see
   // command-local-filter.svelte.js). The theme page's first letter rebuilt 40
   // rows of swatches, 160ms in a dev build.
-  const LOCAL_PAGES = new Set(['root', 'theme'])
+  // Not Connections: its current connection is a disabled row, and the best
+  // row picked here does not know to skip it.
+  const LOCAL_PAGES = new Set(['root', 'theme', 'pages', 'docker'])
   const localFilter = createLocalFilter(() => (LOCAL_PAGES.has(page) ? paletteSearch.trim() : ''), paletteFilter)
   setContext(LOCAL_FILTER, localFilter)
   const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'actions', 'switchdb', 'database', 'launch', 'appearance']
@@ -746,6 +748,18 @@
     if (!localFilter.search) return ROOT_GROUPS
     const best = new Map(ROOT_GROUPS.map((g) => [g, localFilter.best(g)]))
     return [...ROOT_GROUPS].sort((a, b) => (best.get(b) ?? 0) - (best.get(a) ?? 0))
+  })
+  // Go to page is one flat list, so its order is the ranking: best match first
+  // while searching, as bits-ui sorted it. Same value and keywords the row
+  // scores itself with (pageRow), so the two agree.
+  const pagesRanked = $derived.by(() => {
+    const q = page === 'pages' ? localFilter.search : ''
+    if (!q) return pageItems
+    const scoreOf = (/** @type {typeof pageItems[number]} */ it) => {
+      const shown = $tx('cmd.' + it.label, it.label)
+      return paletteFilter(shown === it.label ? it.value : `${it.value} ${shown}`, q, [shown])
+    }
+    return pageItems.map((it, i) => ({ it, i, s: scoreOf(it) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.it)
   })
   // Highlight the best match as the search changes: bits-ui did this while it
   // filtered, and with its search empty it no longer does.
@@ -764,8 +778,10 @@
       return
     }
     _wasSearching = true
-    const order = page === 'root' ? rootOrder : themePageGroups.map((g) => g.label)
-    const top = localFilter.top((g) => order.indexOf(g ?? ''))
+    // Elsewhere groups keep their order, and a tie goes to the row mounted
+    // first, which is the first on the page.
+    const order = page === 'root' ? rootOrder : null
+    const top = localFilter.top(order ? (g) => order.indexOf(g ?? '') : undefined)
     if (top && top !== untrack(() => highlighted)) highlighted = top
   })
   const TABLES_PAGE_CAP = 100
@@ -1461,9 +1477,6 @@
             {:else if id === 'appearance'}{@render group_appearance()}
             {/if}
           {/each}
-          {#if page === 'root' && localFilter.search && localFilter.count === 0}
-            <p class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</p>
-          {/if}
         {:else if page === 'tables'}
           {#if tablesPageRegular.total > 0}
             <Command.Group heading={$tx('group.Tables', 'Tables')}>
@@ -1588,7 +1601,7 @@
         {:else if page === 'pages'}
           <!-- Go to page, VSCode-style focused navigator (Ctrl/⌘+P) -->
           <Command.Group heading={$tx('group.Go to page', 'Go to page')}>
-            {#each pageItems as it (it.label)}
+            {#each pagesRanked as it (it.label)}
               {@render pageRow(it)}
             {/each}
           </Command.Group>
@@ -1611,9 +1624,11 @@
               {/each}
             </Command.Group>
           {/each}
-          {#if localFilter.search && localFilter.count === 0}
-            <p class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</p>
-          {/if}
+        {/if}
+        <!-- A page that filters its own rows draws its own empty state: bits-ui's
+             search is empty there, so its Command.Empty never shows. -->
+        {#if LOCAL_PAGES.has(page) && localFilter.search && localFilter.count === 0}
+          <p class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</p>
         {/if}
 
       </Command.List>
