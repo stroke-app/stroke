@@ -1758,11 +1758,14 @@
   /** The connection the list's right-click menu is for. @type {any} */
   let connMenuFor = $state(null)
   let connHover = $state(null)
+  /** The list's right-click menu is up: no hover card meanwhile. */
+  let connMenuOpen = false
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let connHoverTimer
   /** @param {any} c @param {EventTarget | null} el */
   function showConnCard(c, el) {
     clearTimeout(connHoverTimer)
+    if (connMenuOpen) return
     const r = /** @type {HTMLElement} */ (el)?.getBoundingClientRect?.()
     if (!r) return
     connHoverTimer = setTimeout(() => { connCardTop = Math.round(r.top - 4); connHover = { c, x: Math.round(r.right + 8), y: connCardTop } }, 350)
@@ -3728,10 +3731,13 @@
                to the right") with nothing about the connection. One menu for
                the list, told which row was clicked: a menu per row mounted a
                bits-ui menu tree for every saved connection on each connect. -->
-          <ContextMenu.Root>
+          <!-- The hover card stays down while the menu is up: both open at
+               once put the card over the menu's left edge. -->
+          <ContextMenu.Root onOpenChange={(o) => { connMenuOpen = o; if (o) hideConnCard() }}>
           <ContextMenu.Trigger
             class="block w-full"
             oncontextmenu={(e) => {
+              hideConnCard()
               const id = /** @type {HTMLElement | null} */ (/** @type {Element} */ (e.target).closest('[data-conn-id]'))?.dataset.connId
               connMenuFor = connsShown.find((x) => x.id === id) ?? null
             }}
