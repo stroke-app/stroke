@@ -9894,10 +9894,11 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   {/if}
                 {:else if filtered}
                   <FilterX class="size-8 text-muted-foreground" />
-                  <p class="text-ui-sm text-muted-foreground">No rows match these filters</p>
+                  <!-- A search, a filter or both: words that fit either. -->
+                  <p class="text-ui-sm text-muted-foreground">No rows match</p>
                   {#if onclearfilters}
                     <Button type="button" variant="outline" size="sm" class="pointer-events-auto mt-1" onclick={() => onclearfilters?.()}>
-                      Clear filters
+                      Show all rows
                     </Button>
                   {/if}
                 {:else}
