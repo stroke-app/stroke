@@ -627,7 +627,7 @@
         title={`Nothing on ${activeDash.name} yet`}
         description="Add saved charts or queries. Each one refreshes on its own."
       >
-        <Button size="sm" variant="secondary" onclick={() => (pickerOpen = true)}>
+        <Button size="sm" onclick={() => (pickerOpen = true)}>
           <Plus class="size-3.5 shrink-0" />
           Add charts or queries
         </Button>

@@ -318,7 +318,7 @@
         title="No saved charts yet"
         description="Run a query, switch its result to the chart view, and save it. It shows up here, ready to share or put on a dashboard."
       >
-        <Button size="sm" variant="secondary" onclick={() => onrunsql('')}>Open SQL editor</Button>
+        <Button size="sm" onclick={() => onrunsql('')}>Open SQL editor</Button>
       </EmptyState>
     {:else if shownCount === 0}
       <p class="py-16 text-center text-ui-xs text-muted-foreground">No charts match.</p>

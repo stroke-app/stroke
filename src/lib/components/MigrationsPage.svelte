@@ -294,7 +294,7 @@
       {:else if neither}
         <EmptyState class="py-20" icon={GitMerge} title="No migrations in this database yet">
           {#snippet body()}There's no <code class="font-mono">_prisma_migrations</code>, <code class="font-mono">__drizzle_migrations</code> or <code class="font-mono">d1_migrations</code> table here. Pick the project folder to see what would run.{/snippet}
-          <Button variant="secondary" size="sm" onclick={() => void chooseFolder()}><FolderOpen class="size-3.5 shrink-0" />Pick project folder</Button>
+          <Button size="sm" onclick={() => void chooseFolder()}><FolderOpen class="size-3.5 shrink-0" />Pick project folder</Button>
         </EmptyState>
       {:else if list.length}
         <!-- At a glance: how far along this database is. -->
