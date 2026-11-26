@@ -12917,6 +12917,8 @@ let rowSearch = $state('')
           {isRedis}
           {isKV}
           onpalette={(page) => { commandPage = page; commandOpen = true }}
+          recent={recentTabs}
+          onopenrecent={(r) => void openTableTab(r.schema, r.table)}
           ondocs={openDocsTab}
           onsql={openSqlTab}
           ondynamo={openDynamoTab}

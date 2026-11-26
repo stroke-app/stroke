@@ -1,5 +1,6 @@
 <script>
   import { tx } from '$lib/i18n.js'
+  import Icon from './Icon.svelte'
   // The new-tab page: which database this is, the search that starts
   // everything (Cmd/Ctrl+K), and a short list of where to go next. Split out of
   // StudioShell; it takes what it shows and calls back for what it opens.
@@ -37,7 +38,22 @@
     onsearch = () => {},
     onextensions = () => {},
     onconnect = () => {},
+    /** The tables opened last on this connection, newest first. @type {{ schema: string, table: string, tableKind?: string, openedAt: number }[]} */
+    recent = [],
+    /** @type {(r: { schema: string, table: string }) => void} */
+    onopenrecent = () => {},
   } = $props()
+
+  /** "5m", "2h", "3d": the sidebar's own spelling. @param {number} ts */
+  function ago(ts) {
+    if (!ts) return ''
+    const s = Math.max(0, (Date.now() - ts) / 1000)
+    if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m`
+    if (s < 86400) return `${Math.round(s / 3600)}h`
+    if (s < 86400 * 14) return `${Math.round(s / 86400)}d`
+    return `${Math.round(s / (86400 * 7))}w`
+  }
+  const recentShown = $derived(isKV ? [] : recent.slice(0, 5))
 
   /**
    * The shell the terminal dock starts for this engine (db/terminal.rs
@@ -184,6 +200,28 @@
     {@render row(Blocks, $tx('tile.Extensions', "Extensions"), $tx('tile.Extensions.desc', "Add and manage extensions"), onextensions, { pro: true, keys: [mod, shiftKey, "X"] })}
     {@render row(Database, $tx('tile.Connect', "Connect"), $tx('tile.Connect.desc', "Switch or add a connection"), onconnect, { keys: [mod, shiftKey, "C"] })}
   </div>
+
+  {#if recentShown.length}
+    <!-- Pick up where you left off: the likeliest next step is a table you
+         just had open, one click away instead of a search. -->
+    <section class="flex flex-col gap-1" aria-label="Recent tables">
+      <h2 class="px-2.5 text-ui-xs font-medium text-muted-foreground">{$tx('tile.recent', 'Recent')}</h2>
+      <div class="flex flex-col">
+        {#each recentShown as r (`${r.schema}.${r.table}`)}
+          <button
+            type="button"
+            class="group flex h-8 min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-ui-sm text-muted-foreground outline-none hover:bg-accent/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            onclick={() => onopenrecent(r)}
+          >
+            <Icon name={r.tableKind === 'view' || r.tableKind === 'materialized_view' ? 'eye' : 'table-2'} class="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+            <span class="min-w-0 truncate text-foreground">{r.table}</span>
+            <span class="min-w-0 shrink truncate text-ui-xs text-muted-foreground">{r.schema}</span>
+            <span class="ml-auto shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(r.openedAt)}</span>
+          </button>
+        {/each}
+      </div>
+    </section>
+  {/if}
 
   <button type="button" class="inline-flex h-7 items-center gap-1.5 self-start rounded-md px-2.5 text-ui-xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => onpalette('pages')}>
     {$tx('tile.allPages', 'Browse all pages')} {@render chord([mod, shiftKey, 'P'])}
