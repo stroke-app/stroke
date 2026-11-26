@@ -260,7 +260,9 @@
                 aria-expanded={open}
                 onclick={() => { const n = new Set(openSeries); if (open) n.delete(it.key); else n.add(it.key); openSeries = n; }}
               >
-                <ChevronRight class={cn("size-3.5 shrink-0 text-muted-foreground transition-transform duration-150", open && "rotate-90")} />
+                <!-- In the changed-dot slot (6px), pulled into the padding, so this
+                  label starts where every other row's does. -->
+                <ChevronRight class={cn("-ms-2.5 size-3 shrink-0 text-muted-foreground transition-transform duration-150", open && "rotate-90")} />
                 <span class="min-w-0 flex-1 truncate text-ui-sm text-foreground">{it.label}</span>
                 {#if it.rows.some((r) => r.changed)}<span class="size-1.5 shrink-0 rounded-full bg-primary" title="Some are changed"></span>{/if}
                 <span class="flex shrink-0 items-center gap-1 text-ui-2xs text-muted-foreground">
