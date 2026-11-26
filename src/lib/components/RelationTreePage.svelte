@@ -1,4 +1,5 @@
 <script>
+  import EmptyState from './EmptyState.svelte'
   import { tick, untrack } from 'svelte'
   import { listTables, getTableColumnStructure, listIndexes, getTableRowCounts } from '$lib/api.js'
   import { formatTableRowCount } from '$lib/table-list.js'
@@ -428,10 +429,7 @@
   {:else}
   <div class="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
     {#if !focusedTable || !tableMeta.has(focusedTable)}
-      <div class="flex h-full min-h-[200px] flex-col items-center justify-center gap-3">
-        <GitBranch class="size-10 shrink-0 text-muted-foreground" />
-        <p class="font-mono text-ui-xs text-muted-foreground">Select a table to explore its relationships</p>
-      </div>
+      <EmptyState class="h-full min-h-[200px] justify-center" icon={GitBranch} title="Pick a table" description="Its foreign keys, in and out, show here as a tree." />
     {:else}
       {@const rootMeta = tableMeta.get(focusedTable)}
       {@const rootOut = outbound.get(focusedTable) ?? []}

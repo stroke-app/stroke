@@ -1,4 +1,5 @@
 <script>
+  import EmptyState from './EmptyState.svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { tick } from 'svelte'
   import { executeSql } from '$lib/api.js'
@@ -625,13 +626,7 @@
 
 <!-- Snippets -->
 {#snippet emptyState(Icon, label, sub)}
-  <div class="flex h-full flex-col items-center justify-center gap-3 p-12 text-center">
-    <Icon class="size-10 shrink-0 text-muted-foreground" />
-    <div>
-      <p class="text-ui text-muted-foreground">{label}</p>
-      <p class="mt-1 text-ui-xs text-muted-foreground">{sub}</p>
-    </div>
-  </div>
+  <EmptyState class="h-full justify-center p-12" icon={Icon} title={label} description={sub} />
 {/snippet}
 
 {#snippet noMatch(type, q)}

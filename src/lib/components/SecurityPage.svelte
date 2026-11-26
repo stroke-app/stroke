@@ -1,4 +1,6 @@
 <script>
+  import EmptyState from './EmptyState.svelte'
+  import { Button } from '$lib/components/ui/button/index.js'
   import { comboTitle } from '$lib/shortcuts.js'
   import SkeletonRows from "./SkeletonRows.svelte";
   import { errorText } from '$lib/utils.js'
@@ -369,16 +371,8 @@
       mysql: 'MySQL', mariadb: 'MariaDB', sqlite: 'SQLite', d1: 'Cloudflare D1',
       libsql: 'LibSQL', clickhouse: 'ClickHouse', duckdb: 'DuckDB', mssql: 'SQL Server',
     }[connectionType ?? ''] ?? (connectionType ?? 'This engine')}
-    <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-      <ShieldCheck class="size-10 shrink-0 text-muted-foreground" />
-      <div class="space-y-1.5">
-        <p class="text-ui font-medium text-foreground">{engineLabel} does not support roles or RLS</p>
-        <p class="text-ui-xs text-muted-foreground">
-          Row Level Security and role management require PostgreSQL or CockroachDB.<br />
-          Use the SQL editor to manage {engineLabel} users and permissions directly.
-        </p>
-      </div>
-    </div>
+    <EmptyState class="min-h-0 flex-1 justify-center p-8" icon={ShieldCheck} title={`${engineLabel} does not support roles or RLS`}
+      description={`Row Level Security and role management need PostgreSQL or CockroachDB. Manage ${engineLabel} users and permissions in the SQL editor.`} />
   {:else}
   <!-- Tab row -->
   <div class="flex shrink-0 items-center border-b border-border bg-panel">
@@ -445,12 +439,7 @@
           >
         </div>
       {:else if roles.length === 0}
-        <div
-          class="flex h-full flex-col items-center justify-center gap-3 py-16 text-center"
-        >
-          <Users class="size-10 shrink-0 text-muted-foreground" />
-          <p class="text-ui text-muted-foreground">No roles found</p>
-        </div>
+        <EmptyState class="h-full justify-center py-16" icon={Users} title="No roles yet" description="Roles and users created in this database show up here." />
       {:else}
         <table class="w-full text-ui-xs">
           <thead class="studio-chrome sticky top-0 z-10 bg-panel text-left">
@@ -763,23 +752,9 @@
           >
         </div>
       {:else if policies.length === 0}
-        <div
-          class="flex h-full flex-col items-center justify-center gap-3 py-20 text-center"
-        >
-          <ShieldCheck class="size-10 shrink-0 text-muted-foreground" />
-          <p class="text-ui text-muted-foreground">
-            No policies found
-          </p>
-          <p class="mt-1 text-ui-xs text-muted-foreground">
-            Enable RLS on a table and create a policy to control row access
-          </p>
-          <button
-            type="button"
-            class= "field-surface mt-3 inline-flex h-7 items-center gap-1.5 bg-background px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/35 hover:text-foreground"
-            onclick={openPolicyModal}
-            ><Plus class="size-3.5 shrink-0" />Create first policy</button
-          >
-        </div>
+        <EmptyState class="h-full justify-center py-20" icon={ShieldCheck} title="No policies yet" description="Enable RLS on a table and create a policy to control which rows each role sees.">
+          <Button size="sm" onclick={openPolicyModal}><Plus class="size-3.5 shrink-0" />Create first policy</Button>
+        </EmptyState>
       {:else}
         <table class="w-full text-ui-xs">
           <thead class="studio-chrome sticky top-0 z-10 bg-panel text-left">

@@ -474,12 +474,7 @@
   <!-- Content -->
   <div class="app-scroll min-h-0 flex-1 overflow-auto [will-change:transform]">
     {#if !currentSupported}
-      <div class="flex h-full flex-col items-center justify-center gap-3 py-20 text-center">
-        <Boxes class="size-10 shrink-0 text-muted-foreground" />
-        <p class="font-mono text-ui text-muted-foreground">
-          {TABS.find((t) => t.id === activeSub)?.label} overview isn't available for {engineLabel} yet
-        </p>
-      </div>
+      <EmptyState class="h-full justify-center py-20" icon={Boxes} title={`No ${activeSub} overview for ${engineLabel} yet`} description="Browse them in the sidebar, or query the catalog from the SQL editor." />
     {:else if isLoading}
       <SkeletonRows cols={[8, 40, 20, 20, 25, 15]} />
     {:else if slots[activeSub].error}
