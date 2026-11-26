@@ -26,10 +26,10 @@
 - Each snapshot on the Schema timeline shows its table count again.
 
 ### Changes
-- Deleting a saved connection, dashboard, dashboard card, saved chart or schema snapshot asks nothing and offers Undo for 8 seconds instead.
+- Deleting a saved connection, dashboard, dashboard card, saved chart, diagram or schema snapshot asks nothing and offers Undo for 8 seconds instead.
 - Every dialog's main button is drawn in the accent colour.
 - On a new install, notifications appear in the bottom right corner, clear of the tab bar. Settings, Appearance moves them.
 - Dialogs in dark themes stand a step lighter than the page behind them.
 - The command menu, the Schema explorer and switching between tables are faster.
 - Grid checkboxes show on the row you point at, and on every row once you select one.
-- Empty pages share one design, with the first step as a button.
+- Empty pages share one design, with the first step as a button. Diagrams, Dashboard and Schema timeline hide their lists and toolbars until there is something in them.
