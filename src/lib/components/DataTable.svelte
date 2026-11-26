@@ -2526,15 +2526,29 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     return drafts
   }
 
+  /**
+   * Where a new staged row puts the caret: the first column you have to fill,
+   * then one you may, then one with a default, and a generated key last. It
+   * took the first column that was not generated, which on a table keyed by a
+   * uuid with a default was the key, and the first letters typed became the
+   * id. A shown column first: the band only draws those.
+   */
+  function firstDraftFocusCol() {
+    /** @param {(c: any) => boolean} pred */
+    const pick = (pred) => visibleColumns.find(pred) ?? columns.find(pred)
+    /** @param {string} kind */
+    const omits = (kind) => (/** @type {any} */ c) => insertOmitBehaviour(c, primaryKey) === kind
+    const first = pick(omits('required')) ?? pick(omits('null')) ?? pick(omits('default')) ?? pick((c) => !isAutoColumn(c, primaryKey))
+    return first?.name ?? visibleColumns[0]?.name ?? columns[0]?.name ?? null
+  }
+
   function openInsertDraft(anchorRow = null) {
     if (readonly) { if (isReadOnly()) guardWrite('add rows'); return }
     // Add on an open band appends: pressing it three times is three rows, not
     // the same row reset twice.
     newRowDrafts = [...(newRowDrafts ?? []), blankDraft()]
     newRowFocusIdx = newRowDrafts.length - 1
-    // Focus first non-auto column (all columns, including hidden ones)
-    const first = columns.find((c) => !isAutoColumn(c, primaryKey))
-    newRowFocusCol = first?.name ?? columns[0]?.name ?? null
+    newRowFocusCol = firstDraftFocusCol()
     if (anchorRow === null) {
       tableContainer?.scrollTo({ top: 0, behavior: 'smooth' })
       return
@@ -3564,8 +3578,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     });
     newRowDrafts = [...(newRowDrafts ?? []), drafts];
     newRowFocusIdx = newRowDrafts.length - 1;
-    const firstEditable = columns.find((c) => !isAutoColumn(c, primaryKey));
-    newRowFocusCol = firstEditable?.name ?? columns[0]?.name ?? null;
+    newRowFocusCol = firstDraftFocusCol();
     tableContainer?.scrollTo({ top: 0, behavior: "smooth" });
     toast.info(
       newRowDrafts.length === 1 ? "Copied into a new row" : `${newRowDrafts.length} rows staged`,
