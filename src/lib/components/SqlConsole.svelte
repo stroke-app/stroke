@@ -1,6 +1,7 @@
 <script>
   import { tx } from '$lib/i18n.js'
   import { comboTitle } from '$lib/shortcuts.js'
+  import Kbd from './Kbd.svelte'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import PanelBottom from "@lucide/svelte/icons/panel-bottom";
@@ -1907,14 +1908,15 @@
               <p class="text-ui-lg font-normal tracking-tight text-foreground/90">{$tx('sql.runAQuery', 'Run a query')}</p>
               <!-- Mod+Enter runs every statement; Mod+R is the one at the cursor.
                    This named Mod+Enter for the cursor's, which then ran all of them. -->
-              <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
-                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{comboTitle('Mod+R')}</kbd>
-                runs the statement at the cursor
-              </p>
-              <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
-                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{comboTitle('Mod+Enter')}</kbd>
-                runs them all
-              </p>
+              <!-- Two columns, caps right-aligned against the text: centred one
+                   per line, the two hints started at different x and read as
+                   two unrelated notes. -->
+              <div class="mt-1 grid grid-cols-[auto_auto] items-center gap-x-2 gap-y-1.5 text-ui-xs text-muted-foreground">
+                <Kbd combo="Mod+R" class="justify-self-end" />
+                <span class="text-left">runs the statement at the cursor</span>
+                <Kbd combo="Mod+Enter" class="justify-self-end" />
+                <span class="text-left">runs them all</span>
+              </div>
             </div>
           {/if}
         {/key}
