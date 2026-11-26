@@ -5489,10 +5489,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       document.fonts.removeEventListener('loadingdone', refresh)
     }
   })
-
-  // Recreate the colour cache when the theme flips (the probe resolves the new
-  // computed colours). The bump runs in a MutationObserver callback (not an
-  // effect body), so reading _redrawToken here is not a tracked dependency.
+  // Recreate the colour cache when the theme flips, or the inset layout swaps
+  // the panel's surface tokens (the probe resolves the new computed colours).
+  // The bump runs in a MutationObserver callback (not an effect body), so
+  // reading _redrawToken here is not a tracked dependency.
   $effect(() => {
     const probe = colorProbe
     if (!probe || typeof MutationObserver === 'undefined') return
@@ -5501,7 +5501,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       _fonts = null // font family may have changed (--font-mono) - re-measure
       _redrawToken++
     })
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-layout'] })
     return () => mo.disconnect()
   })
 

@@ -2030,3 +2030,26 @@ html[data-layout="inset"]:not([data-os="macos"]) [data-studio-region="sidebar"] 
      the tab row, and this puts their centres on one line. */
   padding-top: 0.375rem;
 }
+/* Dark themes: the panel is raised, the canvas recessed. Their sidebar token
+   is one step LIGHTER than the content (the flat layout's choice), so drawn
+   as is the inset panel read as a well sunk into a lighter frame. Elevation in
+   the dark goes up by lightening, so here the two swap: the canvas takes the
+   darker --background and everything inside the panel takes the lighter tone
+   as its --background and --panel. The grid and the editors read their
+   colours from these tokens, so they follow. Light themes already have a
+   white panel on a grey canvas. */
+html.dark[data-layout="inset"] {
+  --inset-canvas: var(--background);
+  --inset-raised: var(--sidebar);
+}
+html.dark[data-layout="inset"] :is([data-studio-body], [data-studio-region="titlebar"], [data-studio-region="statusbar"]) {
+  background-color: var(--inset-canvas);
+}
+html.dark[data-layout="inset"] [data-studio-region="sidebar"] {
+  --sidebar: var(--inset-canvas);
+}
+html.dark[data-layout="inset"] [data-studio-panel] {
+  --background: var(--inset-raised);
+  --panel: var(--inset-raised);
+  background-color: var(--inset-raised);
+}

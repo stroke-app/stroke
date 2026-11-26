@@ -1056,7 +1056,7 @@
     }
     measure()
     const mo = new MutationObserver(() => requestAnimationFrame(measure))
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style', 'data-layout'] })
     return { destroy: () => mo.disconnect() }
   }
 </script>

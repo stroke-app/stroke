@@ -1555,7 +1555,7 @@
       cancelAnimationFrame(themeFrame)
       themeFrame = requestAnimationFrame(refreshTheme)
     })
-    themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+    themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style', 'data-layout'] })
     // Fit once positions are in (nodes may already be present, or arrive later).
     requestAnimationFrame(ensureFit)
     // Webfonts (Geist) load async; redraw once ready so text isn't stuck on the

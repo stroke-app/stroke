@@ -1533,7 +1533,7 @@
       // xterm repaints on its own next frame; ask for every row in that same frame.
       if (term) term.refresh(0, term.rows - 1)
     })
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style', 'data-layout'] })
     // The editor font is a web font: measure the cells again once it is in.
     // Only if it was not in when xterm measured at open; then that measure was
     // of the fallback. (Each re-measure toggles the font option twice, and each
