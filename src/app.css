@@ -1929,3 +1929,41 @@ html[data-os="linux"][data-dialog-open]
 [data-slot="dialog-content"] > .flex-1 {
   flex-basis: auto;
 }
+
+/* ── Inset content panel (Settings → Appearance) ─────────────────────────────
+   The Linear layout: title bar, sidebar and status bar share one canvas (the
+   sidebar colour) and the page sits in a rounded panel inset from it, so the
+   panel's own edge separates it and no hairline runs between regions. Every
+   colour is a theme token: the panel is --panel, the canvas --sidebar, which
+   every theme already draws as a distinct step. Off (flat), nothing here
+   applies. */
+html[data-layout="inset"] [data-studio-body],
+html[data-layout="inset"] [data-studio-region="titlebar"],
+html[data-layout="inset"] [data-studio-region="statusbar"] {
+  background-color: var(--sidebar);
+}
+html[data-layout="inset"] [data-studio-region="titlebar"] { border-bottom-color: transparent; }
+html[data-layout="inset"] [data-studio-region="statusbar"] { border-top-color: transparent; }
+html[data-layout="inset"] [data-studio-region="sidebar"] aside { border-color: transparent; }
+html[data-layout="inset"] [data-studio-panel] {
+  margin-right: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: calc(var(--radius) + 4px);
+  background-color: var(--panel);
+}
+/* No sidebar beside it (hidden, or in AI mode): the panel keeps a gutter on
+   its left as well. The dock is hidden with an inline `display: none`
+   (Svelte writes it with the space; both spellings are matched). */
+html[data-layout="inset"] [data-studio-body] > [style*="display: none"] + * > [data-studio-panel],
+html[data-layout="inset"] [data-studio-body] > [style*="display:none"] + * > [data-studio-panel],
+html[data-layout="inset"] [data-studio-body] > :first-child:not(:has([data-studio-region="sidebar"])) > [data-studio-panel] {
+  margin-left: 0.5rem;
+}
+/* No status bar under it: a gutter below too. */
+html[data-layout="inset"] :not(:has(> [data-studio-region="statusbar"])) > [data-studio-panel] {
+  margin-bottom: 0.5rem;
+}
+/* On macOS the title row sits in the same column, right above the panel. */
+html[data-layout="inset"][data-os="macos"] [data-studio-region="titlebar"] + [data-studio-panel] {
+  margin-top: 0;
+}

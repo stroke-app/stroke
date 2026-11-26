@@ -1941,6 +1941,14 @@
       />
     </div>
   {/if}
+  {#if show('Inset content panel', 'Page in a rounded panel inset from the window, Linear layout')}
+    {@render switchRow(
+      'Inset content panel',
+      'The page sits in a rounded panel, with the sidebar, title bar and status bar around it on one background. Off, regions meet at hairlines.',
+      settings.insetPanel !== false,
+      () => { settings = updateSettings({ insetPanel: settings.insetPanel === false }); },
+    )}
+  {/if}
   {#if show('Animate panels', 'Slide the sidebar, the terminal and the AI panel open and closed')}
     {@render switchRow(
       'Animate panels',

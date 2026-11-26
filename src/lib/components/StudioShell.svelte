@@ -11497,7 +11497,7 @@ let rowSearch = $state('')
 
 <div class="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
 {#if !IS_MAC}{@render titleBar()}{/if}
-<div class="flex min-h-0 flex-1 overflow-hidden">
+<div class="flex min-h-0 flex-1 overflow-hidden" data-studio-body>
   {#if connection}
     <!-- Sidebar dock. Navigation between pages/views now lives in the ⌘P
          "Go to page" palette, so there's no activity rail, the sidebar just
@@ -11656,7 +11656,7 @@ let rowSearch = $state('')
        sidebar is its own full-height column (T3), so its edge runs unbroken. -->
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 {#if !aiMode && IS_MAC}{@render titleBar()}{/if}
-  <div class="relative flex min-h-0 flex-1 overflow-hidden">
+  <div class="relative flex min-h-0 flex-1 overflow-hidden" data-studio-panel>
   <main class={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-panel", terminalDockMoving && "overflow-hidden")} data-studio-region="main">
     {#if accountPageOpen && !connection}
       <div class="absolute inset-0 z-30 flex flex-col bg-panel">
