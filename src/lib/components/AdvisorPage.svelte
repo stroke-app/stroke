@@ -189,7 +189,7 @@
             {#if loading && !report}Scanning…{:else if report?.unsupported}No checks for this engine{:else if report}{health.label}{:else}Advisor{/if}
           </p>
           <p class="mt-0.5 text-ui-xs text-muted-foreground">
-            {reportSummary(report)}{checks.length ? ` · ${checks.length} checks in ${totalMs} ms` : ''}{scannedLabel ? ` · ${scannedLabel}` : ''}
+            {reportSummary(report)}{#if checks.length}{' · '}<span class="whitespace-nowrap">{checks.length} checks in {totalMs} ms</span>{/if}{#if scannedLabel}{' · '}<span class="whitespace-nowrap">{scannedLabel}</span>{/if}
           </p>
         </div>
         <div class="flex shrink-0 items-center gap-2">
