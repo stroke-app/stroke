@@ -6,6 +6,7 @@
   // (Postgres.app, Homebrew, docker compose), found by port, so they open in
   // one click too. Backend: src-tauri/src/local_servers.rs.
   import { onMount, onDestroy } from 'svelte'
+  import EmptyState from './EmptyState.svelte'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Input } from '$lib/components/ui/input/index.js'
@@ -759,14 +760,14 @@
           {@render connectionCard(f, `found:${f.port}`)}
         </div>
       {:else if loaded}
-        <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-          <span class="flex size-10 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground"><Server class="size-5 shrink-0" /></span>
-          <div class="flex max-w-sm flex-col gap-1">
-            <p class="text-ui-sm font-medium">Pick a server</p>
-            <p class="text-ui-xs text-muted-foreground">Or make one: Postgres, MySQL, MariaDB, Redis or MongoDB, any version, ready in a minute.</p>
-          </div>
+        <EmptyState
+          class="h-full justify-center"
+          icon={Server}
+          title="Pick a server"
+          description="Or make one: Postgres, MySQL, MariaDB, Redis or MongoDB, any version, ready in a minute."
+        >
           <Button size="sm" onclick={startNew}><Plus class="size-3.5 shrink-0" />New server</Button>
-        </div>
+        </EmptyState>
       {/if}
     </main>
   </div>

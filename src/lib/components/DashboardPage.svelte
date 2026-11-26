@@ -1,5 +1,6 @@
 <script>
   import { errorText } from '$lib/utils.js'
+  import EmptyState from "./EmptyState.svelte";
   import { comboTitle } from '$lib/shortcuts.js'
   import { onDestroy, tick, untrack } from "svelte";
   import { createSwapy } from "swapy";
@@ -607,40 +608,30 @@
   <!-- Content -->
   <div class="relative min-h-0 flex-1 overflow-y-auto p-4">
     {#if !activeDash}
-      <div class="flex h-full min-h-[300px] flex-col items-center justify-center gap-4">
-        <div class="flex size-16 items-center justify-center rounded-lg bg-muted/30">
-          <LayoutGrid class="size-8 shrink-0 text-muted-foreground" />
-        </div>
-        <div class="text-center">
-          <p class="font-medium text-foreground/60">No dashboard yet</p>
-          <p class="mt-1 text-ui-sm text-muted-foreground">
-            Saved charts and queries on one screen, refreshed live
-          </p>
-        </div>
-        <Button
-          
-          onclick={() => createDashboard("My Dashboard")}
->
-          <Plus class="size-4 shrink-0" />
+      <EmptyState
+        class="h-full min-h-[300px] justify-center"
+        icon={LayoutGrid}
+        title="No dashboard yet"
+        description="Saved charts and queries on one screen, refreshed live."
+      >
+        <Button size="sm" onclick={() => createDashboard("My Dashboard")}>
+          <Plus class="size-3.5 shrink-0" />
           New dashboard
         </Button>
-      </div>
+      </EmptyState>
 
     {:else if activeDash.items.length === 0}
-      <div class="flex h-full min-h-[300px] flex-col items-center justify-center gap-4">
-        <div class="flex size-16 items-center justify-center rounded-lg border-2 border-dashed border-border/40">
-          <BarChart2 class="size-8 shrink-0 text-muted-foreground" />
-        </div>
-        <p class="text-ui-sm text-muted-foreground">Add saved charts or queries</p>
-        <button
-          type="button"
-          class="inline-flex h-8 items-center gap-1.5 rounded-md bg-sidebar-accent/50 px-4 text-ui-sm text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-          onclick={() => (pickerOpen = true)}
-        >
-          <Plus class="size-4 shrink-0" />
-          Add
-        </button>
-      </div>
+      <EmptyState
+        class="h-full min-h-[300px] justify-center"
+        icon={BarChart2}
+        title={`Nothing on ${activeDash.name} yet`}
+        description="Add saved charts or queries. Each one refreshes on its own."
+      >
+        <Button size="sm" variant="secondary" onclick={() => (pickerOpen = true)}>
+          <Plus class="size-3.5 shrink-0" />
+          Add charts or queries
+        </Button>
+      </EmptyState>
 
     {:else}
       <!-- Dashboard grid, fixed columns so Swapy can compute slot positions reliably -->
@@ -855,19 +846,15 @@
     </Dialog.Header>
 
     {#if pickerTab === "queries" && savedQs.length === 0}
-      <div class="flex flex-col items-center gap-3 px-6 pt-4 pb-8 text-center">
-        <div class="flex size-11 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground">
-          <Bookmark class="size-5 shrink-0" aria-hidden="true" />
-        </div>
-        <div class="flex max-w-80 flex-col gap-1">
-          <p class="text-ui-sm font-medium text-foreground">No saved queries yet</p>
-          <p class="text-ui-xs text-muted-foreground">
-            Save a query in the SQL editor ({comboTitle("Mod+S")}). It will be listed here.
-          </p>
-        </div>
+      <EmptyState
+        class="pt-4 pb-8"
+        icon={Bookmark}
+        title="No saved queries yet"
+        description={`Save a query in the SQL editor (${comboTitle("Mod+S")}). It will be listed here.`}
+      >
         {#if onopensqleditor}
           <Button
-            class="mt-1"
+            size="sm"
             onclick={() => {
               pickerOpen = false;
               onopensqleditor();
@@ -876,7 +863,7 @@
             Open query editor
           </Button>
         {/if}
-      </div>
+      </EmptyState>
     {:else if pickerTab === "queries"}
       <div class="flex shrink-0 flex-col gap-2 px-6 pb-2">
         <label class="search-shell flex h-8 items-center gap-2 px-2.5">
@@ -921,19 +908,15 @@
         <Button size="sm" onclick={() => (pickerOpen = false)}>Done</Button>
       </div>
     {:else if $savedCharts.length === 0}
-      <div class="flex flex-col items-center gap-3 px-6 pt-4 pb-8 text-center">
-        <div class="flex size-11 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground">
-          <BarChart2 class="size-5 shrink-0" aria-hidden="true" />
-        </div>
-        <div class="flex max-w-80 flex-col gap-1">
-          <p class="text-ui-sm font-medium text-foreground">No saved charts yet</p>
-          <p class="text-ui-xs text-muted-foreground">
-            Run a query, switch the results to Chart, and save it. It will be listed here.
-          </p>
-        </div>
+      <EmptyState
+        class="pt-4 pb-8"
+        icon={BarChart2}
+        title="No saved charts yet"
+        description="Run a query, switch the results to Chart, and save it. It will be listed here."
+      >
         {#if onopensqleditor}
           <Button
-            class="mt-1"
+            size="sm"
             onclick={() => {
               pickerOpen = false;
               onopensqleditor();
@@ -942,7 +925,7 @@
             Open query editor
           </Button>
         {/if}
-      </div>
+      </EmptyState>
     {:else}
       <div class="flex shrink-0 flex-col gap-2 px-6 pb-2">
         <label class="search-shell flex h-8 items-center gap-2 px-2.5">

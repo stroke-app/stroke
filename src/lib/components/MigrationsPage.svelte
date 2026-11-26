@@ -5,6 +5,7 @@
   // picked once per connection). Read-only: applying stays with the tool's
   // CLI, whose command the page hands over. Logic: $lib/migrations.js.
   import { invoke } from '@tauri-apps/api/core'
+  import EmptyState from './EmptyState.svelte'
   import { executeSql } from '$lib/api.js'
   import { mergePrisma, mergeDrizzle, mergeD1, counts, rowsOf, migrationQueries, isMissingTable } from '$lib/migrations.js'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -291,14 +292,10 @@
           <p class="text-ui-xs break-words text-muted-foreground">{error}</p>
         </div>
       {:else if neither}
-        <div class="flex flex-col items-center gap-3 py-20 text-center">
-          <span class="flex size-10 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground"><GitMerge class="size-5 shrink-0" /></span>
-          <div class="flex max-w-sm flex-col gap-1">
-            <p class="text-ui-sm font-medium text-foreground">No migrations in this database yet</p>
-            <p class="text-ui-xs text-muted-foreground">There's no <code class="font-mono">_prisma_migrations</code>, <code class="font-mono">__drizzle_migrations</code> or <code class="font-mono">d1_migrations</code> table here. Pick the project folder to see what would run.</p>
-          </div>
+        <EmptyState class="py-20" icon={GitMerge} title="No migrations in this database yet">
+          {#snippet body()}There's no <code class="font-mono">_prisma_migrations</code>, <code class="font-mono">__drizzle_migrations</code> or <code class="font-mono">d1_migrations</code> table here. Pick the project folder to see what would run.{/snippet}
           <Button variant="secondary" size="sm" onclick={() => void chooseFolder()}><FolderOpen class="size-3.5 shrink-0" />Pick project folder</Button>
-        </div>
+        </EmptyState>
       {:else if list.length}
         <!-- At a glance: how far along this database is. -->
         <section class="overflow-hidden rounded-lg border border-border/60" aria-label="Summary">

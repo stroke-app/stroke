@@ -1,5 +1,6 @@
 <script>
   import Kbd from './Kbd.svelte'
+  import EmptyState from './EmptyState.svelte'
   import { getTableRows, listTables } from '$lib/api.js'
   import { isSystemSchema } from '$lib/system-schemas.js'
   import { buildSearchQuery, searchOptionsSupported, searchOptionHotkey, SEARCH_OPTION_KEYS } from '$lib/search-options.js'
@@ -476,22 +477,20 @@
           {/each}
         </ul>
       {:else if searched && !searching}
-        <div class="flex flex-col items-center gap-2 py-20 text-center">
-          <span class="flex size-11 items-center justify-center rounded-lg bg-muted/60"><Search class="size-5 shrink-0 text-muted-foreground" /></span>
-          <p class="mt-1 text-ui-sm font-medium text-foreground">Nothing matches <span class="font-mono">"{query.trim()}"</span></p>
-          <p class="max-w-80 text-ui-xs leading-relaxed text-muted-foreground">
+        <EmptyState class="py-20" icon={Search}>
+          {#snippet heading()}Nothing matches <span class="font-mono">"{query.trim()}"</span>{/snippet}
+          {#snippet body()}
             Searched {progress.total} table{progress.total === 1 ? '' : 's'} in {scope === 'all' && canScope ? `${userSchemas.length} schemas` : schema}.
             {#if matchCase || wholeWord}Try without {matchCase && wholeWord ? 'Match case and Whole word' : matchCase ? 'Match case' : 'Whole word'}.{/if}
-          </p>
-        </div>
+          {/snippet}
+        </EmptyState>
       {:else if !searching}
-        <div class="flex flex-col items-center gap-2 py-20 text-center">
-          <span class="flex size-11 items-center justify-center rounded-lg bg-muted/60"><Search class="size-5 shrink-0 text-muted-foreground" /></span>
-          <p class="mt-1 text-ui-sm font-medium text-foreground">Find a value anywhere</p>
-          <p class="max-w-96 text-ui-xs leading-relaxed text-muted-foreground">
-            Every column of every table in {schema} is searched at once. Type at least {MIN_QUERY} characters; results open the table with the search already applied.
-          </p>
-        </div>
+        <EmptyState
+          class="py-20"
+          icon={Search}
+          title="Find a value anywhere"
+          description={`Every column of every table in ${schema} is searched at once. Type at least ${MIN_QUERY} characters; results open the table with the search already applied.`}
+        />
       {/if}
     </div>
   </div>

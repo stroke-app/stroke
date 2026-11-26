@@ -1,5 +1,6 @@
 <script>
   import { Button } from '$lib/components/ui/button/index.js'
+  import EmptyState from './EmptyState.svelte'
   import EChartPanel from "./EChartPanel.svelte";
   import AiChartRenderer from "./AiChartRenderer.svelte";
   import {
@@ -311,11 +312,14 @@
 
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4">
     {#if totalCharts === 0}
-      <div class="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 text-center">
-        <span class="flex size-10 items-center justify-center rounded-lg bg-muted/60"><BarChart2 class="size-5 shrink-0 text-muted-foreground" /></span>
-        <p class="text-ui-sm font-medium text-foreground">No saved charts yet</p>
-        <p class="max-w-72 text-ui-xs leading-relaxed text-muted-foreground">Run a query, switch its result to the chart view, and save it. It shows up here, ready to share or put on a dashboard.</p>
-      </div>
+      <EmptyState
+        class="h-full min-h-[280px] justify-center"
+        icon={BarChart2}
+        title="No saved charts yet"
+        description="Run a query, switch its result to the chart view, and save it. It shows up here, ready to share or put on a dashboard."
+      >
+        <Button size="sm" variant="secondary" onclick={() => onrunsql('')}>Open SQL editor</Button>
+      </EmptyState>
     {:else if shownCount === 0}
       <p class="py-16 text-center text-ui-xs text-muted-foreground">No charts match.</p>
     {:else}
