@@ -23,8 +23,12 @@
 	// mounted but hidden and disabled measured no faster.) Elsewhere bits-ui
 	// filters as usual.
 	const score = $derived(local?.search ? local.score(value, local.search, keywords) : 1);
+	// Only while that page is searching: the group order, the best row and the
+	// empty state read these scores then, and every row reporting (and
+	// forgetting) on each render of a page that filters elsewhere cost more
+	// than the rows' own markup.
 	$effect(() => {
-		if (!local) return;
+		if (!local?.search) return;
 		const v = value;
 		local.report(v, group?.key, score);
 		return () => local.forget(v);

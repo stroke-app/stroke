@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compareCreated, formatCompactCount, formatTableRowCount, normalizeTableRowCount } from './table-list.js'
+import { compareCreated, formatCompactCount, formatFullCount, formatTableRowCount, normalizeTableRowCount } from './table-list.js'
 
 describe('formatCompactCount', () => {
   it('shows the placeholder while a count is still resolving', () => {
@@ -75,5 +75,13 @@ describe('compareCreated', () => {
     ])).toEqual(['first', 'views_later', 'unknown'])
     // A view without CREATE_TIME (MySQL) sorts after the tables that have one.
     expect(sortNames([{ name: 'v', createdAt: null }, { name: 't', createdAt: '2024-01-01 00:00:00' }])).toEqual(['t', 'v'])
+  })
+})
+
+describe('formatFullCount', () => {
+  it('prints a count with thousands separators', () => {
+    expect(formatFullCount(1234567)).toBe('1,234,567')
+    expect(formatFullCount('42')).toBe('42')
+    expect(formatFullCount(0)).toBe('0')
   })
 })

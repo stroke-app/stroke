@@ -35,6 +35,17 @@ export function formatCompactCount(count) {
   return withSuffix(abs, 1_000_000_000, 'B')
 }
 
+const FULL = new Intl.NumberFormat('en-US')
+/**
+ * A count in full with thousands separators ("1,234,567"), for a tooltip.
+ * One shared formatter: toLocaleString builds a new one per call, and a list
+ * that titles every row paid for that on each render.
+ * @param {number | string} count
+ */
+export function formatFullCount(count) {
+  return FULL.format(Number(count))
+}
+
 /** @param {number | string | null | undefined} count */
 export function formatTableRowCount(count) {
   return formatCompactCount(count)

@@ -9,7 +9,7 @@
   import { cn } from '$lib/utils.js'
   import { engineId, engineLabel } from '$lib/connection-provider.js'
   import * as Command from '$lib/components/ui/command/index.js'
-  import { formatTableRowCount } from '$lib/table-list.js'
+  import { formatTableRowCount, formatFullCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
   import { tick, setContext, untrack } from 'svelte'
   import { createLocalFilter, LOCAL_FILTER } from '$lib/command-local-filter.svelte.js'
@@ -769,6 +769,9 @@
     if (top && top !== untrack(() => highlighted)) highlighted = top
   })
   const TABLES_PAGE_CAP = 100
+  // Fewer while searching: results are ranked, nobody reads past the first
+  // screens, and every row costs layout as the ranking changes per letter.
+  const TABLES_SEARCH_CAP = 40
 
   // Strip word separators so "-", "_", "." and spaces are all interchangeable:
   // "product likes", "product-likes", "productlikes" all match "product_likes".
@@ -848,12 +851,24 @@
     }
     // Higher score first; ties broken by shorter name (more relevant) then A-Z.
     scored.sort((a, b) => b.s - a.s || a.len - b.len || (a.t.name < b.t.name ? -1 : 1))
-    return { items: scored.slice(0, TABLES_PAGE_CAP).map((x) => x.t), total: scored.length }
+    return { items: scored.slice(0, TABLES_SEARCH_CAP).map((x) => x.t), total: scored.length }
   }
 
   const tablesPageRegular = $derived(filterAndCap(_loweredRegular))
   const tablesPageViews = $derived(filterAndCap(_loweredViews))
   const tablesPageMatViews = $derived(filterAndCap(_loweredMatViews))
+  // bits-ui's search stays empty on this page (it would rebuild every row on
+  // the first letter: 370ms for 100 rows), so it no longer moves the
+  // highlight as the results change. The best match is the first row.
+  $effect(() => {
+    if (page !== 'tables') return
+    void tablesPageRegular; void tablesPageViews; void tablesPageMatViews
+    void tick().then(() => {
+      const first = document.querySelector('[data-command-dialog] [data-command-item]:not([aria-disabled="true"])')
+      const v = first?.getAttribute('data-value')
+      if (v && v !== untrack(() => highlighted)) highlighted = v
+    })
+  })
 
   // On tables page: shouldFilter=false so bits-ui skips its sort/filter pass entirely
   // (no CSS `order` reordering, no keyboard-nav interference). We pre-filter in JS.
@@ -937,7 +952,7 @@
     <div class="flex flex-col" onkeydown={handleKeydown}>
       <Command.Input
         bind:value={paletteSearch}
-        filterValue={LOCAL_PAGES.has(page) ? '' : undefined}
+        filterValue={LOCAL_PAGES.has(page) || page === 'tables' ? '' : undefined}
         oninput={(/** @type {Event} */ e) => { paletteSearch = /** @type {HTMLInputElement} */ (e.currentTarget).value }}
         placeholder={
           page === 'root' ? $tx('cmd.ph.root', 'Search tables, schemas, commands…')
@@ -1459,7 +1474,7 @@
                   <span
                     data-slot="command-trailing"
                     class="shrink-0 font-mono text-ui-xs tabular-nums text-muted-foreground"
-                    title={table.rowCount != null ? Number(table.rowCount).toLocaleString('en-US') : undefined}
+                    title={table.rowCount != null ? formatFullCount(table.rowCount) : undefined}
                   >{formatTableRowCount(table.rowCount)}</span>
                 </Command.Item>
               {/each}
