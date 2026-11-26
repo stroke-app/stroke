@@ -3,6 +3,7 @@
 import { createHighlighterCore } from 'shiki/core'
 import { createOnigurumaEngine } from 'shiki/engine/oniguruma'
 import { DEFAULT_THEME_ID, shikiThemeId } from '$lib/themes/registry.js'
+import { readableCodeHtml } from '$lib/code-contrast.js'
 
 /**
  * The grammars a code block can be highlighted in. `shiki`'s full bundle
@@ -125,15 +126,17 @@ export async function highlightCode(code, lang, theme = DEFAULT_THEME_ID) {
   const resolved = resolveShikiLang(lang)
   const shikiTheme = shikiThemeId(theme)
   await ensureLang(highlighter, resolved)
+  // Token colours lifted to 4.6:1 on our surfaces (code-contrast.js).
+  const mode = /dark/.test(shikiTheme) ? 'dark' : 'light'
   try {
-    return highlighter.codeToHtml(code, {
+    return readableCodeHtml(highlighter.codeToHtml(code, {
       lang: resolved,
       theme: shikiTheme,
-    })
+    }), mode)
   } catch {
-    return highlighter.codeToHtml(code, {
+    return readableCodeHtml(highlighter.codeToHtml(code, {
       lang: 'plaintext',
       theme: shikiTheme,
-    })
+    }), mode)
   }
 }
