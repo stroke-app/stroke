@@ -155,6 +155,7 @@
     await onrefresh()
     toast.message(row.kind === 'history' ? 'Removed from history' : 'Saved query deleted', {
       description: row.label.slice(0, 120),
+      duration: 8000,
       action: {
         label: 'Undo',
         onClick: () => void (async () => {
@@ -175,6 +176,7 @@
     await onrefresh()
     toast.message(`Cleared ${removed.length} ${removed.length === 1 ? 'query' : 'queries'}`, {
       description: history.some((e) => e.favorite) ? 'Starred queries stay.' : undefined,
+      duration: 8000,
       action: {
         label: 'Undo',
         onClick: () => void (async () => {

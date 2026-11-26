@@ -170,6 +170,7 @@
     await onrefresh()
     toast.message('Saved query deleted', {
       description: q.name,
+      duration: 8000,
       action: { label: 'Undo', onClick: () => void restoreSavedQuery(entry).then(() => onrefresh()) },
     })
   }
@@ -212,6 +213,7 @@
       description: plan.toRoot.length
         ? `${plan.toRoot.length} ${plan.toRoot.length === 1 ? 'query' : 'queries'} moved out of it.`
         : plan.remove.length ? `${plan.remove.length} ${plan.remove.length === 1 ? 'query' : 'queries'} deleted with it.` : undefined,
+      duration: 8000,
       action: {
         label: 'Undo',
         onClick: () => void (async () => {

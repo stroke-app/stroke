@@ -111,7 +111,9 @@
   /** @param {UserSnippet} s */
   function remove(s) {
     removeSnippet(s.id)
-    toast.success(`Deleted "${s.name}"`, {
+    toast.message('Snippet deleted', {
+      description: s.name,
+      duration: 8000,
       action: { label: 'Undo', onClick: () => saveSnippet(s) },
     })
   }
