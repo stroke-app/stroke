@@ -904,7 +904,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
      every row turned a list into a wall of little boxes competing with the
      labels. Keycaps stay where a key is the subject: legends, dialogs, hints. */
   :is([data-slot="command-item"], [data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-sub-trigger"],
-      [data-slot="context-menu-item"], [role="menuitem"], [role="option"]) kbd {
+      [data-slot="context-menu-item"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"]) kbd {
     min-width: 0;
     height: auto;
     padding: 0;
@@ -925,7 +925,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     color: var(--muted-foreground);
   }
   :is([data-slot="command-item"], [data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-sub-trigger"],
-      [data-slot="context-menu-item"], [role="menuitem"], [role="option"]) span:has(> kbd) {
+      [data-slot="context-menu-item"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"]) span:has(> kbd) {
     gap: 1px;
   }
 
