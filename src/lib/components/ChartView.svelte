@@ -593,7 +593,7 @@
               </div>
               <div class="flex items-center justify-end gap-1.5">
                 <Button type="button" size="sm" variant="ghost" onclick={() => (saveOpen = false)}>Cancel</Button>
-                <Button type="submit" size="sm" variant="secondary"><Check class="size-3.5 shrink-0" />Save</Button>
+                <Button type="submit" size="sm"><Check class="size-3.5 shrink-0" />Save</Button>
               </div>
             </form>
           </PopoverContent>
