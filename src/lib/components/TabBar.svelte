@@ -61,6 +61,8 @@
     ondragtabend = () => {},
     /** Rename a query editor tab. Absent: no Rename. @type {((id: string, title: string) => void) | null} */
     onrename = null,
+    /** Bring the sidebar back. Passed only while it is hidden. @type {(() => void) | null} */
+    onshowsidebar = null,
   } = $props()
 
   // ── Rename a query editor tab in place ─────────────────────────────────────
@@ -251,6 +253,13 @@
   aria-label={$t('tabs.openEditors')}
   ondblclick={handleDragAreaDblClick}
 >
+  {#if onshowsidebar}
+    <!-- With the sidebar hidden, the way back sits where it was, not only in
+         the status bar's far corner. -->
+    <button type="button" class={cn(navBtn, 'shrink-0')} onclick={onshowsidebar} title={withShortcut('Show sidebar', 'view.sidebar')} aria-label="Show sidebar">
+      <Icon name="panel-left-open" class="size-4 shrink-0" />
+    </button>
+  {/if}
   {#if onback && onforward}
     <!-- Back and forward through the tabs visited (Linear's ‹ ›). Buttons as
          well as keys: Mod+[ and Mod+] stand aside inside a code editor. -->

@@ -11629,6 +11629,7 @@ let rowSearch = $state('')
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onrename={renameTab}
+            onshowsidebar={sidebarOpen || aiMode ? null : toggleSidebar}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
@@ -11917,6 +11918,7 @@ let rowSearch = $state('')
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onrename={renameTab}
+            onshowsidebar={sidebarOpen || aiMode ? null : toggleSidebar}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
@@ -11946,6 +11948,7 @@ let rowSearch = $state('')
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onrename={renameTab}
+            onshowsidebar={sidebarOpen || aiMode ? null : toggleSidebar}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
