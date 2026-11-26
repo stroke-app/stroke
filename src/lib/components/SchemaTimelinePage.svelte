@@ -549,7 +549,7 @@
             <div class="flex min-w-0 items-center gap-2">
               <span
                 class={cn(
-                  'flex size-5 shrink-0 items-center justify-center rounded-full text-ui-3xs font-bold',
+                  'flex size-5 shrink-0 items-center justify-center rounded-full text-ui-3xs font-semibold',
                   isBefore ? 'bg-warning/20 text-warning' : isAfter ? 'bg-info/20 text-info' : 'border border-border/70 text-transparent',
                 )}
                 aria-label={isBefore ? 'Baseline' : isAfter ? 'Compared' : undefined}
