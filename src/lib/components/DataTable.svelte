@@ -1026,6 +1026,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   let newRowDrafts = $state(/** @type {Record<string, string>[] | null} */ (null))
   /** Name of the column whose input is focused in the new row. */
   let newRowFocusCol = $state(/** @type {string | null} */ (null))
+  /** Bumped by each Add: a new row asking for the same column as the last one
+   *  (discarded) changes nothing above, and the caret stayed on the button. */
+  let newRowFocusReq = $state(0)
   /** Which staged row the focused field belongs to. */
   let newRowFocusIdx = $state(0)
 
@@ -2549,6 +2552,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     newRowDrafts = [...(newRowDrafts ?? []), blankDraft()]
     newRowFocusIdx = newRowDrafts.length - 1
     newRowFocusCol = firstDraftFocusCol()
+    newRowFocusReq++
     if (anchorRow === null) {
       tableContainer?.scrollTo({ top: 0, behavior: 'smooth' })
       return
@@ -2804,6 +2808,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // second staged row put the next character in the first one.
     const col = newRowFocusCol
     const bandIdx = newRowFocusIdx
+    void newRowFocusReq
     if (!col) return
     untrack(() => {
       if (!newRowDrafts?.length) return
@@ -3579,6 +3584,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     newRowDrafts = [...(newRowDrafts ?? []), drafts];
     newRowFocusIdx = newRowDrafts.length - 1;
     newRowFocusCol = firstDraftFocusCol();
+    newRowFocusReq++;
     tableContainer?.scrollTo({ top: 0, behavior: "smooth" });
     toast.info(
       newRowDrafts.length === 1 ? "Copied into a new row" : `${newRowDrafts.length} rows staged`,
