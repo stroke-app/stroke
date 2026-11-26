@@ -1,5 +1,6 @@
 <script>
   import { tx } from '$lib/i18n.js'
+  import { commandFilter } from '$lib/command-filter.js'
   import { openTransfer } from '$lib/stores/transfer-ui.js'
   import { EXPORT_FORMATS } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
@@ -760,44 +761,6 @@
   // On root page: bits-ui filters with a plain substring check against item value strings.
   const shouldFilter = $derived(page !== 'tables' && page !== 'ask')
 
-  /**
-   * Ranks root-page matches; bits-ui sorts by the score. The visible label
-   * (passed as the first keyword) outranks the hidden search words, so "Map"
-   * puts Map above Schema diagram, whose keywords also mention maps. It used
-   * to return 1 for every match, which left results in declaration order.
-   * @type {(value: string, search: string, keywords?: string[]) => number}
-   */
-  const commandFilter = (value, search, keywords = []) => {
-    const s = search.trim().toLowerCase()
-    if (!s) return 1
-    const label = (keywords[0] ?? '').toLowerCase()
-    const v = value.toLowerCase()
-    const wordStart = (/** @type {string} */ text) => text.split(/[^a-z0-9]+/).some((w) => w.startsWith(s))
-    if (label) {
-      if (label === s) return 1
-      if (label.startsWith(s)) return 0.95
-      if (wordStart(label)) return 0.9
-    }
-    if (wordStart(v)) return 0.7
-    if (v.includes(s) || label.includes(s)) return 0.5
-    // Several words in any order, each the start of a word: "ai chat" finds
-    // Ask AI ("ask ai assistant chat query"), which as one phrase it never did.
-    const tokens = s.split(/\s+/).filter(Boolean)
-    if (tokens.length > 1) {
-      const all = `${label} ${v}`.split(/[^a-z0-9]+/).filter(Boolean)
-      if (tokens.every((t) => all.some((w) => w.startsWith(t)))) return 0.4
-    }
-    // Separator-insensitive fallback so "newtable"/"new-table" match "new table",
-    // anchored at a word start: unanchored, "map" matched "schema public"
-    // through "sche(ma p)ublic".
-    const words = `${label} ${v}`.split(/[^a-z0-9]+/).filter(Boolean)
-    const q = stripSep(s)
-    for (let i = 0; i < words.length; i++) {
-      if (words.slice(i).join('').startsWith(q)) return 0.3
-    }
-    return 0
-  }
-
   /** @param {() => void} action */
   function run(action) {
     open = false
@@ -1054,12 +1017,12 @@
             {/if}
 
             <Command.Group heading={$tx('group.AI', 'AI')}>
-              <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)}>
+              <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)} keywords={['Ask AI']}>
                 <Icon name="bot" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Ask AI</span>
                 <Command.Shortcut command="ai.panel" />
               </Command.Item>
-              <Command.Item value="toggle ai sidebar inline assistant context" onSelect={() => run(onopenaisidebar)}>
+              <Command.Item value="toggle ai sidebar inline assistant context" onSelect={() => run(onopenaisidebar)} keywords={['AI sidebar']}>
                 <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">AI sidebar</span>
                 <Command.Shortcut command="ai.sidebar" />
@@ -1074,7 +1037,7 @@
             </Command.Group>
 
             <Command.Group heading={$tx('group.Queries', 'Queries')}>
-              <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)}>
+              <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)} keywords={['Query history']}>
                 <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Query history</span>
               </Command.Item>
@@ -1130,57 +1093,59 @@
                   <span data-slot="command-label" class="truncate">Explain query</span>
                 </Command.Item>
               {/if}
-              <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)}>
+              <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)} keywords={['Refresh tables']}>
                 <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Refresh tables</span>
               </Command.Item>
-              <Command.Item value="read only read-only lock mode protect prevent edits writes inserts deletes writable" onSelect={() => run(onreadonlytoggle)}>
+              <Command.Item value="read only read-only lock mode protect prevent edits writes inserts deletes writable" keywords={[readonly ? 'Disable read-only mode' : 'Enable read-only mode']} onSelect={() => run(onreadonlytoggle)}>
                 <Icon name={readonly ? 'lock-open' : 'lock'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">{readonly ? 'Disable read-only mode' : 'Enable read-only mode'}</span>
               </Command.Item>
-              <Command.Item value="open settings preferences" onSelect={() => run(onopensettings)}>
+              <Command.Item value="open settings preferences" onSelect={() => run(onopensettings)} keywords={['Settings']}>
                 <Icon name="settings" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Settings</span>
+                <Command.Shortcut command="settings.open" />
               </Command.Item>
-              <Command.Item value="toggle tree sidebar beta explorer classic hierarchy folders" onSelect={() => run(() => updateSettings({ sidebarStyle: $appSidebarStyle === 'tree' ? 'classic' : 'tree' }))}>
+              <Command.Item value="toggle tree sidebar beta explorer classic hierarchy folders" onSelect={() => run(() => updateSettings({ sidebarStyle: $appSidebarStyle === 'tree' ? 'classic' : 'tree' }))} keywords={['Toggle tree sidebar (Labs)']}>
                 <Icon name="list-tree" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Toggle tree sidebar (Labs)</span>
                 <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">{$appSidebarStyle === 'tree' ? 'on' : 'off'}</span>
               </Command.Item>
               {#if $pinEnabled}
-                <Command.Item value="lock app pin screen secure" onSelect={() => run(lockNow)}>
+                <Command.Item value="lock app pin screen secure" onSelect={() => run(lockNow)} keywords={['Lock Stroke']}>
                   <Icon name="lock" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Lock Stroke</span>
                 </Command.Item>
               {/if}
-              <Command.Item value="keyboard shortcuts keybindings remap customize change rebind hotkeys" onSelect={() => run(onopenkeybindings)}>
+              <Command.Item value="keyboard shortcuts keybindings remap customize change rebind hotkeys" onSelect={() => run(onopenkeybindings)} keywords={['Keyboard shortcuts']}>
                 <Icon name="keyboard" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Keyboard shortcuts</span>
               </Command.Item>
-              <Command.Item value="shortcut reference cheat sheet keys help" onSelect={() => run(onopenshortcuts)}>
+              <Command.Item value="shortcut reference cheat sheet keys help" onSelect={() => run(onopenshortcuts)} keywords={['Shortcut reference']}>
                 <Icon name="command" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Shortcut reference</span>
                 <Command.Shortcut command="help.shortcutsKey" />
               </Command.Item>
-              <Command.Item value="my shares share links shared revoke views encrypted link" onSelect={() => run(onopenmyshares)}>
+              <Command.Item value="my shares share links shared revoke views encrypted link" onSelect={() => run(onopenmyshares)} keywords={['My shares']}>
                 <Icon name="share-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">My shares</span>
               </Command.Item>
-              <Command.Item value="about license version info app" onSelect={() => run(onopenabout)}>
+              <Command.Item value="about license version info app" onSelect={() => run(onopenabout)} keywords={['About Stroke']}>
                 <Icon name="info" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">About Stroke</span>
               </Command.Item>
-              <Command.Item value="report issue bug crash problem feedback github" onSelect={() => run(onopenreport)}>
+              <Command.Item value="report issue bug crash problem feedback github" onSelect={() => run(onopenreport)} keywords={['Report an issue']}>
                 <Icon name="bug" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Report an issue</span>
               </Command.Item>
-              <Command.Item value="check for updates upgrade version" onSelect={() => run(oncheckupdate)}>
+              <Command.Item value="check for updates upgrade version" onSelect={() => run(oncheckupdate)} keywords={['Check for updates']}>
                 <Icon name="arrow-down-to-line" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Check for updates</span>
               </Command.Item>
-              <Command.Item value="disconnect database" onSelect={() => run(ondisconnect)}>
+              <Command.Item value="disconnect database" onSelect={() => run(ondisconnect)} keywords={['Disconnect']}>
                 <Icon name="unplug" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Disconnect</span>
+                <Command.Shortcut command="connection.disconnect" />
               </Command.Item>
             </Command.Group>
           {/if}
@@ -1230,7 +1195,7 @@
 
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
           <Command.Group heading={$tx('group.Launch', 'Launch')}>
-            <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')}>
+            <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')} keywords={['Docker']}>
               <DbIcon id="docker" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
@@ -1239,7 +1204,7 @@
 
           <!-- ── Drill-in: Theme ────────────────────────────────────── -->
           <Command.Group heading={$tx('group.Appearance', 'Appearance')}>
-            <Command.Item value="theme appearance colour color scheme palette dark light mode switch change" onSelect={openThemePage}>
+            <Command.Item value="theme appearance colour color scheme palette dark light mode switch change" onSelect={openThemePage} keywords={['Theme…']}>
               <Icon name={getThemeDefinition($appThemeId)?.isDark ? 'moon' : 'sun'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Theme…</span>
               <span data-slot="command-trailing" class="flex shrink-0 items-center gap-2">
@@ -1250,7 +1215,7 @@
               </span>
             </Command.Item>
             <!-- The builder lives in Settings; "theme builder" found nothing here. -->
-            <Command.Item value="theme builder custom make your own colours colors grain intensity" onSelect={() => run(onopenappearance)}>
+            <Command.Item value="theme builder custom make your own colours colors grain intensity" onSelect={() => run(onopenappearance)} keywords={['Theme builder']}>
               <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Theme builder</span>
             </Command.Item>
@@ -1372,7 +1337,7 @@
             </Command.Group>
           {/if}
           <Command.Group heading={$tx('group.Add', 'Add')}>
-            <Command.Item value="new connection add connect database" onSelect={() => run(onopenconnection)}>
+            <Command.Item value="new connection add connect database" onSelect={() => run(onopenconnection)} keywords={['New connection…']}>
               <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">New connection…</span>
             </Command.Item>
