@@ -1,6 +1,7 @@
 <script>
   import { tx } from '$lib/i18n.js'
   import { comboTitle } from '$lib/shortcuts.js'
+  import { isPlainRead } from '$lib/sql-write.js'
   import Kbd from './Kbd.svelte'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
@@ -193,7 +194,7 @@
     _wasLoading = now
   })
 
-  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => boolean, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
+  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => string | false, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
   let sqlEditorRef = $state(null)
 
   /** Mod+R from outside the editor: the selection, else the statement at the cursor. */
@@ -815,12 +816,18 @@
 
   /**
    * "Did you mean" in the error console: put the name in the failed statement.
-   * The editor refuses once that statement has been edited since the run, and
-   * then the name goes to the clipboard instead of nowhere.
+   * A fixed read (SELECT, WITH, SHOW, EXPLAIN...) runs again at once, so the
+   * error gives way to its rows; a write waits for Run. The editor refuses once
+   * that statement has been edited since the run, and then the name goes to
+   * the clipboard instead of nowhere.
    * @param {string} name @param {string} replacement
    */
   async function applySuggestion(name, replacement) {
-    if (sqlEditorRef?.replaceInFailed?.(name, replacement)) return
+    const fixed = sqlEditorRef?.replaceInFailed?.(name, replacement)
+    if (fixed) {
+      if (isPlainRead(fixed) && !loading) handleRun(fixed)
+      return
+    }
     try {
       await navigator.clipboard.writeText(replacement)
       toast.info(`Copied ${replacement}`, { description: 'The statement changed since it ran, so it was not edited.' })

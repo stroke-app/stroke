@@ -1503,7 +1503,8 @@
    * so it never rewrites text the error is no longer about.
    * @param {string} name the bare name the error reported
    * @param {string} replacement already quoted as the dialect needs
-   * @returns {boolean} whether anything was replaced
+   * @returns {string | false} the statement as it reads now, or false when
+   *   nothing was replaced
    */
   export function replaceInFailed(name, replacement) {
     const view = editorRef?.getView()
@@ -1533,7 +1534,8 @@
         userEvent: 'input.complete',
       })
       view.focus()
-      return true
+      const delta = insert.length - (hit.to - hit.from)
+      return view.state.doc.sliceString(e.stmtFrom, e.stmtTo + delta)
     }
     return false
   }

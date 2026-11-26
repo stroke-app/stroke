@@ -101,6 +101,22 @@ const MUTATING_PRAGMAS = new Set([
   'optimize', 'shrink_memory', 'incremental_vacuum', 'wal_checkpoint', 'vacuum',
 ])
 
+/** Heads of statements that only read. EXPLAIN is left out: EXPLAIN ANALYZE runs its statement. */
+const PLAIN_READ_HEADS = new Set(['select', 'with', 'show', 'values', 'table', 'describe', 'desc'])
+
+/**
+ * True for one statement that only reads (SELECT, WITH ... SELECT, SHOW,
+ * VALUES, TABLE, DESCRIBE): safe to run again without asking.
+ * @param {string} sql
+ */
+export function isPlainRead(sql) {
+  const clean = stripSqlComments(String(sql ?? ''))
+  const stmts = splitStatements(clean).map((s) => s.trim()).filter(Boolean)
+  if (stmts.length !== 1) return false
+  const head = (stmts[0].replace(/^[(\s]+/, '').match(/^[a-z_]+/i)?.[0] ?? '').toLowerCase()
+  return PLAIN_READ_HEADS.has(head) && !isWriteSql(clean)
+}
+
 /**
  * True when any statement in `sql` would modify data, schema or storage.
  * @param {string} sql

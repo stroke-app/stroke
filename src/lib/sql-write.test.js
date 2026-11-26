@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { isConvexCall, isWriteFor, isWriteSql, sqlRunEffects, stripSqlComments } from './sql-write.js'
+import { isConvexCall, isPlainRead, isWriteFor, isWriteSql, sqlRunEffects, stripSqlComments } from './sql-write.js'
 
 describe('isWriteSql', () => {
   it('allows plain reads', () => {
@@ -253,5 +253,23 @@ describe('Convex console calls', () => {
     for (const sql of ['SELECT 1', "SELECT 'a:b'", 'SELECT x::int FROM t', 'label: SELECT 1', 'GET logs/_search', 'SET a:b 1']) {
       expect(isConvexCall(sql)).toBe(false)
     }
+  })
+})
+
+describe('isPlainRead', () => {
+  it('accepts one statement that only reads', () => {
+    expect(isPlainRead('select * from approval_policies')).toBe(true)
+    expect(isPlainRead('  -- note\nSELECT 1;')).toBe(true)
+    expect(isPlainRead('with a as (select 1) select * from a')).toBe(true)
+    expect(isPlainRead('(select 1) union (select 2)')).toBe(true)
+    expect(isPlainRead('show tables')).toBe(true)
+  })
+  it('refuses writes, several statements and EXPLAIN', () => {
+    expect(isPlainRead('delete from t')).toBe(false)
+    expect(isPlainRead('with d as (delete from t returning *) select * from d')).toBe(false)
+    expect(isPlainRead('select 1; select 2')).toBe(false)
+    expect(isPlainRead('explain analyze delete from t')).toBe(false)
+    expect(isPlainRead('select * into t2 from t')).toBe(false)
+    expect(isPlainRead('')).toBe(false)
   })
 })
