@@ -665,7 +665,10 @@
       const id = treeMode && TREE_REPLACES.has(tab.id) ? 'tree' : tab.id
       if (!visibleTabs.some((t) => t.id === id)) return
       e.preventDefault()
-      sidebarTab = id
+      // Find & replace is a tool, not a list: its key puts you in the Find
+      // field, as Edit > Find & replace does. The lists keep focus where it is.
+      if (id === 'search') openFindReplace()
+      else sidebarTab = id
     })
   })
   /** Mod+Alt+Left/Right is the table's (first / last column) unless focus is here. */
