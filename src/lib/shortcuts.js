@@ -48,7 +48,21 @@ const KEYCAP = {
  * @returns {string[]}
  */
 export function keycaps(combo) {
-  return combo.split('+').map((part) => GLYPH[part] ?? KEYCAP[part] ?? part)
+  return parts(combo).map((part) => GLYPH[part] ?? KEYCAP[part] ?? part)
+}
+
+/** Symbols that are typed with Shift on a US layout, so Shift goes without saying. */
+const SHIFTED = new Set('?!@#$%^&*()_{}|:"<>~'.split(''))
+
+/**
+ * A combo's parts as they read. `Shift+?` is how the hotkey grammar has to
+ * spell "?" (the key always arrives with Shift held, and a bare `?` demands
+ * Shift be up, so it never fired), but nobody writes the Shift: it shows as `?`.
+ * @param {string} combo
+ */
+function parts(combo) {
+  const p = combo.split('+')
+  return SHIFTED.has(p[p.length - 1]) ? p.filter((k) => k !== 'Shift') : p
 }
 
 /** Keys a tooltip spells out in words off macOS, where the glyphs are not the convention. */
@@ -65,7 +79,7 @@ const TITLE_WORD = /** @type {Record<string, string>} */ ({
  */
 export function comboTitle(combo) {
   if (IS_MAC) return keycaps(combo).map((k) => TITLE_WORD[k] && k.startsWith('Arrow') ? TITLE_WORD[k] : k).join('')
-  return combo.split('+').map((part) => TITLE_WORD[part] ?? part).join('+')
+  return parts(combo).map((part) => TITLE_WORD[part] ?? part).join('+')
 }
 
 /**
@@ -118,8 +132,8 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Ctrl+Tab', desc: 'Next tab', id: 'tab.next' },
       { combo: 'Ctrl+Shift+Tab', desc: 'Previous tab', id: 'tab.prev' },
       { combo: 'Mod+Shift+T', desc: 'Reopen closed tab', id: 'tab.reopen' },
-      { combo: 'Mod+[', desc: 'Back to the tab you were on (outside a code editor)', id: 'tab.back' },
-      { combo: 'Mod+]', desc: 'Forward again (outside a code editor)', id: 'tab.forward' },
+      { combo: 'Mod+[', desc: 'Back to the tab you were on (a code editor you typed in outdents instead)', id: 'tab.back' },
+      { combo: 'Mod+]', desc: 'Forward again', id: 'tab.forward' },
       { combo: 'Mod+1-9', desc: 'Go to tab (9 = last)', id: 'tab.goto', items: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `Go to tab ${n}`).concat('Go to last tab') },
       { combo: 'Alt+Shift+T', desc: 'Toggle tab bar', id: 'view.tabBar' },
       { combo: 'Mod+B', desc: 'Toggle sidebar', id: 'view.sidebar' },
@@ -283,8 +297,8 @@ export const SHORTCUT_GROUPS = [
     label: 'General',
     icon: 'settings',
     shortcuts: [
-      { combo: 'Mod+?', desc: 'Keyboard shortcuts', id: 'help.shortcutsAlt' },
-      { combo: '?', desc: 'Keyboard shortcuts', id: 'help.shortcutsKey' },
+      { combo: 'Mod+Shift+?', desc: 'Keyboard shortcuts', id: 'help.shortcutsAlt' },
+      { combo: 'Shift+?', desc: 'Keyboard shortcuts', id: 'help.shortcutsKey' },
       { combo: 'Mod+,', desc: 'Settings', id: 'settings.open' },
       { combo: 'Escape', desc: 'Dismiss / close' },
     ],
