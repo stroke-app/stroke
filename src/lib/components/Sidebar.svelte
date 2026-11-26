@@ -960,11 +960,22 @@
     }
     localFilter = value;
     if (filterDebounce) clearTimeout(filterDebounce);
+    filterDebounce = null;
+    // The wait scales with the list. A flat 200ms made a schema of a few
+    // hundred tables answer each keystroke a fifth of a second late, when
+    // narrowing a windowed list that size takes a few milliseconds. Only a
+    // schema with thousands of tables still waits for a pause in typing.
+    const wait = tables.length > 2000 ? 200 : tables.length > 500 ? 80 : 0;
+    if (wait === 0) {
+      debouncedFilter = value;
+      ontablefilter(value);
+      return;
+    }
     filterDebounce = setTimeout(() => {
       filterDebounce = null;
       debouncedFilter = value;
       ontablefilter(value);
-    }, 200);
+    }, wait);
   }
 
   // Release the pending filter timer when the sidebar unmounts.
