@@ -4725,11 +4725,11 @@
         {#if convList.length === 0 && !isDraftChat}
           <button
             type="button"
-            class="mx-1 flex h-8 items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
+            class="mx-1 flex h-8 min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
             onclick={() => void newConversation()}
           >
             <Plus class="size-4 shrink-0" />
-            Ask about this database
+            <span class="min-w-0 truncate">Ask about your data</span>
           </button>
         {/if}
       </div>

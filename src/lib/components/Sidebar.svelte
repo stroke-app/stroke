@@ -3676,7 +3676,7 @@
               onclick={() => onopenaichat(null)}
             >
               <Icon name="bot" class="size-4 shrink-0" />
-              Ask about this database
+              <span class="min-w-0 truncate">Ask about your data</span>
             </button>
           {/if}
           {#if chats.length > CHATS_LIMIT}
