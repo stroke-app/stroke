@@ -5927,6 +5927,7 @@ let rowSearch = $state('')
     const closing = tabs[idx]
     if (!(await confirmDiscardTabChanges(closing))) return
     rememberClosedTab(closing)
+    offerReopenIfUnsaved(closing)
     const nextTabs = tabs.filter((t) => t.id !== id)
     // Only tabs the bar shows count: a hidden one can't be the screen you land on.
     if (!nextTabs.some(isGroupable)) {
@@ -5983,15 +5984,39 @@ let rowSearch = $state('')
   }
 
   /** Ctrl/⌘+Shift+T - reopen the most recently closed tab. */
+  /**
+   * A notebook with unsaved changes closes at once, as every tab does, and says
+   * how to get it back: Ctrl+Shift+T did, but nothing said so. Call right after
+   * rememberClosedTab, whose entry the Undo reopens.
+   * @param {any} closing
+   */
+  function offerReopenIfUnsaved(closing) {
+    if (closing?.kind !== 'notebook' || !closing.state?.dirty) return
+    const entry = closedTabStack[closedTabStack.length - 1]
+    const name = closing.state?.notebook?.title || closing.title || 'Untitled notebook'
+    offerUndo(`Closed ${name}`, closing.state?.filePath ? 'Its latest changes are not saved.' : 'It is not saved to a file.', () => reopenClosedEntry(entry))
+  }
+
   function reopenLastClosedTab() {
     const entry = closedTabStack[closedTabStack.length - 1]
-    if (!entry) return
-    closedTabStack = closedTabStack.slice(0, -1)
+    if (entry) reopenClosedEntry(entry)
+  }
+
+  /**
+   * Reopen one closed tab, wherever it sits in the stack: an Undo for one
+   * close must not bring back whatever was closed after it.
+   * @param {any} entry @returns {boolean} false when it is gone already
+   */
+  function reopenClosedEntry(entry) {
+    const at = closedTabStack.lastIndexOf(entry)
+    if (at < 0) return false
+    closedTabStack = closedTabStack.filter((_, i) => i !== at)
     saveActiveTabState()
     dropWelcomeTabs()
     const tab = { ...entry, id: crypto.randomUUID(), pinned: false, state: entry.state ? { ...entry.state } : entry.state }
     tabs = [...tabs, tab]
     void activateTab(tab.id)
+    return true
   }
 
   /** @param {string} id - keep this tab (and pinned tabs), close everything else */
@@ -6201,6 +6226,7 @@ let rowSearch = $state('')
     if (!(await confirmDiscardTabChanges(closing))) return
     // Remember it so Reopen Closed Tab (⌘⇧T) can restore it - mirrors closeTab().
     rememberClosedTab(closing)
+    offerReopenIfUnsaved(closing)
     const nextTabs = tabs.filter((t) => t.id !== id)
     // Only tabs the bar shows count: a hidden one can't be the screen you land on.
     if (!nextTabs.some(isGroupable)) {
