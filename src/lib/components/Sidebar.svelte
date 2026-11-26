@@ -2902,7 +2902,7 @@
                     <li class="group/recent">
                       <div
                         class={cn(
-                          "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 transition-colors cursor-pointer",
+                          "flex w-full items-center gap-x-2 rounded-md px-2 py-1.5 transition-colors cursor-pointer",
                           activeTable === item.table
                             ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                             : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
@@ -2946,12 +2946,14 @@
                         {:else}
                           <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground" />
                         {/if}
-                        <span class="min-w-0 truncate text-ui-sm leading-4 -my-1 py-1">{@render hl(item.table)}</span>
+                        <span class="min-w-0 flex-1 truncate text-ui-sm leading-4 -my-1 py-1">{@render hl(item.table)}</span>
+                        <!-- Out of the layout until the row is hovered: hidden but
+                             still there, it kept 22px of every name cut off. -->
                         <button
                           type="button"
                           tabindex="-1"
                           aria-label="Remove {item.table} from recent (Delete)"
-                          class="hit-area inline-flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/recent:opacity-100 hover:text-foreground focus-visible:opacity-100"
+                          class="hit-area hidden size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground group-hover/recent:inline-flex hover:text-foreground"
                           onclick={(e) => { e.stopPropagation(); onrecentremove(item.schema, item.table) }}
                         >
                           <Icon name="x" class="size-3 shrink-0" />
