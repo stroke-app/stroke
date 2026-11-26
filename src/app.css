@@ -2014,3 +2014,12 @@ html:not([data-panel-motion="off"]) [data-slot="button"]:active:not(:disabled) {
 html:not([data-panel-motion="off"]) [data-slot="checkbox-indicator"] > svg {
   animation: stroke-check-in 120ms cubic-bezier(0.2, 0, 0, 1);
 }
+/* The sidebar's rows line up with the panel's across the gap (its icon row
+   with the tab row, its schema picker with the toolbar), so it starts below
+   the same gutter. Not on macOS: there the sidebar runs up under the traffic
+   lights and the panel has no gutter above it. */
+html[data-layout="inset"]:not([data-os="macos"]) [data-studio-region="sidebar"] {
+  /* 6px, not the gutter's 8: the sidebar's first row is a little taller than
+     the tab row, and this puts their centres on one line. */
+  padding-top: 0.375rem;
+}
