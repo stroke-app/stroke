@@ -2,6 +2,7 @@
   import Kbd from './Kbd.svelte'
   import { toastConnectionRemoved } from "$lib/connection-undo.js";
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
+  import TablePeek, { clearPeekCache } from "./TablePeek.svelte";
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
   import { engineId } from '$lib/connection-provider.js'
@@ -1240,6 +1241,41 @@
     return m ? m[1] : null
   }
 
+  // ── Peek (Space on a table row) ────────────────────────────────────────
+  /** @type {{ table: string, x: number, y: number, row: HTMLElement } | null} */
+  let peek = $state(null)
+
+  /** Open, move or close the peek for a row. @param {HTMLElement | null} row @param {string | null} name */
+  function peekAt(row, name) {
+    if (!row || !name) { peek = null; return }
+    const r = row.getBoundingClientRect()
+    peek = { table: name, x: Math.round(r.right + 8), y: Math.round(r.top), row }
+  }
+
+  /** Re-anchor to the row after a scroll; a row scrolled out of the DOM closes it. */
+  function followPeek() {
+    if (!peek) return
+    if (!peek.row.isConnected) { peek = null; return }
+    peekAt(peek.row, peek.table)
+  }
+
+  $effect(() => {
+    if (!peek) return
+    const onDown = (/** @type {PointerEvent} */ e) => {
+      if (!(e.target instanceof Element) || !e.target.closest('[aria-label^="Columns of "]')) peek = null
+    }
+    const onScroll = () => followPeek()
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    window.addEventListener('blur', () => (peek = null), { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('scroll', onScroll, { capture: true })
+    }
+  })
+  // A schema or connection switch replaces the list: the peek goes with it.
+  $effect(() => { void activeSchema; void connectionName; peek = null; clearPeekCache() })
+
   /**
    * Mod+C, P and X on a focused table row. True when the key was used.
    * @param {KeyboardEvent} e
@@ -1261,6 +1297,14 @@
       return true
     }
     if (mod || e.shiftKey) return false
+    if (e.key === ' ') {
+      e.preventDefault()
+      const row = /** @type {Element} */ (e.target).closest('[data-sidebar-row]')
+      if (peek?.table === name) peek = null
+      else peekAt(row instanceof HTMLElement ? row : null, name)
+      return true
+    }
+    if (e.key === 'Escape' && peek) { e.preventDefault(); e.stopPropagation(); peek = null; return true }
     if (k === 'p') {
       e.preventDefault()
       togglePin(name)
@@ -2581,6 +2625,18 @@
             // The stop follows focus, so Tab comes back to the row it left.
             const row = e.target instanceof Element ? e.target.closest('[data-sidebar-row]') : null
             if (row instanceof HTMLElement) rovingRowKey = row.dataset.sidebarRow ?? null
+            // An open peek follows focus down the list, the way Linear's does.
+            if (peek && row instanceof HTMLElement) {
+              const name = focusedTableName(row)
+              if (name) peekAt(row, name)
+              else peek = null
+            }
+          }}
+          onfocusout={(e) => {
+            // Focus leaving the list (Tab into the grid, a click on the editor)
+            // takes the peek with it.
+            const to = /** @type {Node | null} */ (e.relatedTarget)
+            if (peek && !(to && /** @type {HTMLElement} */ (e.currentTarget).contains(to))) peek = null
           }}
           onkeydown={(e) => {
             if (e.key === 'Escape' && selectedItems.size > 0) { clearSelection(); return }
@@ -2599,7 +2655,8 @@
               return
             }
             // One key acts on the focused table, as the menu beside it lists:
-            // Mod+C copies its name, P pins it, X selects it. A row's actions
+            // Mod+C copies its name, P pins it, X selects it, Space peeks at its
+            // columns. A row's actions
             // were only in the right-click menu, so the keyboard could open a
             // table and nothing else.
             if (handleRowActionKey(e)) return
@@ -3868,6 +3925,15 @@
     </div>
   {/if}
 
+  {#if peek}
+    <TablePeek
+      schema={activeSchema}
+      table={peek.table}
+      rows={_rowCountByName.has(peek.table) ? formatTableRowCount(_rowCountByName.get(peek.table)) : ''}
+      x={peek.x}
+      y={peek.y}
+    />
+  {/if}
   {#if connHover}
     <div
       bind:this={connCardEl}
