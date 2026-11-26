@@ -2203,9 +2203,10 @@
                     {@const tabNo = SIDEBAR_TABS.indexOf(tab) + 1}
                     <DropdownMenu.Item onSelect={() => (sidebarTab = tab.id)}>
                       <Icon name={tab.icon} class="size-3.5 shrink-0" />
-                      <span data-slot="menu-label">{tab.label}</span>
-                      {#if tabCounts[tab.id] > 0}<span data-slot="menu-trailing" class="ml-auto font-mono text-ui-2xs tabular-nums text-muted-foreground">{tabCounts[tab.id]}</span>
-                      {:else if tabNo <= 6 && bindingFor(`sidebar.tab.${tabNo}`)}<DropdownMenu.Shortcut command={`sidebar.tab.${tabNo}`} />{/if}
+                      <!-- The count beside the name: in the shortcut column a bare
+                           "5" read as a key, and it took Recent's shortcut away. -->
+                      <span data-slot="menu-label">{tab.label}{#if tabCounts[tab.id] > 0}<span class="ms-1.5 font-mono text-ui-2xs tabular-nums text-muted-foreground">{tabCounts[tab.id]}</span>{/if}</span>
+                      {#if tabNo <= 6 && bindingFor(`sidebar.tab.${tabNo}`)}<DropdownMenu.Shortcut command={`sidebar.tab.${tabNo}`} />{/if}
                     </DropdownMenu.Item>
                   {/each}
                 </DropdownMenu.Content>
