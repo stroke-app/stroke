@@ -143,7 +143,18 @@
   let query = $state('');
   /** The search field has focus: its `/` hint steps aside. */
   let settingsSearchFocused = $state(false);
-  const q = $derived(query.trim().toLowerCase());
+  // The results follow the field after a short pause in typing: they render
+  // every matching row of every page, and the first letter matches nearly all
+  // of them (~440 ms a keystroke), so a burst of typing rendered each prefix
+  // in turn. Clearing the field applies at once.
+  let appliedQuery = $state('');
+  $effect(() => {
+    const next = query;
+    if (!next.trim()) { appliedQuery = ''; return; }
+    const t = setTimeout(() => { appliedQuery = next; }, 120);
+    return () => clearTimeout(t);
+  });
+  const q = $derived(appliedQuery.trim().toLowerCase());
   const searching = $derived(q.length > 0);
   /** Row visibility under the current search query. */
   // Every word, in any order: "page size" has to find "Rows per page ... page
@@ -785,7 +796,7 @@
           {#key searching ? '__search__' : category}
             <div class="settings-pane">
               <h2 class="mb-6 text-ui-lg font-semibold tracking-tight text-foreground">
-                {searching ? `Results for "${query.trim()}"` : $t('settings.nav.' + activeCategory.id)}
+                {searching ? `Results for "${appliedQuery.trim()}"` : $t('settings.nav.' + activeCategory.id)}
               </h2>
 
               {#if searching}
