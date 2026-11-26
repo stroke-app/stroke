@@ -43,6 +43,7 @@
   import { IS_MAC } from '$lib/shortcuts.js'
   import { isTypingTarget } from '$lib/focus-search.js'
   import { slashFocusTarget } from '$lib/slash-focus.js'
+  import { offerUndo } from '$lib/undo-toast.js'
   import QuitHint from './QuitHint.svelte'
   import { appRelationColumns, appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
@@ -11771,8 +11772,9 @@ let rowSearch = $state('')
         }}
         onrecentclear={() => {
           if (persistConnectionId) {
-            clearRecentTabs(persistConnectionId)
+            const undo = clearRecentTabs(persistConnectionId)
             refreshRecentTabs()
+            if (undo) offerUndo('Recent tables cleared', '', () => { undo(); refreshRecentTabs() })
           }
         }}
         queriesCount={savedQueries.length}
