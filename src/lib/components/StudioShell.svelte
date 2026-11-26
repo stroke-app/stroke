@@ -11458,6 +11458,9 @@ let rowSearch = $state('')
   onopenshortcuts={() => openShortcuts()}
   onopenmyshares={() => openSharesTab()}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
+  ontogglesidebar={connection && !aiMode ? toggleSidebar : null}
+  onback={() => goTabHistory(-1)}
+  onforward={() => goTabHistory(1)}
   onopenappearance={() => { settingsSection = 'appearance'; showSettingsModal = true }}
   onopenabout={() => (showAboutModal = true)}
   onopenreport={() => (showReportIssueDialog = true)}

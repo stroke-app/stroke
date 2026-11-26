@@ -110,6 +110,12 @@
     onopenmyshares = () => {},
     /** Settings ▸ Keybindings, where shortcuts are remapped. */
     onopenkeybindings = () => {},
+    /** Show or hide the sidebar (Mod+B). @type {(() => void) | null} */
+    ontogglesidebar = null,
+    /** Back and forward through the tabs visited. @type {(() => void) | null} */
+    onback = null,
+    /** @type {(() => void) | null} */
+    onforward = null,
     /** Settings, on Appearance (where the theme builder is). */
     onopenappearance = () => {},
     onopenabout = () => {},
@@ -1136,6 +1142,31 @@
                 <Icon name="settings" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Settings</span>
                 <Command.Shortcut command="settings.open" />
+              </Command.Item>
+              {#if ontogglesidebar}
+                <Command.Item value="toggle sidebar hide show tables list panel" onSelect={() => run(() => ontogglesidebar?.())} keywords={['Toggle sidebar']}>
+                  <Icon name="panel-left-close" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Toggle sidebar</span>
+                  <Command.Shortcut command="view.sidebar" />
+                </Command.Item>
+              {/if}
+              {#if onback}
+                <Command.Item value="go back previous tab history" onSelect={() => run(() => onback?.())} keywords={['Go back']}>
+                  <Icon name="chevron-left" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Go back</span>
+                  <Command.Shortcut command="tab.back" />
+                </Command.Item>
+              {/if}
+              {#if onforward}
+                <Command.Item value="go forward next tab history" onSelect={() => run(() => onforward?.())} keywords={['Go forward']}>
+                  <Icon name="chevron-right" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Go forward</span>
+                  <Command.Shortcut command="tab.forward" />
+                </Command.Item>
+              {/if}
+              <Command.Item value="inset content panel layout linear rounded flat appearance" onSelect={() => run(() => updateSettings({ insetPanel: document.documentElement.dataset.layout !== 'inset' }))} keywords={['Toggle inset content panel']}>
+                <Icon name="layout-template" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                <span data-slot="command-label" class="truncate">Toggle inset content panel</span>
               </Command.Item>
               <Command.Item value="toggle tree sidebar beta explorer classic hierarchy folders" onSelect={() => run(() => updateSettings({ sidebarStyle: $appSidebarStyle === 'tree' ? 'classic' : 'tree' }))} keywords={['Toggle tree sidebar (Labs)']}>
                 <Icon name="list-tree" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
