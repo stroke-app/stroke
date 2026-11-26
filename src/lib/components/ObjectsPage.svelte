@@ -1,5 +1,6 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import SkeletonRows from './SkeletonRows.svelte'
   import { executeSql } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
   import Boxes from '@lucide/svelte/icons/boxes'
@@ -469,9 +470,7 @@
         </p>
       </div>
     {:else if isLoading}
-      <div class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground">
-        <RefreshCw class="size-4 shrink-0 animate-spin" /><span class="font-mono text-ui-sm">Loading…</span>
-      </div>
+      <SkeletonRows cols={[8, 40, 20, 20, 25, 15]} />
     {:else if slots[activeSub].error}
       <div class="px-4 py-8 text-center">
         <p class="font-mono text-ui-xs text-destructive">{slots[activeSub].error}</p>

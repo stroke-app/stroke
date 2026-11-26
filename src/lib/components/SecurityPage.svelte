@@ -1,5 +1,6 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import SkeletonRows from "./SkeletonRows.svelte";
   import { errorText } from '$lib/utils.js'
   import { executeSql } from "$lib/api.js";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
@@ -429,13 +430,8 @@
       </div>
 
       {#if rolesLoading || roles === null}
-        <div
-          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
-        >
-          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
-            class="text-ui-sm">Loading…</span
-          >
-        </div>
+        <!-- The roles table's eight columns: name, then the flags. -->
+        <SkeletonRows cols={[60, 12, 12, 12, 12, 12, 20, 20]} />
       {:else if rolesError}
         <div class="px-4 py-8 text-center">
           <p class="text-ui-xs text-destructive">{rolesError}</p>
@@ -577,9 +573,7 @@
       <!-- Permissions (master-detail) -->
     {:else if activeTab === "permissions"}
       {#if rolesLoading || roles === null}
-        <div class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground">
-          <RefreshCw class="size-4 shrink-0 animate-spin" /><span class="text-ui-sm">Loading…</span>
-        </div>
+        <SkeletonRows cols={[45, 20, 15, 15, 15]} />
       {:else if rolesError}
         <div class="px-4 py-8 text-center">
           <p class="text-ui-xs text-destructive">{rolesError}</p>
@@ -755,13 +749,7 @@
       </div>
 
       {#if policiesLoading || policies === null}
-        <div
-          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
-        >
-          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
-            class="text-ui-sm">Loading…</span
-          >
-        </div>
+        <SkeletonRows cols={[45, 20, 15, 15, 15]} />
       {:else if policiesError}
         <div class="px-4 py-8 text-center">
           <p class="text-ui-xs text-destructive">{policiesError}</p>
@@ -933,13 +921,7 @@
       </div>
 
       {#if rlsLoading || rlsTables === null}
-        <div
-          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
-        >
-          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
-            class="text-ui-sm">Loading…</span
-          >
-        </div>
+        <SkeletonRows cols={[45, 20, 15, 15, 15]} />
       {:else if rlsError}
         <div class="px-4 py-8 text-center">
           <p class="text-ui-xs text-destructive">{rlsError}</p>
