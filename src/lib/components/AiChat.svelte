@@ -1,6 +1,6 @@
 <script>
+  import { offerUndo } from '$lib/undo-toast.js'
   import { comboTitle } from '$lib/shortcuts.js'
-  import { askConfirm } from "$lib/stores/confirm.js";
   import { errorText } from '$lib/utils.js'
   import Share2 from '@lucide/svelte/icons/share-2'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
@@ -160,6 +160,7 @@
     updateConversation,
     deleteConversation,
     restoreConversation,
+    clearConversations,
   } from "$lib/stores/conversations.js";
   import { generateSuggestions } from "$lib/ai-suggestions.js";
   import { formatCompactCount } from "$lib/table-list.js";
@@ -802,8 +803,6 @@
   let convAnchor = null;
   /** @type {Set<string>} */
   let selectedConvs = $state(new Set());
-  /** Two-step "Clear all": the first click arms it, the second deletes. */
-  let confirmClearAll = $state(false);
   /** @param {string} id */
   function toggleConvSelected(id) {
     const next = new Set(selectedConvs);
@@ -814,7 +813,22 @@
   function endSelecting() {
     selecting = false;
     selectedConvs = new Set();
-    confirmClearAll = false;
+  }
+  /**
+   * Every chat for this connection, at once; the toast offers Undo. It asked
+   * first (a dialog in settings, a second click in the list), which charged
+   * every clear for the rare wrong one.
+   */
+  async function clearAllWithUndo() {
+    const key = chatMatch ?? (connectionId || undefined);
+    const gone = await listConversations(key);
+    await clearConversations(key);
+    convList = [];
+    await newConversation();
+    offerUndo(`Cleared ${gone.length} ${gone.length === 1 ? "chat" : "chats"}`, "Chat history", async () => {
+      for (const c of gone) await restoreConversation(c);
+      await loadConvList();
+    });
   }
   /** @param {string[]} ids */
   async function removeConversations(ids) {
@@ -4596,20 +4610,10 @@
             >Select</button>
             <button
               type="button"
-              class={cn(
-                "rounded-md px-1.5 py-0.5 transition-colors",
-                confirmClearAll ? "bg-destructive/10 text-destructive" : "hover:bg-accent hover:text-foreground",
-              )}
-              onclick={() => {
-                if (!confirmClearAll) {
-                  confirmClearAll = true;
-                  setTimeout(() => (confirmClearAll = false), 3000);
-                  return;
-                }
-                void removeConversations(convList.map((c) => c.id));
-              }}
-              title={confirmClearAll ? "Click again to delete every chat" : "Delete every chat"}
-            >{confirmClearAll ? "Confirm" : "Clear all"}</button>
+              class="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
+              onclick={() => { endSelecting(); void clearAllWithUndo(); }}
+              title="Delete every chat (Undo in the notification)"
+            >Clear all</button>
           {/if}
         </div>
       {/if}
@@ -6479,26 +6483,12 @@
             <div class="flex flex-col gap-1.5">
               <p class="text-ui-xs font-medium text-foreground">Chat history</p>
               <p class="text-ui-3xs text-muted-foreground">
-                Permanently delete all saved conversations for this connection.
+                Delete all saved conversations for this connection. Undo brings them back for a few seconds.
               </p>
               <button
                 type="button"
                 class="mt-1 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/8 text-ui-xs text-destructive transition-colors hover:bg-destructive/15"
-                onclick={async () => {
-                  const ok = await askConfirm({
-                    title: "Delete all conversations?",
-                    description: "Every saved conversation for this connection is deleted. This cannot be undone.",
-                    confirmLabel: "Delete all",
-                    destructive: true,
-                  });
-                  if (!ok) return;
-                  const { clearConversations } = await import(
-                    "$lib/stores/conversations.js"
-                  );
-                  await clearConversations(chatMatch ?? (connectionId || undefined));
-                  convList = [];
-                  await newConversation();
-                }}
+                onclick={() => void clearAllWithUndo()}
               >
                 <Trash2 class="size-3.5 shrink-0" />
                 Clear all history

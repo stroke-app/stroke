@@ -1,4 +1,5 @@
 <script>
+  import { offerUndo } from '$lib/undo-toast.js'
   import CollapsibleCode from './CollapsibleCode.svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import Maximize2 from '@lucide/svelte/icons/maximize-2'
@@ -75,6 +76,7 @@
     updateConversation,
     deleteConversation,
     clearConversations,
+    restoreConversation,
   } from "$lib/stores/conversations.js";
 
   /**
@@ -395,9 +397,16 @@
     if (activeConvId === id) { activeConvId = null; items = []; apiHistory = []; rawApiHistory = []; error = '' }
   }
 
+  /** No confirm: the history goes at once and the toast offers Undo. */
   async function clearAllConversations() {
-    await clearConversations(chatMatch ?? (connectionId || undefined), 'sidebar')
+    const key = chatMatch ?? (connectionId || undefined)
+    const gone = await listConversations(key, 'sidebar')
+    await clearConversations(key, 'sidebar')
     convList = []; activeConvId = null; items = []; apiHistory = []; rawApiHistory = []; error = ''; historyOpen = false
+    offerUndo(`Cleared ${gone.length} ${gone.length === 1 ? 'chat' : 'chats'}`, 'Assistant history', async () => {
+      for (const c of gone) await restoreConversation(c)
+      await loadConvList()
+    })
   }
 
   // ── Resize ────────────────────────────────────────────────────────────────
