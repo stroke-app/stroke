@@ -3783,6 +3783,7 @@ let rowSearch = $state('')
   // on macOS: Ctrl+B is the emacs "move backward" binding that text fields there
   // still honour, and swallowing it would break caret movement in every input.
   function onWindowKeydownCapture(/** @type {KeyboardEvent} */ e) {
+    if (onTabHistoryKey(e)) return
     // Ctrl+Tab / Ctrl+Shift+Tab cycle tabs on every platform - see the note
     // above the ⌘B block for why this is Ctrl rather than Mod, and why it is
     // captured on window rather than registered as a hotkey. Shift only picks
@@ -3841,6 +3842,8 @@ let rowSearch = $state('')
         }
       }
       _tabPrev = id
+      // Arriving on a tab starts it untouched, even if I worked in its editor before.
+      _engagedEditor = null
     })
   })
   /** @param {-1 | 1} dir @returns {boolean} whether it moved */
@@ -3853,26 +3856,36 @@ let rowSearch = $state('')
       if (activeTabId) to.push(activeTabId)
       _tabNavTarget = id
       void activateTab(id)
-      // A page that takes focus when it shows (the SQL editor, an empty JSON
-      // viewer) put the caret in a code editor, where Mod+[ outdents: the next
-      // Back went nowhere. After it has had its moment, focus goes to the
-      // tab itself, so Back and Forward keep walking.
-      setTimeout(() => {
-        if (activeTabId !== id || !(document.activeElement instanceof Element) || !document.activeElement.closest('.cm-editor')) return
-        /** @type {HTMLElement | null} */ (document.querySelector(`[data-tab-id="${CSS.escape(id)}"] [role="tab"], [data-tab-id="${CSS.escape(id)}"][role="tab"]`))?.focus()
-      }, 150)
       return true
     }
     return false
   }
-  /** @param {KeyboardEvent} e @param {-1 | 1} dir */
-  function onTabHistoryKey(e, dir) {
-    if (!connection || aiMode || e.defaultPrevented) return
-    if (e.target instanceof Element && e.target.closest('.cm-editor')) return
-    if (goTabHistory(dir)) e.preventDefault()
+  // A code editor keeps Mod+[ and Mod+] for outdent and indent, but only once
+  // I am working in it: a click or a keystroke there. A page that puts the
+  // caret in its editor on its own (the SQL editor, an empty JSON viewer)
+  // has not been touched yet, so Back and Forward still walk the tabs.
+  /** @type {Element | null} */
+  let _engagedEditor = null
+  /** @param {Event} e */
+  function noteEditorEngaged(e) {
+    _engagedEditor = e.target instanceof Element ? e.target.closest('.cm-editor') : null
   }
-  createCommandHotkey('tab.back', (e) => onTabHistoryKey(e, -1), { preventDefault: false, stopPropagation: false })
-  createCommandHotkey('tab.forward', (e) => onTabHistoryKey(e, 1), { preventDefault: false, stopPropagation: false })
+  /** @param {KeyboardEvent} e @returns {boolean} whether it handled the key */
+  function onTabHistoryKey(e) {
+    const dir = matchesCommand(e, 'tab.back') ? -1 : matchesCommand(e, 'tab.forward') ? 1 : 0
+    if (!dir) {
+      // Typing engages; a shortcut pressed with focus in the editor does not.
+      if (!e.ctrlKey && !e.metaKey && !['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) noteEditorEngaged(e)
+      return false
+    }
+    if (!connection || aiMode || showConnectionModal) return false
+    const editor = e.target instanceof Element ? e.target.closest('.cm-editor') : null
+    if (editor && editor === _engagedEditor) return false
+    if (!goTabHistory(dir)) return false
+    e.preventDefault()
+    e.stopPropagation()
+    return true
+  }
 
   // Reopen the most recently closed tab (browser-style).
   createCommandHotkey('tab.reopen', (e) => {
@@ -11487,7 +11500,7 @@ let rowSearch = $state('')
 
 
 <!-- Capture phase, deliberately - see onWindowKeydownCapture. -->
-<svelte:window onkeydowncapture={onWindowKeydownCapture} />
+<svelte:window onkeydowncapture={onWindowKeydownCapture} onpointerdowncapture={noteEditorEngaged} />
 
 {#if overlayWanted || overlayHeld}
   <!-- Only covers the actual connect handshake: onConnected sets `connection`
