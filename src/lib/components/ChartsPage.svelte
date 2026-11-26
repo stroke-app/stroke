@@ -301,7 +301,8 @@
           <X class="size-3.5 shrink-0" />
         </button>
       </div>
-    {:else}
+    {:else if totalCharts > 0}
+      <!-- Nothing to group yet: the empty state's one action is Open SQL editor. -->
       <Button variant="outline" size="sm" class="gap-1.5" onclick={() => { newGroupOpen = true; newGroupInput = ""; }}>
         <FolderPlus class="size-3.5 shrink-0" />New group
       </Button>
