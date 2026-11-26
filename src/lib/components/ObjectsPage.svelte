@@ -1,6 +1,7 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
   import SkeletonRows from './SkeletonRows.svelte'
+  import EmptyState from './EmptyState.svelte'
   import { executeSql } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
   import Boxes from '@lucide/svelte/icons/boxes'
@@ -46,6 +47,13 @@
 
   /** @type {SubTab} */
   let activeSub = $state('tables')
+  /** What each list would hold, for its empty state. */
+  const EMPTY_HINT = /** @type {Record<string, string>} */ ({
+    tables: 'Tables created in this database show up here.',
+    views: 'Views created with CREATE VIEW show up here.',
+    functions: 'Functions and procedures defined in this database show up here.',
+    triggers: 'Triggers attached to its tables show up here.',
+  })
 
   // One reactive slot per sub-tab. `data === null` means "not loaded yet".
   let slots = $state(
@@ -412,7 +420,9 @@
     </button>
   </div>
 
-  <!-- Count strip + search -->
+  <!-- Count strip + search. Not over an empty list: "0 triggers" above
+       "No triggers yet" said it twice, and there is nothing to search. -->
+  {#if !(currentSupported && !isLoading && !slots[activeSub].error && totalCount === 0)}
   <div class="flex items-center justify-between gap-3 border-b border-border/40 px-3 py-2">
     <span class="shrink-0 font-mono text-ui-xs text-muted-foreground">
       {#if !currentSupported}
@@ -459,6 +469,7 @@
       </div>
     {/if}
   </div>
+  {/if}
 
   <!-- Content -->
   <div class="app-scroll min-h-0 flex-1 overflow-auto [will-change:transform]">
@@ -479,12 +490,11 @@
           class="mt-2 font-mono text-ui-xs text-muted-foreground underline">Retry</button
         >
       </div>
+    {:else if rows.length === 0 && objQuery.trim()}
+      <p class="px-4 py-10 text-center text-ui-sm text-muted-foreground">No {activeSub} match <span class="text-foreground">{objQuery.trim()}</span></p>
     {:else if rows.length === 0}
-      {@const EmptyIcon = emptyIcon}
-      <div class="flex h-full flex-col items-center justify-center gap-3 py-20 text-center">
-        <EmptyIcon class="size-10 text-muted-foreground" />
-        <p class="font-mono text-ui text-muted-foreground">No {activeSub} found</p>
-      </div>
+      <!-- The strip above already says 0; this says what would be here. -->
+      <EmptyState class="h-full justify-center py-16" icon={emptyIcon} title={`No ${activeSub} yet`} description={EMPTY_HINT[activeSub]} />
     {:else}
       <table class="obj-table w-full text-ui-xs">
         <colgroup>
@@ -525,6 +535,7 @@
                     : 'text-muted-foreground',
                   )}
                   title={col === 'name' && openable ? `Open ${fmt(col, row[col])}` : fmt(col, row[col])}
+                  data-tip-overflow={col === 'name' && openable ? undefined : true}
                 >
                   {#if col === 'name' && openable}
                     <!-- The row takes the click for the pointer; this button is

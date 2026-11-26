@@ -135,7 +135,7 @@
     // `data-tip-overflow`: the tip only repeats a label, so show it only when
     // that label is cut off (its `.truncate` text overflows).
     if (el.hasAttribute('data-tip-overflow')) {
-      const label = el.querySelector('.truncate')
+      const label = el.classList.contains('truncate') ? el : el.querySelector('.truncate')
       if (label && label.scrollWidth <= label.clientWidth) {
         // Still take the title, or the native tooltip shows in our place.
         readTip(el)
