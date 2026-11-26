@@ -378,6 +378,22 @@
   })
   const totalCount = $derived(slots[activeSub].data?.length ?? 0)
   const emptyIcon = $derived(TABS.find((t) => t.id === activeSub)?.icon ?? Boxes)
+
+  /** The column aliases this page writes into its own queries, as words. */
+  const HEADER_LABELS = /** @type {Record<string, string>} */ ({
+    estimated_row: 'Rows (est.)',
+    total_size: 'Total size',
+    data_size: 'Data size',
+    index_size: 'Index size',
+    column_count: 'Columns',
+    index_count: 'Indexes',
+  })
+  /** @param {string} col */
+  function headerLabel(col) {
+    if (HEADER_LABELS[col]) return HEADER_LABELS[col]
+    const words = col.replace(/_/g, ' ')
+    return words.charAt(0).toUpperCase() + words.slice(1)
+  }
 </script>
 
 <svelte:window
@@ -502,7 +518,7 @@
           <tr class="border-b border-border/50">
             <th class="px-3 py-2 font-mono font-normal text-muted-foreground">#</th>
             {#each columns as col (col)}
-              <th class="whitespace-nowrap px-3 py-2 font-mono font-normal text-muted-foreground">{col}</th>
+              <th class="whitespace-nowrap px-3 py-2 font-normal text-muted-foreground">{headerLabel(col)}</th>
             {/each}
           </tr>
         </thead>
