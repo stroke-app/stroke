@@ -2547,6 +2547,25 @@ let rowSearch = $state('')
   /** Cancel handle of the run in flight per tab (`Stop` targets just that query). @type {Map<string, string>} */
   const _sqlQueryIdByTab = new Map()
   let _sqlRunSeq = 0
+  /**
+   * Runs that Stop can let go of on this side. Stop asks the database to
+   * cancel, but when the database is the thing that stopped answering (the
+   * network dropped mid-query) the cancel goes unanswered too, and the run
+   * spun on "Stopping" for minutes. A run is raced against this, and Stop
+   * settles it if the server has not after a few seconds.
+   * @type {Map<string, (err: Error) => void>}
+   */
+  const _sqlAbandon = new Map()
+  /** @template T @param {string} queryId @param {Promise<T>} work @returns {Promise<T>} */
+  function abandonable(queryId, work) {
+    const gaveUp = new Promise((_, reject) => _sqlAbandon.set(queryId, reject))
+    return /** @type {Promise<T>} */ (Promise.race([work, gaveUp])).finally(() => _sqlAbandon.delete(queryId))
+  }
+  /** Stop pressed on a run: give the server 3 seconds to cancel it, then let it go. @param {string | null | undefined} queryId */
+  function abandonSqlRunSoon(queryId) {
+    if (!queryId) return
+    setTimeout(() => _sqlAbandon.get(queryId)?.(new Error('Query cancelled. The database did not answer, so it may still finish there.')), 3000)
+  }
   /** Cancel handle for the tab on screen, handed to SqlConsole's Stop button. */
   const activeSqlQueryId = $derived.by(() => {
     void _busyTick
@@ -8913,7 +8932,7 @@ let rowSearch = $state('')
         let view = null
         let lastPaint = 0
         let paintedLen = 0
-        results = await executeSqlStream(sqlRan, queryId, (chunk) => {
+        results = await abandonable(queryId, executeSqlStream(sqlRan, queryId, (chunk) => {
           if (chunk.stored) {
             // Store mode: the first message paints, later ones move the count.
             if (chunk.columns) {
@@ -8943,7 +8962,7 @@ let rowSearch = $state('')
           paintedLen = streamed.length
           sqlColumns = streamedCols
           sqlRows = streamed.slice()
-        }, { keepInStore: get(appStreamResults) })
+        }, { keepInStore: get(appStreamResults) }))
         // Each statement's outcome, for the editor marks. A single failed
         // statement is the run failing; in a script the others still ran.
         if (stillHere()) {
@@ -12651,6 +12670,7 @@ let rowSearch = $state('')
             message={sqlMessage}
             loading={sqlLoading}
             runningQueryId={activeSqlQueryId}
+            onstoprequested={abandonSqlRunSoon}
             error={sqlError}
             multiResults={sqlMultiResults}
             schemaHints={sqlSchemaHints}

@@ -95,6 +95,8 @@
     /** Cancel handle for the run in flight in THIS tab - so Stop can't cancel
      *  a query another tab happens to be running at the same time. */
     runningQueryId = /** @type {string | null} */ (null),
+    /** Told when Stop is pressed, so the run can be let go if the server never answers the cancel. @type {(queryId: string | null) => void} */
+    onstoprequested = () => {},
     error = "",
     /** @type {any[]} */
     multiResults = [],
@@ -848,12 +850,15 @@
     if (!loading || stopping) return
     stopping = true
     void cancelQuery(runningQueryId ?? undefined)
+    onstoprequested(runningQueryId)
   }
   // The backend reports a stopped run as an error string. It is the user's own
   // action, not a failure, so it gets its own quiet view instead of the red one.
   const stopped = $derived(/Query cancelled/i.test(shownError))
   /** Stopped on an engine that can't stop a statement: the server may finish it. */
   const serverMayFinish = $derived(stopped && /may still finish/i.test(shownError))
+  /** Let go of on this side because the server never answered the cancel. */
+  const noAnswer = $derived(stopped && /did not answer/i.test(shownError))
   // Tauri errors arrive as `Error: <message>`; the prefix repeats the header.
   const errorText = $derived(shownError.replace(/^Error:\s*/, ''))
 
@@ -1793,7 +1798,9 @@
                   <!-- HTTP engines and document stores have no way to stop a
                        statement on the server: the app stopped waiting, the
                        server did not necessarily stop working. -->
-                  <p class="max-w-sm text-ui-xs text-muted-foreground">{serverMayFinish
+                  <p class="max-w-sm text-ui-xs text-muted-foreground">{noAnswer
+                    ? 'The database did not answer the cancel, so Stroke stopped waiting. It may be unreachable, and the query may still finish there.'
+                    : serverMayFinish
                     ? 'Stroke stopped waiting, but this database cannot stop a running statement, so the server may still finish it.'
                     : 'It was cancelled on the server before the results came back.'}</p>
                 </div>
