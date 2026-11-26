@@ -12,7 +12,7 @@
   import Star from '@lucide/svelte/icons/star'
   import { cn } from '$lib/utils.js'
   import { cleanErrorMessage } from '$lib/sql-error-range.js'
-  import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
+  import { offerUndo } from '$lib/undo-toast.js'
   import {
     clearQueryHistory,
     deleteQueryHistoryEntry,
@@ -153,17 +153,10 @@
     if (row.kind === 'history') await deleteQueryHistoryEntry(row.id)
     else await deleteSavedQuery(row.id)
     await onrefresh()
-    toast.message(row.kind === 'history' ? 'Removed from history' : 'Saved query deleted', {
-      description: row.label.slice(0, 120),
-      duration: 8000,
-      action: {
-        label: 'Undo',
-        onClick: () => void (async () => {
-          if (row.kind === 'history') await restoreQueryHistoryEntry(entry)
-          else await restoreSavedQuery(entry)
-          await onrefresh()
-        })(),
-      },
+    offerUndo(row.kind === 'history' ? 'Removed from history' : 'Saved query deleted', row.label.slice(0, 120), async () => {
+      if (row.kind === 'history') await restoreQueryHistoryEntry(entry)
+      else await restoreSavedQuery(entry)
+      await onrefresh()
     })
   }
 
@@ -174,16 +167,9 @@
     if (!connId || !removed.length) return
     await clearQueryHistory(connId, { keepStarred: true })
     await onrefresh()
-    toast.message(`Cleared ${removed.length} ${removed.length === 1 ? 'query' : 'queries'}`, {
-      description: history.some((e) => e.favorite) ? 'Starred queries stay.' : undefined,
-      duration: 8000,
-      action: {
-        label: 'Undo',
-        onClick: () => void (async () => {
-          await Promise.all(removed.map((e) => restoreQueryHistoryEntry(e)))
-          await onrefresh()
-        })(),
-      },
+    offerUndo(`Cleared ${removed.length} ${removed.length === 1 ? 'query' : 'queries'}`, history.some((e) => e.favorite) ? 'Starred queries stay.' : undefined, async () => {
+      await Promise.all(removed.map((e) => restoreQueryHistoryEntry(e)))
+      await onrefresh()
     })
   }
 
