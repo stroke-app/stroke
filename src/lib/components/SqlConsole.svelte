@@ -1031,6 +1031,7 @@
             class="inline-flex h-7 w-6 shrink-0 items-center justify-center border-l border-background/20 bg-foreground text-background transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
             disabled={!sql.trim()}
             aria-label="Run options"
+            title="Run options: every statement, or the one at the cursor"
           >
             <ChevronDown class="size-3" />
           </DropdownMenu.Trigger>
