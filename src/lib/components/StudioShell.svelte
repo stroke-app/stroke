@@ -3889,6 +3889,9 @@ let rowSearch = $state('')
       return false
     }
     if (!connection || aiMode || showConnectionModal) return false
+    // Not behind an open dialog (the command menu, Settings): the tabs would
+    // change under it.
+    if (commandOpen || showSettingsModal || showShortcutsModal || document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')) return false
     const editor = e.target instanceof Element ? e.target.closest('.cm-editor') : null
     if (editor && editor === _engagedEditor) return false
     if (!goTabHistory(dir)) return false
