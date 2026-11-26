@@ -6811,7 +6811,9 @@ let rowSearch = $state('')
       // Dedupe values defensively: enum labels are a set, but a bad introspection
       // join could return repeats, and the schema pages key their {#each} on the
       // value - a duplicate would crash the view (each_key_duplicate).
-      return list.map((e) => ({ name: e.name ?? '', values: [...new Set(e.values ?? [])] }))
+      // usedInTables too: dropping it here made the Enums page call every enum
+      // "unused", including the ones a column was typed with.
+      return list.map((e) => ({ name: e.name ?? '', values: [...new Set(e.values ?? [])], usedInTables: e.usedInTables ?? e.used_in_tables ?? [] }))
     } catch {
       return []
     }

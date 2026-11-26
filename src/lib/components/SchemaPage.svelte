@@ -542,9 +542,10 @@
                   <span class="font-mono text-ui-xs font-medium text-foreground/90">{e.name}</span>
                 </td>
                 <td class="px-3 py-2.5">
-                  <div class="flex flex-wrap gap-x-2 gap-y-1">
+                  <!-- One chip per value: as plain words a value with spaces ("Position No Longer Available") ran into the next. -->
+                  <div class="flex flex-wrap gap-1">
                     {#each e.values as val (val)}
-                      <span class="font-mono text-ui-xs text-muted-foreground">{val}</span>
+                      <span class="rounded-sm border border-border/50 px-1.5 py-px font-mono text-ui-2xs text-foreground/80">{val}</span>
                     {/each}
                     {#if e.values.length === 0}
                       <span class="font-mono text-ui-xs text-muted-foreground">—</span>
