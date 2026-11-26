@@ -31,6 +31,10 @@
 - Back and forward stopped at pages that put the caret in their editor on their own (the SQL editor, an empty JSON viewer).
 - Each snapshot on the Schema timeline shows its table count again.
 - The theme list in the command menu opened at the top with the current theme out of sight, and every dropdown opened on its first row. Both open on the current choice now, scrolled into view.
+- The theme picker previewed whatever rose to the top as you typed, so typing a name repainted the whole app at each letter. Only arrow keys and the pointer preview now.
+- Settings searches and other search fields lit up purple instead of the accent colour on most Linux and Windows screens.
+- The Resume button on the connect screen cut the connection name short with room to spare.
+- In the sidebar's More menu, Recent's count sat where its shortcut belongs.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
@@ -43,3 +47,7 @@
 - The command menu, the Schema explorer and switching between tables are faster. Typing in the command menu takes about half the time per letter it did, and drilling into Tables or Connections starts with an empty search.
 - Grid checkboxes show on the row you point at, and on every row once you select one.
 - Empty pages share one design, with the first step as a button. Diagrams, Dashboard and Schema timeline hide their lists and toolbars until there is something in them.
+- Picking a "Did you mean" name after a failed SELECT runs it again, so the error gives way to the rows. A write still waits for Run.
+- Search tables, Go to page and the theme picker in the command menu take a third to half the time per letter, and moving through grid cells with the arrow keys does less work per key.
+- Tooltips wait for the pointer to move, so a button that slides under a still cursor no longer pops one up.
+- The Snippets settings and the result map use the app's own select menu instead of the system one.
