@@ -1772,9 +1772,20 @@
 
   // Auto-focus the SQL editor whenever the SQL tab becomes active. Uses whenRefReady
   // so focus still lands on the first open while the lazy SqlConsole chunk mounts.
+  // After the tab's first paint, not inside the flush that shows it: on WebKit
+  // CodeMirror cannot trust `preventScroll`, so its focus() reads scrollTop on
+  // every ancestor, and the first read forced a layout of the tab that had only
+  // just been un-hidden. That held the switch to the editor ~45ms (dev) before
+  // anything painted; after the paint the layout is done and the reads are free.
   $effect(() => {
     if (activeTab?.kind !== 'sql') return
-    whenRefReady(() => sqlConsoleRef, (r) => { if (activeTab?.kind === 'sql') r.focusEditor?.() })
+    let raf = 0, timer = 0
+    raf = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        whenRefReady(() => sqlConsoleRef, (r) => { if (activeTab?.kind === 'sql') r.focusEditor?.() })
+      }, 0)
+    })
+    return () => { cancelAnimationFrame(raf); clearTimeout(timer) }
   })
 
   $effect(() => {
