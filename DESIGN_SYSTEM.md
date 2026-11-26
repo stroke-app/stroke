@@ -300,6 +300,12 @@ that contrast is the point.
   a menu past ~10 top-level rows is hard to scan (see the DataTable cell menu:
   Copy as ›, Filter ›, Transform ›, Insert ›).
 - One active dialog/menu at a time from the global hotkey flow.
+- **Command menu rows** (root page) filter themselves through
+  `src/lib/command-local-filter.svelte.js`, not bits-ui: every `Command.Item`
+  there needs a `value` (the words it is found by) and `keywords={[label]}`
+  (the visible label, which ranks highest). A row without the label keyword
+  ranks below rows that merely mention its words. Groups need a stable
+  `value` (their id in `ROOT_GROUPS`), which orders them while searching.
 
 ### Canonical menu recipe (dropdown / context / select — all identical)
 
