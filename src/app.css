@@ -2059,6 +2059,13 @@ html.dark[data-layout="inset"] :is([data-studio-body], [data-studio-region="titl
 html.dark[data-layout="inset"] [data-studio-region="sidebar"] {
   --sidebar: var(--inset-canvas);
 }
+/* Light themes: the panel is the near-white --panel and --background is the
+   grey around it, so a page that painted bg-background (the AI view, the
+   Advisor, Diagrams) sat a shade darker than its neighbours in the same
+   panel. Inside the panel the page colour is the panel's, as in dark. */
+html:not(.dark)[data-layout="inset"] [data-studio-panel] {
+  --background: var(--panel);
+}
 html.dark[data-layout="inset"] [data-studio-panel] {
   --background: var(--inset-raised);
   --panel: var(--inset-raised);
