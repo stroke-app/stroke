@@ -3886,7 +3886,8 @@
                 'flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm',
                 current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
               )}
-              onclick={() => { connHover = null; if (!current) onswitchconnection(c) }}
+              onclick={() => { hideConnCard(); if (!current) onswitchconnection(c) }}
+              onpointerdown={hideConnCard}
               onpointerenter={(e) => showConnCard(c, e.currentTarget)}
               onpointerleave={hideConnCard}
             >
