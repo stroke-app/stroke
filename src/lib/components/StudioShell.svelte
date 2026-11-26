@@ -4434,13 +4434,13 @@ let rowSearch = $state('')
           { key: 't', label: 'Terminal', run: () => { if (aiMode) exitAiMode(); openTerminalTab() } },
           { key: 'e', label: 'Schema diagram', run: () => openErdTab() },
           { key: 'b', label: 'Show or hide sidebar', run: () => toggleSidebar() },
-          { key: 'l', label: 'Logs', run: () => openLogsTab() },
+          { key: 'l', label: 'Activity log', run: () => openLogsTab() },
           { key: 'w', label: 'Close tab', run: () => { if (activeTabId) void closeTab(activeTabId) } },
           { key: 'r', label: 'Reopen closed tab', run: () => reopenLastClosedTab() },
         ]
       : []),
     { key: 'c', label: 'Connections', run: () => { showConnectionModal = true } },
-    { key: 'k', label: 'Command palette', run: () => { commandOpen = true } },
+    { key: 'k', label: 'Command menu', run: () => { commandOpen = true } },
     { key: ',', label: 'Settings', run: () => { showSettingsModal = true } },
     { key: '/', label: 'All shortcuts', run: () => openShortcuts() },
   ])

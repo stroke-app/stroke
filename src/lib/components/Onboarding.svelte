@@ -47,7 +47,7 @@
   ]
 
   const KEYS = [
-    { combo: 'Mod+K', label: 'Command palette' },
+    { combo: 'Mod+K', label: 'Command menu' },
     { combo: 'Mod+P', label: 'Find a table' },
     { combo: 'Mod+B', label: 'Toggle sidebar' },
   ]

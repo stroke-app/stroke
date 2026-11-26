@@ -354,7 +354,7 @@ export default {
   "menubar.Zoom out": "Zoom out",
   "menubar.Reset zoom": "Reset zoom",
   "menubar.Toggle full screen": "Toggle full screen",
-  "menubar.Command palette\u2026": "Command palette…",
+  "menubar.Command palette\u2026": "Command menu…",
   "menubar.Database objects": "Database objects",
   "menubar.Instance insights": "Instance insights",
   "menubar.Schema explorer": "Schema explorer",
