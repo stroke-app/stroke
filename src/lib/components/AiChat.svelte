@@ -68,6 +68,7 @@
   import { extractPlan, sqlStepLabel, groupRetries, retryLabel, planProgress, summarizeSteps, formatStepDuration } from "$lib/ai-steps.js";
   import AgentComposerChips from "$lib/components/AgentComposerChips.svelte";
   import { isReadOnly, guardWrite, readOnlyMode } from "$lib/stores/read-only.js";
+  import { withShortcut } from "$lib/stores/keybindings.js";
   import { isWriteSql, isWriteFor, stripSqlComments } from "$lib/sql-write.js";
   import {
     rowsToCsv,
@@ -4759,11 +4760,11 @@
              right - here, back to the data. -->
         <div class="flex h-12 shrink-0 items-center gap-1 px-3">
           {#if onopensettings}
-            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
+            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={withShortcut('Settings', 'settings.open')} aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
           {/if}
           <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? "Light theme" : "Dark theme"} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? "sun" : "moon"} class="size-4 shrink-0" /></button>
           {#if onopenshortcuts}
-            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
+            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={withShortcut('Keyboard shortcuts', 'help.shortcuts')} aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
           {/if}
           <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Hide chats ({comboTitle('Mod+B')})" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
           <button

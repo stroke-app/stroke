@@ -7,6 +7,7 @@
   import Icon from "./Icon.svelte";
   import { toastConnectionRemoved } from "$lib/connection-undo.js";
   import { cn } from "$lib/utils.js";
+  import { withShortcut } from "$lib/stores/keybindings.js";
   import { Popover, PopoverTrigger, PopoverContent } from "$lib/components/ui/popover/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { setConnectionGroup, setConnectionMeta } from "$lib/stores/connections.js";
@@ -283,7 +284,7 @@
         <span class="text-ui-2xs text-muted-foreground group-hover/conn:hidden">connected</span>
         <button
           type="button"
-          title="Disconnect"
+          title={withShortcut('Disconnect', 'connection.disconnect')}
           aria-label="Disconnect"
           onclick={(e) => {
             e.stopPropagation();
