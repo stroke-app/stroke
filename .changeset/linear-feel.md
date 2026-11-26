@@ -24,6 +24,9 @@
 - Success, warning, error, info and accent text, and highlighted SQL, now read clearly in every theme.
 - At the smallest window size the SQL results pane kept its width and its toolbar stayed whole.
 - ? and Ctrl+? / ⌘? never opened the keyboard shortcuts.
+- A connection that fails because nothing answered says where, instead of showing the driver's full report. The connection being opened shows a spinner in the sidebar, and clicking another one meanwhile says it is still connecting.
+- / focuses the sidebar's table filter on pages without a search of their own (it went to the connection search).
+- After clicking a button, the browser's own tooltip no longer shows over the menu it opened.
 - The command menu kept its groups in a fixed order whatever you typed, so "ai" put Advisor first and Enter opened it. The best match now comes first, and two letters no longer match inside the middle of a hidden keyword.
 - Back and forward stopped at pages that put the caret in their editor on their own (the SQL editor, an empty JSON viewer).
 - Each snapshot on the Schema timeline shows its table count again.
