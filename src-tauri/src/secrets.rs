@@ -259,18 +259,65 @@ fn write_file(path: &Path, map: &Map) -> Result<(), String> {
 // stale credential in front of a newer file.
 
 fn load_from(path: &Path, store: &dyn CredStore) -> Map {
+    read_durable(path, store).unwrap_or_default()
+}
+
+/// What the file or keychain holds right now. `Err` when the keychain refused
+/// to answer (a denied macOS prompt, a locked keyring): that is not the same
+/// as an empty vault, and must never be written back as one.
+fn read_durable(path: &Path, store: &dyn CredStore) -> Result<Map, String> {
     if let Some(map) = std::fs::read_to_string(path).ok().and_then(|s| parse_map(&s)) {
         // Move it into the keychain when that verifiably works.
         let _ = persist_to(path, store, &map);
-        return map;
+        return Ok(map);
     }
-    let map = read_vault(store).ok().flatten().unwrap_or_default();
+    let map = read_vault(store)?.unwrap_or_default();
     // A header + single chunk from an earlier version: fold it into one item so
     // later launches prompt once.
     if matches!(read_header(store), Ok(Some((_, Some(h)))) if h.chunks == 1) {
         let _ = write_vault(store, &map);
     }
-    map
+    Ok(map)
+}
+
+/// Changes this process made: a key set to a value, or removed (`None`).
+type Changes = HashMap<String, Option<String>>;
+
+fn diff(before: &Map, after: &Map) -> Changes {
+    let mut out = Changes::new();
+    for (k, v) in after {
+        if before.get(k) != Some(v) {
+            out.insert(k.clone(), Some(v.clone()));
+        }
+    }
+    for k in before.keys() {
+        if !after.contains_key(k) {
+            out.insert(k.clone(), None);
+        }
+    }
+    out
+}
+
+fn apply(map: &mut Map, changes: &Changes) {
+    for (k, v) in changes {
+        match v {
+            Some(v) => map.insert(k.clone(), v.clone()),
+            None => map.remove(k),
+        };
+    }
+}
+
+/// Apply `changes` to what is stored now and write the result back. Only the
+/// keys this process changed are touched, so a sign-in the other app (Stroke
+/// or Stroke Nightly, which share the vault) saved since this one started is
+/// kept. Returns the merged map. On `Err` nothing was written.
+fn commit(path: &Path, store: &dyn CredStore, changes: &Changes) -> Result<Map, String> {
+    let mut map = read_durable(path, store)?;
+    if !changes.is_empty() {
+        apply(&mut map, changes);
+        persist_to(path, store, &map)?;
+    }
+    Ok(map)
 }
 
 fn persist_to(path: &Path, store: &dyn CredStore, map: &Map) -> Result<(), String> {
@@ -303,21 +350,59 @@ pub(crate) fn read_all(app: &tauri::AppHandle) -> Map {
     map
 }
 
-fn write_unlocked(app: &tauri::AppHandle, map: &Map) -> Result<(), String> {
-    // Session cache is authoritative first, so reads right after this always see
-    // the new value regardless of what the durable backend does.
+// Changes not yet written because the durable store could not be read. They
+// are kept for this run and retried on the next write.
+static PENDING: Mutex<Option<Changes>> = Mutex::new(None);
+
+fn set_cache(map: &Map) {
     *cache().lock().unwrap_or_else(|e| e.into_inner()) = Some(map.clone());
-    persist_to(&legacy_path(app), &Keychain, map)
 }
 
-/// Read, change and write the vault as one step. Use this for every change:
-/// a separate read and write can lose a concurrent update.
+/// Read, change and write the vault as one step. Use this for every change.
+///
+/// `f` runs on the session cache, but only the keys it changed are written,
+/// applied to a fresh read of the durable store. Stroke and Stroke Nightly
+/// share the vault and can run at once; writing the whole cached map back put
+/// every other key as it was when this process started, so one app signing in
+/// to Cloudflare was undone the next time the other saved anything, and both
+/// showed "Not connected" after a restart. When the store can't be read the
+/// change stays in this session only, rather than overwriting what is there.
 pub(crate) fn update<R>(app: &tauri::AppHandle, f: impl FnOnce(&mut Map) -> R) -> Result<R, String> {
     let _guard = VAULT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
-    let mut map = read_all(app);
-    let r = f(&mut map);
-    write_unlocked(app, &map)?;
+    let before = read_all(app);
+    let mut after = before.clone();
+    let r = f(&mut after);
+    let mut pending = PENDING.lock().unwrap_or_else(|e| e.into_inner());
+    let changes = pending.get_or_insert_with(Changes::new);
+    changes.extend(diff(&before, &after));
+    match commit(&legacy_path(app), &Keychain, changes) {
+        Ok(merged) => {
+            *pending = None;
+            set_cache(&merged);
+        }
+        Err(e) => {
+            log::warn!("secrets: keychain unreadable, keeping the change for this session: {e}");
+            set_cache(&after);
+        }
+    }
     Ok(r)
+}
+
+/// The vault as stored right now, with this session's unsaved changes on
+/// top. For a refresh token: the other app may have rotated it since launch,
+/// and the cached one is then rejected. Falls back to the cache.
+pub(crate) fn read_fresh(app: &tauri::AppHandle) -> Map {
+    let _guard = VAULT_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    match read_durable(&legacy_path(app), &Keychain) {
+        Ok(mut map) => {
+            if let Some(changes) = PENDING.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+                apply(&mut map, changes);
+            }
+            set_cache(&map);
+            map
+        }
+        Err(_) => read_all(app),
+    }
 }
 
 // ── Keychain access must never run on the caller's thread ────────────────────
@@ -349,6 +434,11 @@ pub(crate) async fn read_all_async(app: &tauri::AppHandle) -> Map {
     // A join error here means the closure panicked; an empty vault is the same
     // answer callers already handle for "nothing stored yet".
     off_thread(move || read_all(&app)).await.unwrap_or_default()
+}
+
+pub(crate) async fn read_fresh_async(app: &tauri::AppHandle) -> Map {
+    let app = app.clone();
+    off_thread(move || read_fresh(&app)).await.unwrap_or_default()
 }
 
 pub(crate) async fn update_async<R, F>(app: &tauri::AppHandle, f: F) -> Result<R, String>
@@ -639,6 +729,48 @@ mod tests {
         assert_eq!(read_vault(&store).unwrap(), None);
         // Next launch.
         assert_eq!(load_from(&path, &store), big_map());
+    }
+
+    #[test]
+    fn a_write_keeps_keys_the_other_app_saved_since_launch() {
+        // Nightly started with only an AI key; Stable then signed in to
+        // Cloudflare. Nightly saving a connection must not undo that.
+        let store = MemStore::new(1 << 20);
+        let path = tmp_path("merge");
+        let at_launch = HashMap::from([("openai".to_string(), "sk".to_string())]);
+        write_vault(&store, &at_launch).unwrap();
+        let mut other = at_launch.clone();
+        other.insert("__cf_access_token__".into(), "cf".into());
+        write_vault(&store, &other).unwrap();
+
+        let mut mine = at_launch.clone();
+        mine.insert("__connection_secrets__".into(), "{}".into());
+        mine.remove("openai");
+        let merged = commit(&path, &store, &diff(&at_launch, &mine)).unwrap();
+        assert_eq!(merged["__cf_access_token__"], "cf");
+        assert_eq!(merged["__connection_secrets__"], "{}");
+        assert!(!merged.contains_key("openai"), "a removal still applies");
+        assert_eq!(read_vault(&store).unwrap(), Some(merged));
+    }
+
+    #[test]
+    fn an_unreadable_keychain_is_never_overwritten() {
+        struct Locked(MemStore);
+        impl CredStore for Locked {
+            fn get(&self, _: &str) -> Result<Option<String>, String> {
+                Err("User canceled the operation.".into())
+            }
+            fn set(&self, a: &str, v: &str) -> Result<(), String> { self.0.set(a, v) }
+            fn delete(&self, a: &str) -> Result<(), String> { self.0.delete(a) }
+            fn max_utf16(&self) -> usize { self.0.max_utf16() }
+        }
+        let store = Locked(MemStore::new(1 << 20));
+        store.0.slots.borrow_mut().insert(KEYCHAIN_ACCOUNT.into(), r#"{"__cf_access_token__":"cf"}"#.into());
+        let path = tmp_path("locked");
+        let changes = Changes::from([("openai".to_string(), Some("sk".to_string()))]);
+        assert!(commit(&path, &store, &changes).is_err());
+        assert_eq!(store.0.slots.borrow()[KEYCHAIN_ACCOUNT], r#"{"__cf_access_token__":"cf"}"#);
+        assert!(!path.exists());
     }
 
     #[test]

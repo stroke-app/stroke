@@ -990,7 +990,12 @@ async fn valid_token(
         usable.then(|| access.clone())
     };
 
-    let map = crate::secrets::read_all_async(app).await;
+    let mut map = crate::secrets::read_all_async(app).await;
+    if !map.contains_key(&format!("__{k}_access__")) {
+        // Not in this app's copy: the other app (Stroke or Stroke Nightly
+        // share the vault) may have signed in since launch.
+        map = crate::secrets::read_fresh_async(app).await;
+    }
     if !map.contains_key(&format!("__{k}_access__")) {
         return Err(SESSION_EXPIRED.into());
     }
@@ -1002,8 +1007,10 @@ async fn valid_token(
     }
 
     let _guard = REFRESH_LOCK.lock().await;
-    // Whoever held the lock may already have refreshed.
-    let map = crate::secrets::read_all_async(app).await;
+    // Whoever held the lock, or the other app, may already have refreshed. Read
+    // fresh: a refresh token the other app rotated is rejected, and a rejection
+    // here signs the provider out.
+    let map = crate::secrets::read_fresh_async(app).await;
     let Some(access) = map.get(&format!("__{k}_access__")).cloned() else {
         return Err(SESSION_EXPIRED.into());
     };
@@ -1343,7 +1350,8 @@ pub async fn provider_oauth_status(
     provider: String,
 ) -> Result<ProviderOAuthStatus, String> {
     let p = Provider::parse(&provider)?;
-    let map = crate::secrets::read_all_async(&app).await;
+    // Fresh, so a sign-in made in the other app since launch shows up.
+    let map = crate::secrets::read_fresh_async(&app).await;
     let k = p.key();
     Ok(ProviderOAuthStatus {
         connected: map.contains_key(&format!("__{k}_access__")),
