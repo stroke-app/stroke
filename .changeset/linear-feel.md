@@ -19,7 +19,7 @@
 - **Searchable tab list** - The menu at the end of the tab bar has a search field and opens on the tab in front.
 
 ### Bug Fixes
-- Clear all history in the AI chat deleted every conversation without asking. It asks first now, as do key changes in the document and DynamoDB editors.
+- Clearing AI chat history deleted every conversation with no way back. It offers Undo now, as clearing the activity log does. Key changes in the document and DynamoDB editors ask first.
 - The sidebar filter shrank to a few letters beside the schema picker.
 - Success, warning, error, info and accent text, and highlighted SQL, now read clearly in every theme.
 - At the smallest window size the SQL results pane kept its width and its toolbar stayed whole.
@@ -33,7 +33,7 @@
 - The theme list in the command menu opened at the top with the current theme out of sight, and every dropdown opened on its first row. Both open on the current choice now, scrolled into view.
 
 ### Changes
-- Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot asks nothing and offers Undo for 8 seconds instead.
+- Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
 - Every dialog's main button is drawn in the accent colour.
 - Toolbars group their buttons with space instead of thin dividers, and empty-state headings are larger and lighter.
 - Shortcuts print the same way in every menu row, radio and checkbox rows included.
