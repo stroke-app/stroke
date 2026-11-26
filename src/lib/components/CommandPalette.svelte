@@ -761,6 +761,23 @@
   // On root page: bits-ui filters with a plain substring check against item value strings.
   const shouldFilter = $derived(page !== 'tables' && page !== 'ask')
 
+  /**
+   * Rows mounted on the frame the menu opens: the ones that fit on screen.
+   * Mounting all ~80 root rows (each a bits-ui item, icon and keycaps) took
+   * ~110ms of script in a production build before the menu could paint, past
+   * the 100ms a menu has to open within to feel instant. The rest mount on
+   * the next frame, before anyone can scroll or press a key that needs them,
+   * and typing mounts everything at once so search always sees every row.
+   */
+  const FIRST_PAINT_ROWS = 12
+  let mountAll = $state(false)
+  const listAll = $derived(mountAll || !!paletteSearch.trim())
+  $effect(() => {
+    if (!open) { mountAll = false; return }
+    let raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => { mountAll = true }) })
+    return () => cancelAnimationFrame(raf)
+  })
+
   /** @param {() => void} action */
   function run(action) {
     open = false
@@ -964,11 +981,12 @@
 
           {#if connected}
             <Command.Group heading={$tx('group.Views', 'Views')}>
-              {#each pageItems as it (it.label)}
+              {#each listAll ? pageItems : pageItems.slice(0, FIRST_PAINT_ROWS) as it (it.label)}
                 {@render pageRow(it)}
               {/each}
             </Command.Group>
 
+            {#if listAll}
             {#if schemas.length > 0}
               <Command.Group heading={$tx('group.Schemas', 'Schemas')}>
                 {#each schemas as schema (schema)}
@@ -1148,7 +1166,10 @@
                 <Command.Shortcut command="connection.disconnect" />
               </Command.Item>
             </Command.Group>
+            {/if}
           {/if}
+
+          {#if listAll || !connected}
 
           <!-- ── Switch database, other saved connections, right at root ── -->
           {@const otherConns = savedConnections.filter((c) => c.id !== activeConnectionId)}
@@ -1222,6 +1243,7 @@
           </Command.Group>
 
         <!-- ── TABLES PAGE ───────────────────────────────────────────── -->
+          {/if}
         {:else if page === 'tables'}
           {#if tablesPageRegular.total > 0}
             <Command.Group heading={$tx('group.Tables', 'Tables')}>
