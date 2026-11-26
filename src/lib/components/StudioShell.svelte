@@ -11543,6 +11543,7 @@ let rowSearch = $state('')
             onforward={() => goTabHistory(1)}
             canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
             canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
+            onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
@@ -11827,6 +11828,7 @@ let rowSearch = $state('')
             onforward={() => goTabHistory(1)}
             canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
             canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
+            onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
@@ -11854,6 +11856,7 @@ let rowSearch = $state('')
             onforward={() => goTabHistory(1)}
             canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
             canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
+            onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}

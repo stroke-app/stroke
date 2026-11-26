@@ -48,6 +48,8 @@
     onforward = /** @type {(() => void) | null} */ (null),
     canback = false,
     canforward = false,
+    /** Open a new tab, from the + after the last one. Absent: no button. */
+    onnewtab = /** @type {(() => void) | null} */ (null),
     /** Open a fresh query editor - the `+` at the end of the strip. */
     onnewsql = () => {},
     /** Whether the closed-tab stack has anything to reopen. */
@@ -333,6 +335,12 @@
 
         </div>
     {/each}
+    {#if onnewtab}
+      <!-- Right after the last tab, where the eye already is (Linear's +). -->
+      <button type="button" class={cn(navBtn, 'ml-0.5 shrink-0')} onclick={onnewtab} title={withShortcut('New tab', 'tab.new')} aria-label="New tab">
+        <Icon name="plus" class="size-4 shrink-0" />
+      </button>
+    {/if}
       </ContextMenu.Trigger>
         <ContextMenu.Content class="min-w-52">
           {#if menuTab}
