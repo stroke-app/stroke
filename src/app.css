@@ -26,6 +26,7 @@
   html .text-warning { color: var(--warning-text); }
   html .text-destructive { color: var(--destructive-text); }
   html .text-info { color: var(--info-text); }
+  html .text-primary { color: var(--primary-text); }
 }
 
 /* Non-theme tokens only - color palettes live on html[data-theme] in app-themes.css */
