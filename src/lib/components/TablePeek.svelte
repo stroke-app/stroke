@@ -60,6 +60,12 @@
     top = Math.max(8, Math.min(y - 4, window.innerHeight - h - 8))
   })
 
+  /** "8 columns · 26 rows": built as one string, since a template block trims the spaces around the dot. */
+  const meta = $derived([
+    columns ? `${columns.length} column${columns.length === 1 ? '' : 's'}` : '',
+    rows ? `${rows} rows` : '',
+  ].filter(Boolean).join(' · '))
+
   /** Skeleton rows while the columns load: the card opens at its final width and does not jump. */
   const SKELETON = [62, 48, 70, 40, 56]
 </script>
@@ -76,7 +82,7 @@
   <div class="flex min-w-0 items-baseline gap-2 px-3 pt-2.5 pb-2">
     <p class="min-w-0 flex-1 truncate font-medium text-foreground">{table}</p>
     <p class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">
-      {#if columns}{columns.length} col{columns.length === 1 ? '' : 's'}{/if}{#if columns && rows} · {/if}{#if rows}{rows} rows{/if}
+      {meta}
     </p>
   </div>
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto border-t border-border/50 px-1 py-1">
