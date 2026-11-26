@@ -1963,7 +1963,9 @@ html[data-layout="inset"] [data-studio-body] > :first-child:not(:has([data-studi
 html[data-layout="inset"] :not(:has(> [data-studio-region="statusbar"])) > [data-studio-panel] {
   margin-bottom: 0.5rem;
 }
-/* On macOS the title row sits in the same column, right above the panel. */
-html[data-layout="inset"][data-os="macos"] [data-studio-region="titlebar"] + [data-studio-panel] {
-  margin-top: 0;
+/* Nothing above it in its column (the title bar spans the window, or AI mode
+   hides the macOS title row): a gutter above as well. On macOS the title row
+   sits in the same column, right above the panel, and is the gap itself. */
+html[data-layout="inset"] [data-studio-panel]:first-child {
+  margin-top: 0.5rem;
 }
