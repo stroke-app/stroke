@@ -2995,9 +2995,11 @@
                       allPinnedSelected ? 'text-primary' : 'text-muted-foreground',
                     )}
                     onclick={(e) => { e.stopPropagation(); toggleSelectAllPinned() }}
-                    title={allPinnedSelected
-                      ? `Deselect all ${filteredPinnedTables.length} pinned tables`
-                      : `Select all ${filteredPinnedTables.length} pinned tables`}
+                    title={filteredPinnedTables.length === 1
+                      ? (allPinnedSelected ? 'Deselect the pinned table' : 'Select the pinned table')
+                      : allPinnedSelected
+                        ? `Deselect all ${filteredPinnedTables.length} pinned tables`
+                        : `Select all ${filteredPinnedTables.length} pinned tables`}
                   >
                     <Icon name={allPinnedSelected ? 'check-circle-2' : 'check'} class="size-3.5 shrink-0" />
                   </button>
@@ -3005,7 +3007,7 @@
                     type="button"
                     class="hit-area inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     onclick={(e) => { e.stopPropagation(); openAllPinned() }}
-                    title="Open all {filteredPinnedTables.length} pinned tables in tabs"
+                    title={filteredPinnedTables.length === 1 ? 'Open the pinned table' : `Open all ${filteredPinnedTables.length} pinned tables in tabs`}
                   >
                     <Icon name="external-link" class="size-3.5 shrink-0" />
                   </button>
