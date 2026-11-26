@@ -602,9 +602,13 @@
             <Presentation class="size-3.5 shrink-0" />
           </Button>
         {/if}
+        <!-- An empty dashboard's own empty state offers Add charts or queries:
+             two filled buttons for one action is one too many. -->
+        {#if activeDash.items.length > 0}
         <Button size="sm" class="gap-1.5" onclick={() => (pickerOpen = true)}>
           <Plus class="size-3.5 shrink-0" />Add
         </Button>
+        {/if}
       {/if}
     </div>
   </div>
@@ -619,7 +623,7 @@
         title="No dashboard yet"
         description="Saved charts and queries on one screen, refreshed live."
       >
-        <Button size="sm" onclick={() => createDashboard("My Dashboard")}>
+        <Button size="sm" onclick={() => createDashboard("My dashboard")}>
           <Plus class="size-3.5 shrink-0" />
           New dashboard
         </Button>
