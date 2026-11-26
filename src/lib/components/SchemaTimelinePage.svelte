@@ -18,6 +18,7 @@
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { cn, errorText } from '$lib/utils.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import FileCode from '@lucide/svelte/icons/file-code'
   import Copy from '@lucide/svelte/icons/copy'
@@ -29,6 +30,7 @@
     listAllSnapshots,
     deleteSnapshot,
     deleteAllSnapshots,
+    restoreSnapshots,
     diffSnapshots,
     isDiffEmpty,
   } from '$lib/stores/schema-snapshots.js'
@@ -65,14 +67,6 @@
   let selectedTable = $state(null)
   /** @type {Set<string>} */
   let collapsedSchemas = $state(new Set())
-
-  // ── More menu ──────────────────────────────────────────────────────────────
-  let moreMenuOpen = $state(false)
-  let clearStep = $state(0)
-
-  $effect(() => {
-    if (!moreMenuOpen) clearStep = 0
-  })
 
   // ── Capture modal ──────────────────────────────────────────────────────────
   let captureOpen = $state(false)
@@ -208,16 +202,31 @@
 
   // ── Clear all ──────────────────────────────────────────────────────────────
 
-  function onClearClick() {
-    if (clearStep === 0) { clearStep = 1 }
-    else { void doDeleteAll() }
+  /** Deleted snapshots go back on Undo, with the comparison they were in. @param {SchemaSnapshot[]} gone @param {string} title */
+  function offerUndo(gone, title) {
+    const was = { beforeId, afterId }
+    // Plain copies: IndexedDB cannot store the page's reactive proxies.
+    const keep = $state.snapshot(gone)
+    toast.message(title, {
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: async () => {
+          try { await restoreSnapshots(keep) } catch (err) { toast.error(`Couldn't undo: ${errorText(err)}`); return }
+          await load()
+          if (!beforeId && !afterId) ({ beforeId, afterId } = was)
+        },
+      },
+    })
   }
 
-  async function doDeleteAll() {
-    await deleteAllSnapshots()
-    snapshots = []; beforeId = null; afterId = null
-    moreMenuOpen = false; clearStep = 0
-    toast.success('All snapshots deleted')
+  // No confirm: it goes at once and the toast offers Undo.
+  async function onClearClick() {
+    const gone = snapshots
+    try { await deleteAllSnapshots() } catch (err) { toast.error(`Delete failed: ${errorText(err)}`); return }
+    snapshots = []
+    offerUndo(gone, gone.length === 1 ? 'Snapshot deleted' : `${gone.length} snapshots deleted`)
+    beforeId = null; afterId = null
   }
 
   function swapSnapshots() {
@@ -374,7 +383,9 @@
       toast.error(`Delete failed: ${/** @type {Error} */ (err).message}`)
       return
     }
+    const gone = snapshots.filter((s) => s.id === id)
     snapshots = snapshots.filter((s) => s.id !== id)
+    offerUndo(gone, 'Snapshot deleted')
     if (beforeId === id) beforeId = null
     if (afterId === id) afterId = null
   }
@@ -479,32 +490,19 @@
       <span class="flex-1"></span>
 
       {#if snapshots.length > 0}
-        <div class="relative">
-          {#if moreMenuOpen}
-            <div class="fixed inset-0 z-10" role="presentation" onclick={() => { moreMenuOpen = false }}></div>
-          {/if}
-          <button
-            onclick={() => { moreMenuOpen = !moreMenuOpen }}
-            class="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+        <DropdownMenu.DropdownMenu>
+          <DropdownMenu.DropdownMenuTrigger
+            class="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent/50 hover:text-foreground data-[state=open]:bg-accent/50 data-[state=open]:text-foreground"
             aria-label="More"
           >
             <Ellipsis class="size-3.5 shrink-0" />
-          </button>
-          {#if moreMenuOpen}
-            <div class="absolute right-0 top-full z-20 mt-1 min-w-40 overflow-hidden rounded-[10px] border border-border/60 bg-popover p-1 elevate-2-rim">
-              <button
-                onclick={onClearClick}
-                class={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-xs hover:bg-accent',
-                  clearStep === 1 ? 'text-destructive' : 'text-muted-foreground hover:text-destructive',
-                )}
-              >
-                <Trash2 class="size-3.5 shrink-0" />
-                {clearStep === 1 ? 'Confirm clear all' : 'Clear all'}
-              </button>
-            </div>
-          {/if}
-        </div>
+          </DropdownMenu.DropdownMenuTrigger>
+          <DropdownMenu.DropdownMenuContent align="end" class="min-w-40">
+            <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => void onClearClick()}>
+              <Trash2 class="size-3.5 shrink-0" />Delete all snapshots
+            </DropdownMenu.DropdownMenuItem>
+          </DropdownMenu.DropdownMenuContent>
+        </DropdownMenu.DropdownMenu>
       {/if}
 
       <button
@@ -569,11 +567,16 @@
                 <X class="size-3.5 shrink-0" />
               </button>
             </div>
-            <div class="mt-1 flex min-w-0 items-center gap-1.5 ps-7 text-ui-2xs text-muted-foreground">
-              <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
-              <span aria-hidden="true">·</span>
-              <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
-              <span class="ms-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+            <!-- The date line and Base / Compare share one place: the buttons
+                 fade in over it on hover or focus. Side by side, the hidden
+                 buttons kept their width and squeezed the table count out. -->
+            <div class="mt-1 grid ps-7 text-ui-2xs text-muted-foreground *:col-start-1 *:row-start-1">
+              <span class="flex min-w-0 items-center gap-1.5 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+                <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
+                <span aria-hidden="true">·</span>
+                <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
+              </span>
+              <span class="-ms-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                 <button
                   type="button"
                   onclick={() => { beforeId = snap.id }}
