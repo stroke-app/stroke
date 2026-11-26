@@ -40,7 +40,7 @@ export function createMarkdownCell(content = '') {
 }
 
 /** @param {string} [title] @returns {Notebook} */
-export function createNotebook(title = 'Untitled Notebook') {
+export function createNotebook(title = 'Untitled notebook') {
   const now = new Date().toISOString()
   return { version: '1', title, cells: [createSqlCell()], variables: [], createdAt: now, updatedAt: now }
 }

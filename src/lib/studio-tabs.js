@@ -387,7 +387,7 @@ export function tabDisplayTitle(tab) {
   // ("Query Editor 2") are separate buffers and must not all read "Query Editor".
   if (tab.kind === 'terminal') return tab.title || 'Terminal'
   if (tab.kind === 'sql') return tab.title || 'Query Editor'
-  if (tab.kind === 'notebook') return tab.title || 'Untitled Notebook'
+  if (tab.kind === 'notebook') return tab.title || 'Untitled notebook'
   // A document tab is named after its collection.
   if (tab.kind === 'docs') return tab.title || 'Browse'
   if (tab.kind === 'extension-detail') return tab.title || tab.state?.extensionId || 'Extension'
@@ -439,7 +439,7 @@ export function createNotebookTab(notebook, filePath = null) {
   return /** @type {StudioTab} */ ({
     id: nextTabId(),
     kind: 'notebook',
-    title: notebook.title || 'Untitled Notebook',
+    title: notebook.title || 'Untitled notebook',
     state: /** @type {NotebookTabState} */ ({ filePath, notebook, dirty: false }),
   })
 }

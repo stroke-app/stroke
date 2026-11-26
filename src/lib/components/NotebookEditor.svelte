@@ -10,7 +10,7 @@
    * - {{name}} variables, filled from the bar under the toolbar before a run.
    * - Autosave once the notebook has a file; a recent list to come back to.
    */
-  import { onDestroy, tick } from 'svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { comboTitle } from '$lib/shortcuts.js'
@@ -167,6 +167,21 @@
       target?.focus()
     })
   }
+
+  // A new notebook is one empty SQL cell: put the caret in it, as a new SQL
+  // editor does, instead of leaving focus on nothing. Its editor mounts a few
+  // frames after the page, so look for it until it is there.
+  onMount(() => {
+    const only = notebook.cells.length === 1 ? notebook.cells[0] : null
+    if (!only || only.type !== 'sql' || only.content.trim()) return
+    let frames = 0
+    const tryFocus = () => {
+      const target = /** @type {HTMLElement | null} */ (document.getElementById(`nb-cell-${only.id}`)?.querySelector('.cm-content'))
+      if (target) { if (!document.activeElement || document.activeElement === document.body) target.focus(); return }
+      if (++frames < 30) requestAnimationFrame(tryFocus)
+    }
+    requestAnimationFrame(tryFocus)
+  })
 
   async function runAll() {
     for (const cell of notebook.cells) {
@@ -377,7 +392,7 @@
     <input
       value={notebook.title}
       oninput={onTitleInput}
-      class="min-w-0 flex-1 bg-transparent text-ui-sm font-medium text-foreground outline-none placeholder:text-muted-foreground"
+      class="no-field-frame -mx-1.5 h-7 min-w-0 flex-1 rounded-md bg-transparent px-1.5 text-ui-sm font-medium text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:bg-muted/40 focus:bg-muted/50"
       placeholder="Untitled notebook"
       spellcheck="false"
       aria-label="Notebook title"
