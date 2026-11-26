@@ -96,6 +96,8 @@
     /** @type {(c: import('$lib/stores/connections.js').SavedConnection) => void} */
     onswitchconnection = () => {},
     onaddconnection = () => {},
+    /** The + on the Connections header: the New connection form. */
+    onnewconnection = () => {},
     /** Sidebar footer (T3-style). */
     onopensettings = () => {},
     onopenshortcuts = () => {},
@@ -3665,9 +3667,12 @@
        last used it, "Show more", and a hover card with the details. -->
   {#if wsConnections.length && lowerReady}
     <div class="flex max-h-[45%] shrink-0 flex-col border-t border-sidebar-border/50">
+      <!-- The fold toggle and the + sit side by side: a button can't hold
+           another button. -->
+      <div class="flex h-9 shrink-0 items-center pe-2">
       <button
         type="button"
-        class="flex h-9 shrink-0 items-center gap-2 px-4 text-ui-sm text-foreground/80 hover:text-foreground"
+        class="flex h-full min-w-0 flex-1 items-center gap-2 ps-4 pe-1 text-ui-sm text-foreground/80 hover:text-foreground"
         aria-expanded={connsOpen}
         onclick={() => {
           connsOpen = !connsOpen
@@ -3680,6 +3685,16 @@
         <span class="font-mono text-ui-2xs tabular-nums">{wsConnections.length}</span>
         <Icon name={connsOpen ? 'chevron-down' : 'chevron-right'} class="size-3 shrink-0" />
       </button>
+      <button
+        type="button"
+        class="hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        aria-label="New connection"
+        title="New connection"
+        onclick={onnewconnection}
+      >
+        <Icon name="plus" class="size-3.5 shrink-0" />
+      </button>
+      </div>
       {#if connsOpen}
         {#if wsConnections.length > 5}
           <!-- The shared search box (DESIGN_SYSTEM.md): × clears it, Esc too. -->

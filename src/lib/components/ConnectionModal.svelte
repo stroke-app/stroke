@@ -122,6 +122,8 @@
     initialEngine = $bindable(""),
     /** A saved connection to open straight into its form (sidebar Edit…). */
     initialEditId = $bindable(""),
+    /** Open on the New connection form (the sidebar's + on Connections). */
+    initialNew = $bindable(false),
     /**
      * A connection string handed over from outside (a stroke:// link or the
      * command line): read as if pasted, so the form opens filled in. Nothing
@@ -2339,6 +2341,8 @@
       clipboardDismissed = "";
       // Arriving from an engine chip skips the picker - that choice is already made.
       if (initialEngine) { pickEngine(initialEngine); initialEngine = ""; }
+      else if (initialNew) newConnectionForm();
+      initialNew = false;
       if (initialEditId) {
         const conn = saved.find((c) => c.id === initialEditId);
         initialEditId = "";
