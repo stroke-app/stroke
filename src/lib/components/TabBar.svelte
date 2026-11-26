@@ -7,7 +7,7 @@
   import { tabDisplayTitle } from '$lib/studio-tabs.js'
   import { withShortcut } from '$lib/stores/keybindings.js'
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js'
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
+  import SearchableMenu from './SearchableMenu.svelte'
 
   let isTauri = $state(false)
 
@@ -476,25 +476,35 @@
        fade showed nothing at all, so the strip looked complete. While any are
        hidden, this lists every open tab. -->
   {#if fadeLeft || fadeRight}
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger
-        class="ml-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground"
-        title="All open tabs"
-        aria-label="All open tabs ({tabs.length})"
-      >
-        <Icon name="chevron-down" class="size-3.5 shrink-0" />
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end" class="app-scroll max-h-[min(70vh,28rem)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto">
-        {#each tabs as tab (tab.id)}
-          <DropdownMenu.Item onSelect={() => onselect(tab.id)}>
-            <Icon name={tabIcon(tab)} class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label" class={cn('min-w-0 flex-1 truncate', tab.id === activeTabId && 'font-medium text-foreground')}>{tabDisplayTitle(tab)}</span>
-            {#if tab.connLabel}<span class="ml-auto max-w-24 shrink-0 truncate text-ui-2xs text-muted-foreground">{tab.connLabel}</span>{/if}
-            {#if tab.id === activeTabId}<Icon name="check" class="size-3.5 shrink-0" />{/if}
-          </DropdownMenu.Item>
-        {/each}
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
+    <!-- Searchable, and open on the tab in front: with twenty-odd tabs the
+         current one was at the bottom of a plain list, out of sight. -->
+    <SearchableMenu
+      align="end"
+      contentClass="w-80 max-w-[calc(100vw-2rem)]"
+      placeholder="Search open tabs…"
+      empty="No tab matches"
+      items={tabs.map((tab) => ({ value: tab.id, label: tabDisplayTitle(tab), keywords: tab.connLabel ? [tab.connLabel] : [], tab }))}
+      current={activeTabId ?? undefined}
+      onselect={(it) => onselect(it.value)}
+    >
+      {#snippet trigger(props)}
+        <button
+          {...props}
+          type="button"
+          class="ml-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground"
+          title="All open tabs"
+          aria-label="All open tabs ({tabs.length})"
+        >
+          <Icon name="chevron-down" class="size-3.5 shrink-0" />
+        </button>
+      {/snippet}
+      {#snippet item(it)}
+        <Icon name={tabIcon(it.tab)} class="size-3.5 shrink-0 text-muted-foreground" />
+        <span class={cn('min-w-0 flex-1 truncate', it.value === activeTabId && 'font-medium text-foreground')}>{it.label}</span>
+        {#if it.tab.connLabel}<span class="ml-auto max-w-24 shrink-0 truncate text-ui-2xs text-muted-foreground">{it.tab.connLabel}</span>{/if}
+        {#if it.value === activeTabId}<Icon name="check" class="size-3.5 shrink-0" />{/if}
+      {/snippet}
+    </SearchableMenu>
   {/if}
   <!-- A grab handle that is always there, even with the strip full of tabs. -->
   <div class="h-full w-10 shrink-0" data-tauri-drag-region aria-hidden="true"></div>
