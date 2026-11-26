@@ -698,7 +698,7 @@
           <!-- Changed tables tree -->
           <div class="flex w-52 shrink-0 flex-col overflow-hidden border-r border-border/30">
             <div class="flex h-8 shrink-0 items-center border-b border-border/25 px-3">
-              <span class="flex-1 text-ui-3xs font-medium uppercase tracking-widest text-muted-foreground">Changed</span>
+              <span class="flex-1 text-ui-xs font-medium text-muted-foreground">Changed</span>
               <span class="font-mono text-ui-3xs text-muted-foreground tabular-nums">{totalChanges}</span>
             </div>
             <div class="min-h-0 flex-1 overflow-y-auto">
@@ -785,7 +785,7 @@
             <!-- Database -->
             <div class="w-44 shrink-0">
               <div class="flex items-center border-b border-border/20 px-4 py-2">
-                <span class="text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">Database</span>
+                <span class="text-ui-xs font-medium text-muted-foreground">Database</span>
                 {#if captureLoadingDbs}<Loader2 class="ml-auto size-3 shrink-0 animate-spin text-muted-foreground" />{/if}
               </div>
               <div class="max-h-44 overflow-y-auto py-1">
@@ -816,7 +816,7 @@
             <!-- Schemas -->
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 border-b border-border/20 px-4 py-2">
-                <span class="text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">Schemas</span>
+                <span class="text-ui-xs font-medium text-muted-foreground">Schemas</span>
                 {#if captureLoadingSchemas}
                   <Loader2 class="ml-auto size-3 shrink-0 animate-spin text-muted-foreground" />
                 {:else if captureSchemaList.length > 0}
@@ -957,7 +957,7 @@
               !collapsed && 'rotate-90',
             )}
           />
-          <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+          <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs font-medium text-muted-foreground">
             {schema}
           </span>
           <span class="ml-1 shrink-0 font-mono text-ui-2xs text-muted-foreground tabular-nums">{items.length}</span>

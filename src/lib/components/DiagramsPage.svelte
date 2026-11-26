@@ -262,7 +262,7 @@
           {/if}
         {:else}
           {#each Object.entries(grouped) as [group, items]}
-            <p class="px-2 pb-1 pt-3 text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground first:pt-1">
+            <p class="px-2 pb-1 pt-3 text-ui-xs font-medium text-muted-foreground first:pt-1">
               {group}
             </p>
             {#each items as d (d.id)}
@@ -351,13 +351,13 @@
         <!-- Editor + preview -->
         <div class="flex min-h-0 flex-1 gap-0 overflow-hidden">
           <div class="flex w-1/2 min-w-0 flex-col border-r border-border/40 p-3">
-            <p class="mb-1.5 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Mermaid code</p>
+            <p class="mb-1.5 text-ui-xs font-medium text-muted-foreground">Mermaid code</p>
             <div class="field-surface flex min-h-0 flex-1 flex-col overflow-hidden bg-background/40">
               <CodeEditor bind:value={draftCode} ariaLabel="Mermaid code" placeholder="flowchart TD" />
             </div>
           </div>
           <div class="flex w-1/2 min-w-0 flex-col overflow-hidden">
-            <p class="shrink-0 px-3 pb-1.5 pt-3 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Preview</p>
+            <p class="shrink-0 px-3 pb-1.5 pt-3 text-ui-xs font-medium text-muted-foreground">Preview</p>
             <div class="min-h-0 flex-1 overflow-hidden">
               <MermaidViewer code={draftCode} class="h-full w-full" />
             </div>
