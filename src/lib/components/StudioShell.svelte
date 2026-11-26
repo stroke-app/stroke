@@ -3844,6 +3844,16 @@ let rowSearch = $state('')
       _tabPrev = id
       // Arriving on a tab starts it untouched, even if I worked in its editor before.
       _engagedEditor = null
+      // Recent tables on the new tab page are the ones I looked at last, not the
+      // ones I opened first: going back to a table already open moves it up too.
+      const t = id ? tabs.find((x) => x.id === id) : null
+      if (t?.kind === 'table' && t.state?.table && persistConnectionId) {
+        const top = recentTabs[0]
+        if (!top || top.table !== t.state.table || top.schema !== t.state.schema || Date.now() - top.openedAt > 60_000) {
+          pushRecentTab(persistConnectionId, { schema: t.state.schema, table: t.state.table, tableKind: t.state.tableKind ?? 'table' })
+          refreshRecentTabs()
+        }
+      }
     })
   })
   /** @param {-1 | 1} dir @returns {boolean} whether it moved */
