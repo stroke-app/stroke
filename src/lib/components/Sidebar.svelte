@@ -5,7 +5,7 @@
   import TablePeek, { clearPeekCache } from "./TablePeek.svelte";
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
-  import { engineId } from '$lib/connection-provider.js'
+  import { engineId, engineLabel } from '$lib/connection-provider.js'
   import { workspaces, activeWorkspaceId, inWorkspace } from '$lib/stores/workspaces.js'
 
   import { comboTitle } from '$lib/shortcuts.js'
@@ -4008,7 +4008,7 @@
     >
       <p class="mb-1.5 font-medium text-foreground">{connHover.c.name || connHover.c.database || 'Connection'}</p>
       <div class="flex flex-col gap-1 text-muted-foreground">
-        <span class="flex items-center gap-2"><DbIcon id={engineId(connHover.c)} class="size-3.5 shrink-0" /> {engineId(connHover.c)}</span>
+        <span class="flex items-center gap-2"><DbIcon id={engineId(connHover.c)} class="size-3.5 shrink-0" /> {engineLabel(engineId(connHover.c))}</span>
         {#if connHover.c.host || connHover.c.filePath}
           <!-- A file path wraps: on one line a DuckDB file in a deep folder
                stretched the card across most of the window. -->
