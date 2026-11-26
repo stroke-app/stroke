@@ -12,7 +12,8 @@
   import { Input } from '$lib/components/ui/input/index.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
   import SegmentedControl from './SegmentedControl.svelte'
-  import { isSignedIn, openManageAccount } from '$lib/stores/account.js'
+  import { isSignedIn, openManageAccount, signInWithToast } from '$lib/stores/account.js'
+  import EmptyState from './EmptyState.svelte'
   import { hasPaidPro, isTrialActive } from '$lib/stores/license.js'
   import {
     backupOverview, backupLoadError, runningJobId, refreshBackupJobs, saveBackupJob, patchBackupJob,
@@ -215,12 +216,13 @@
 </script>
 
 {#snippet message(/** @type {string} */ title, /** @type {string} */ body, /** @type {import('svelte').Snippet | undefined} */ action = undefined)}
-  <div class="flex flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
-    <CalendarClock class="size-5 shrink-0 text-muted-foreground" />
-    <p class="text-ui-sm font-medium text-foreground">{title}</p>
-    <p class="max-w-xs text-ui-xs leading-relaxed text-muted-foreground">{body}</p>
-    {#if action}<div class="mt-2">{@render action()}</div>{/if}
-  </div>
+  <EmptyState class="flex-1 justify-center" icon={CalendarClock} {title} description={body}>
+    {#if action}{@render action()}{/if}
+  </EmptyState>
+{/snippet}
+
+{#snippet signInButton()}
+  <Button size="sm" onclick={() => void signInWithToast()}>Sign in</Button>
 {/snippet}
 
 {#snippet getPro()}
@@ -232,7 +234,7 @@
 {/snippet}
 
 {#if !$isSignedIn}
-  {@render message('Sign in for scheduled backups', 'They come with Stroke Pro on your account.')}
+  {@render message('Sign in for scheduled backups', 'They come with Stroke Pro on your account.', signInButton)}
 {:else if !$hasPaidPro || overview?.pro === false}
   {@render message('Scheduled backups need Stroke Pro', $isTrialActive ? "The free trial doesn't include them. Up to 10 databases, to Stroke Cloud or your own S3." : 'Up to 10 databases, to Stroke Cloud or your own S3.', getPro)}
 {:else if !connection}
