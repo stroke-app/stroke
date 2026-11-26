@@ -388,6 +388,7 @@
     listIndexes,
     listEnums,
     listFunctions,
+    cancelQuery,
     pingConnection,
     listTriggers,
     listSequences,
@@ -10405,6 +10406,24 @@ let rowSearch = $state('')
    * first - retrying the same query against a closed pool just reprints the
    * same error.
    */
+  /**
+   * Stop waiting for a table load that is taking too long. A connection that
+   * dropped mid-query (Wi-Fi off, a VPN gone) leaves the read waiting on a dead
+   * socket for minutes, with a spinner and no way out. The pending load is let
+   * go (its result, if it ever comes, is dropped), the server is asked to cancel,
+   * and the error panel offers Retry, which reconnects first.
+   */
+  function stopRowLoad() {
+    const tabId = activeTabId
+    bumpLoadSeq(tabId)
+    void cancelQuery(undefined).catch(() => {})
+    const msg = 'Stopped waiting for the database. It may be unreachable.'
+    connectionLost = true
+    patchTableTab(tabId ?? '', { loadingRows: false, error: msg })
+    loadingRows = false
+    error = msg
+  }
+
   async function retryTableLoad() {
     if (retryingLoad) return
     const dropped = connectionErrorKind(error) === 'dropped' || connectionLost
@@ -12767,6 +12786,7 @@ let rowSearch = $state('')
             {rowSortMore}
             {rowFilters}
             loading={loadingRows}
+            onstopload={stopRowLoad}
             selectedCount={selected.size}
             hasPrimaryKey={primaryKey.length > 0}
             deleting={deletingRows}
@@ -12872,6 +12892,7 @@ let rowSearch = $state('')
                 onretrywindows={retryFailedWindows}
                 columnWidthsKey={gridData.columnWidthsKey}
                 loading={loadingRows}
+                onstopload={stopRowLoad}
                 {loadingMore}
                 {infiniteScroll}
                 endOfResults={gridData.endOfResults}

@@ -188,6 +188,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     columns = [],
     rows = [],
     loading = false,
+    /** Stop waiting for a load that is taking too long (the loader offers it after a few seconds). @type {(() => void) | null} */
+    onstopload = null,
     primaryKey = [],
     foreignKeys = [],
     saving = false,
@@ -9875,7 +9877,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
             <!-- Not click-through, so the Glass themes frost it like any other
                  covering surface instead of showing the old table through it. -->
             <div class="absolute inset-0 z-[3] flex flex-col bg-panel" role="status" aria-busy="true">
-              <TableLoading {embedded} />
+              <TableLoading {embedded} onstop={embedded ? null : onstopload} />
             </div>
           {:else if loading && columns.length === 0}
             <!-- Under the grace window: the last frame stays as it is. A quick

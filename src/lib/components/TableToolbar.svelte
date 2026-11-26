@@ -84,6 +84,8 @@
     /** The database's complaint about the applied SQL condition, if any. */
     sqlFilterError = "",
     onrefresh = () => {},
+    /** While rows load, the refresh button stops the load instead. @type {(() => void) | null} */
+    onstopload = null,
     /** Auto-refresh interval for THIS tab, in ms (0 = off). */
     autoRefreshMs = 0,
     onautorefreshchange = /** @type {(ms: number) => void} */ (() => {}),
@@ -1556,13 +1558,16 @@
          Armed state is carried by the caret's colour rather than a badge - there
          is no room for a dot at this size, and the tooltip states the interval. -->
     <div class="flex shrink-0 items-stretch">
+      <!-- While a load runs, the spinning icon is the way out of it: a dropped
+           connection left a refresh waiting minutes, with every control greyed
+           out and nothing to press. -->
       <button
         type="button"
         class={cn(iconBtn, "w-6 rounded-r-none")}
-        disabled={loading}
-        onclick={onrefresh}
-        title={autoRefreshMs > 0 ? `Refresh data (${comboTitle('Mod+R')}) · auto every ${autoRefreshLabel}` : `Refresh data (${comboTitle('Mod+R')})`}
-        aria-label="Refresh data"
+        disabled={loading && !onstopload}
+        onclick={() => (loading && onstopload ? onstopload() : onrefresh())}
+        title={loading && onstopload ? 'Stop loading' : autoRefreshMs > 0 ? `Refresh data (${comboTitle('Mod+R')}) · auto every ${autoRefreshLabel}` : `Refresh data (${comboTitle('Mod+R')})`}
+        aria-label={loading && onstopload ? 'Stop loading' : 'Refresh data'}
       >
         <Icon name="refresh-cw" class={cn("size-3.5", loading && "animate-spin")} />
       </button>
