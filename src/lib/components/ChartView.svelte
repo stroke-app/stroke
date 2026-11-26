@@ -42,6 +42,8 @@
     connectionId = '',
     initialChartType = 'bar',
     oncharttypechange = undefined,
+    /** The row count in the chart's own bar. Off where the bar above already says it (SQL results). */
+    showCount = true,
   } = $props()
 
   // ── Chart type ────────────────────────────────────────────────────────────
@@ -532,7 +534,9 @@
 
       <!-- Right actions -->
       <div class="ml-auto flex items-center gap-0.5">
-        <span class="mr-1.5 tabular-nums font-mono text-ui-2xs text-muted-foreground">{loadedRows.length.toLocaleString()}{partial ? ` of ${rows.length.toLocaleString()} loaded` : ' rows'}</span>
+        {#if showCount || partial}
+          <span class="mr-1.5 tabular-nums font-mono text-ui-2xs text-muted-foreground">{loadedRows.length.toLocaleString()}{partial ? ` of ${rows.length.toLocaleString()} loaded` : ' rows'}</span>
+        {/if}
         <!-- Save opens over the chart, not in a bar under the toolbar: that bar
              pushed the whole chart down while you typed a name. -->
         <Popover bind:open={saveOpen} onOpenChange={onSaveOpenChange}>

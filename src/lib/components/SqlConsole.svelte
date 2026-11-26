@@ -1853,6 +1853,7 @@
                 {sql}
                 initialChartType={chartType}
                 oncharttypechange={(t) => (chartType = t)}
+                showCount={false}
               />
             {:else}
               <!-- A size container: in a narrow pane (results beside the editor)
