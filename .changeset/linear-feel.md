@@ -29,7 +29,7 @@
 - The theme list in the command menu opened at the top with the current theme out of sight, and every dropdown opened on its first row. Both open on the current choice now, scrolled into view.
 
 ### Changes
-- Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, diagram or schema snapshot asks nothing and offers Undo for 8 seconds instead.
+- Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, diagram or schema snapshot asks nothing and offers Undo for 8 seconds instead.
 - Every dialog's main button is drawn in the accent colour.
 - Toolbars group their buttons with space instead of thin dividers, and empty-state headings are larger and lighter.
 - Shortcuts print the same way in every menu row, radio and checkbox rows included.

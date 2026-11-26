@@ -1607,11 +1607,32 @@
     void loadRows()
   }
 
-  /** @param {string} id */
+  /** No confirm: it goes at once and the toast offers Undo. @param {string} id */
   function deleteSavedView(id) {
+    const index = savedTableViews.findIndex((v) => v.id === id)
+    if (index < 0) return
+    const view = savedTableViews[index]
+    const scope = { conn: persistConnectionId, schema: activeSchema, table: activeTable }
     savedTableViews = savedTableViews.filter((v) => v.id !== id)
     if (activeTableViewId === id) activeTableViewId = null
     if (activeTable) saveTableViews(persistConnectionId, activeSchema, activeTable, savedTableViews)
+    if (!scope.table) return
+    toast.message('Saved view deleted', {
+      description: view.name,
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const here = persistConnectionId === scope.conn && activeSchema === scope.schema && activeTable === scope.table
+          // Moved on to another table since: put it back in that table's list.
+          const list = here ? savedTableViews : loadTableViews(scope.conn, scope.schema, scope.table)
+          if (list.some((v) => v.id === id)) return
+          const next = [...list.slice(0, index), view, ...list.slice(index)]
+          if (here) savedTableViews = next
+          saveTableViews(scope.conn, scope.schema, scope.table, next)
+        },
+      },
+    })
   }
 
   /**
