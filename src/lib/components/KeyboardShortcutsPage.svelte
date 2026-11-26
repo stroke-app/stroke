@@ -176,9 +176,7 @@
     <div class="min-h-0 flex-1 overflow-y-auto">
       {#if displayGroups.length === 0}
         <div class="flex flex-col items-center gap-3 py-20 text-center">
-          <div class="flex size-10 items-center justify-center rounded-full border border-border/30 bg-muted/30">
-            <Search class="size-4 shrink-0 text-muted-foreground" />
-          </div>
+          <Search class="size-6 shrink-0 text-muted-foreground" aria-hidden="true" />
           <p class="text-ui-sm text-muted-foreground">No shortcuts match <span class="text-foreground/60">"{query}"</span></p>
         </div>
       {:else}

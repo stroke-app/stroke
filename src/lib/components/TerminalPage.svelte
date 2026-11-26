@@ -1877,10 +1877,8 @@
       <div class="absolute inset-0 flex items-center justify-center bg-panel p-6">
         <div class="flex w-full max-w-md flex-col items-center gap-3 text-center">
           {#if phase === 'missing'}
-            <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-              <PackageSearch class="size-5 shrink-0 text-muted-foreground" />
-            </div>
-            <p class="text-ui-lg font-semibold text-foreground">{client?.name} is not installed</p>
+            <PackageSearch class="size-8 shrink-0 text-muted-foreground" strokeWidth={1.25} aria-hidden="true" />
+            <p class="text-ui-xl font-normal tracking-tight text-foreground">{client?.name} is not installed</p>
             <p class="text-ui-sm text-muted-foreground">
               This tab runs the real {client?.name}, so every command works the way it does in a terminal. Install it, then check again, or use the built-in prompt for now.
             </p>
@@ -1914,20 +1912,16 @@
               Check again
             </Button>
           {:else if phase === 'failed'}
-            <div class="flex size-10 items-center justify-center rounded-lg border border-destructive/30 bg-destructive/10">
-              <CircleAlert class="size-5 shrink-0 text-destructive" />
-            </div>
-            <p class="text-ui-lg font-semibold text-foreground">Could not start {client?.name || 'the terminal'}</p>
+            <CircleAlert class="size-8 shrink-0 text-destructive" strokeWidth={1.25} aria-hidden="true" />
+            <p class="text-ui-xl font-normal tracking-tight text-foreground">Could not start {client?.name || 'the terminal'}</p>
             <p class="w-full rounded-lg border border-border bg-muted/30 px-3 py-2 text-left font-mono text-ui-xs break-words text-muted-foreground select-text">{failure}</p>
             <Button variant="outline" size="sm" onclick={() => void start()}>
               <RotateCw class="size-3.5 shrink-0" />
               Try again
             </Button>
           {:else}
-            <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-              <Ban class="size-5 shrink-0 text-muted-foreground" />
-            </div>
-            <p class="text-ui-lg font-semibold text-foreground">No shell for this connection</p>
+            <Ban class="size-8 shrink-0 text-muted-foreground" strokeWidth={1.25} aria-hidden="true" />
+            <p class="text-ui-xl font-normal tracking-tight text-foreground">No shell for this connection</p>
             <p class="text-ui-sm text-muted-foreground">{client?.hint}</p>
           {/if}
         </div>

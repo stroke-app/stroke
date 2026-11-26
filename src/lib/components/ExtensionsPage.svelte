@@ -413,9 +413,7 @@
     <div class="mx-auto w-full max-w-[72rem] px-8 py-8">
       <!-- Header: what this page is, how many are on, and a way to find one. -->
       <div class="flex items-start gap-3">
-        <span class="grid size-9 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted/40 text-foreground/80">
-          <Blocks class="size-4 shrink-0" />
-        </span>
+        <Blocks class="mt-1.5 size-5 shrink-0 text-muted-foreground" aria-hidden="true" />
         <div class="min-w-0 flex-1">
           <h1 class="text-ui-xl font-semibold tracking-tight text-foreground">Extensions</h1>
           <p class="mt-0.5 text-ui-sm text-muted-foreground text-pretty">

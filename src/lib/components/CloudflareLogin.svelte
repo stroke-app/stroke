@@ -595,13 +595,11 @@
             <span class="loading-reveal min-w-0 flex-1 truncate">Loading databases…</span>
           </div>
         {:else}
-          <!-- The same shape as the sidebar's empty tabs: a mark in a well, a title, one
+          <!-- The same shape as the sidebar's empty tabs: a mark, a title, one
          line on what to do, one button. Generous padding, because this block is
          the whole content of the panel when it shows. -->
           <div class="flex flex-col items-center gap-4 rounded-lg border border-dashed border-border/60 px-6 py-10 text-center">
-            <div class="flex size-10 items-center justify-center rounded-lg border border-border/60 bg-muted/30">
-              <DbIcon id={"d1"} class="size-5 text-muted-foreground" />
-            </div>
+            <DbIcon id={"d1"} class="size-7 text-muted-foreground" />
             <div class="flex max-w-[36ch] flex-col gap-1">
               <p class="text-ui-sm font-medium text-foreground">No databases yet</p>
               <p class="text-pretty text-ui-xs leading-relaxed text-muted-foreground">This account has no D1 databases. Create one here and Stroke connects to it.</p>
