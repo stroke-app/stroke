@@ -131,8 +131,9 @@
     if (el === currentEl) return
     if (currentEl) hide()
     if (!el || el.hasAttribute('data-no-tip')) return
-    // Its menu or popover is open: the tip would sit on top of it.
-    if (isOpenTrigger(el)) return
+    // Its menu or popover is open: the tip would sit on top of it. Still take
+    // the title, or the native tooltip shows in our place.
+    if (isOpenTrigger(el)) { readTip(el); currentEl = el; return }
     // `data-tip-overflow`: the tip only repeats a label, so show it only when
     // that label is cut off (its `.truncate` text overflows).
     if (el.hasAttribute('data-tip-overflow')) {
@@ -165,7 +166,11 @@
   }
 
   function onPointerDown() {
-    hide()
+    // Hide the tip but keep the title stashed while the pointer stays on the
+    // element: hide() put it back, and the browser's own tooltip then showed
+    // over the menu the click had just opened. Leaving the element restores it.
+    clearTimeout(showTimer)
+    shown = false
     cooledAt = 0
   }
 
