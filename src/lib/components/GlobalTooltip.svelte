@@ -13,12 +13,24 @@
 <script>
   import { tick } from 'svelte'
   import { cn } from '$lib/utils.js'
+  import { splitTipShortcut } from '$lib/tooltip-shortcut.js'
+  import Kbd from './Kbd.svelte'
 
   const DELAY = 450 // ms before showing (a touch slower so it doesn't flash on pass-through)
+  /**
+   * Once one tooltip has shown, the next one within this window shows at once.
+   * Running the pointer along a toolbar to read each button used to pay the
+   * full 450ms on every button; this is the skip-delay every native toolbar has.
+   */
+  const WARM_MS = 400
+  /** When the last tooltip went away; a show before WARM_MS after it skips DELAY. */
+  let cooledAt = 0
   const GAP = 6 // distance between trigger and tooltip
   const EDGE = 8 // min gap from the viewport edge
 
   let text = $state('')
+  /** The label and the shortcut caps split out of `text` (Refresh, [Ctrl, R]). */
+  const parts = $derived(splitTipShortcut(text))
   let shown = $state(false)
   let top = $state(0)
   let left = $state(0)
@@ -66,6 +78,7 @@
     clearTimeout(showTimer)
     restoreTitle(currentEl)
     currentEl = null
+    if (shown) cooledAt = performance.now()
     shown = false
   }
 
@@ -125,9 +138,10 @@
 
     currentEl = el
     clearTimeout(showTimer)
+    const warm = performance.now() - cooledAt < WARM_MS
     showTimer = setTimeout(() => {
       if (currentEl === el) show(el, value)
-    }, DELAY)
+    }, warm ? 0 : DELAY)
   }
 
   function onPointerOut(/** @type {PointerEvent} */ e) {
@@ -138,12 +152,18 @@
     hide()
   }
 
+  function onPointerDown() {
+    hide()
+    cooledAt = 0
+  }
+
   $effect(() => {
     // passive: hide() never preventDefaults, so scrolling must not wait on us.
     const opts = { capture: true, passive: true }
     document.addEventListener('pointerover', onPointerOver, true)
     document.addEventListener('pointerout', onPointerOut, true)
-    document.addEventListener('pointerdown', hide, true)
+    // A click is a decision: the next tooltip waits the full delay again.
+    document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('wheel', hide, opts)
     document.addEventListener('scroll', hide, opts)
     window.addEventListener('blur', hide)
@@ -152,7 +172,7 @@
       restoreTitle(currentEl)
       document.removeEventListener('pointerover', onPointerOver, true)
       document.removeEventListener('pointerout', onPointerOut, true)
-      document.removeEventListener('pointerdown', hide, true)
+      document.removeEventListener('pointerdown', onPointerDown, true)
       document.removeEventListener('wheel', hide, opts)
       document.removeEventListener('scroll', hide, opts)
       window.removeEventListener('blur', hide)
@@ -174,5 +194,8 @@
   style="top:{top}px; left:{left}px;"
   style:visibility={text ? 'visible' : 'hidden'}
 >
-  <span class="whitespace-pre-line break-words">{text}</span>
+  <span class="flex items-center gap-2">
+    <span class="min-w-0 whitespace-pre-line break-words">{parts.label}</span>
+    {#if parts.keys}<Kbd keys={parts.keys} class="-my-px" />{/if}
+  </span>
 </div>
