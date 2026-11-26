@@ -118,10 +118,11 @@
   /**
    * Inside a trigger whose menu is showing (bits-ui marks it expanded): the
    * trigger's own tip, or one on an icon inside it, would sit on the menu.
-   * Buttons and popup triggers only: an expanded tree row is not a menu.
+   * Popup triggers only (bits-ui sets aria-haspopup on them): a disclosure
+   * toggle such as "Hide the diagram list" is expanded too, and keeps its tip.
    */
   function isOpenTrigger(/** @type {Element} */ el) {
-    return !!el.closest('button[aria-expanded="true"], [aria-haspopup][aria-expanded="true"]')
+    return !!el.closest('[aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]')
   }
 
   function onPointerOver(/** @type {PointerEvent} */ e) {
