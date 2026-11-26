@@ -283,7 +283,7 @@ export default {
   "tb.limit": "Limit",
   "tb.offset": "Offset (skip rows)",
   "tb.view": "View",
-  "tb.findReplace": "Find and replace…",
+  "tb.findReplace": "Find & replace…",
   "tb.virtualColumns": "Virtual columns…",
   "tb.openInSql": "Open in SQL editor",
   "tb.infiniteScroll": "Infinite scroll",

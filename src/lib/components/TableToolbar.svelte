@@ -1754,7 +1754,7 @@
             {#if findReplaceEnabled}
               <DropdownMenu.Item disabled={total === 0 || readonly || !hasPrimaryKey} onSelect={onfindreplace}>
                 <Icon name="replace" class="size-3.5 shrink-0" />
-                <span data-slot="menu-label">{$tx('tb.findReplace', 'Find and replace…')}</span>
+                <span data-slot="menu-label">{$tx('tb.findReplace', 'Find & replace…')}</span>
                 <DropdownMenu.Shortcut command={IS_MAC ? "table.findReplaceAlt" : "table.findReplace"} />
               </DropdownMenu.Item>
             {/if}
