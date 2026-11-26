@@ -3121,7 +3121,7 @@
                       data-roving
                       data-sidebar-current={activeTable === table.name ? '' : undefined}
                       class={cn(
-                        "group grid h-full w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                        "group grid h-full w-full grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[minmax(0,1fr)] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors",
                         isSelected
                           ? "bg-primary/10 text-foreground"
                           : activeTable === table.name
@@ -3822,7 +3822,7 @@
 {#snippet hl(/** @type {string} */ text)}
   <!-- The filter's match inside a name, marked the way the tree marks it. -->
   {@const at = lf ? String(text).toLowerCase().indexOf(lf) : -1}
-  {#if at >= 0}{String(text).slice(0, at)}<mark class="rounded-[2px] bg-primary/25 text-inherit">{String(text).slice(at, at + lf.length)}</mark>{String(text).slice(at + lf.length)}{:else}{text}{/if}
+  {#if at >= 0}{String(text).slice(0, at)}<mark class="search-hit">{String(text).slice(at, at + lf.length)}</mark>{String(text).slice(at + lf.length)}{:else}{text}{/if}
 {/snippet}
 
 <ConfirmDialog

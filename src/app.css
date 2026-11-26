@@ -301,6 +301,16 @@ textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
   :root { --field-focus-edge: color-mix(in oklch, var(--ring) 65%, var(--field-border)); }
 }
 
+/* A filter's match inside a sidebar name (tables, views, objects, the tree).
+   Weight and full-strength text, no fill: `bg-primary/25` was a tinted chip on
+   colour themes but a flat grey block on the neutral ones (Mono's primary is
+   near-white), the full line tall and darker than the selected row behind it. */
+mark.search-hit {
+  background: none;
+  color: var(--foreground);
+  font-weight: 600;
+}
+
 /* The search row at the top of a dropdown: borderless, with the hairline under
    it turning accent while you type in it. */
 [data-slot="menu-search"]:not(.search-shell):not(:has(.search-box)) {
@@ -699,8 +709,11 @@ html[data-os="linux"]   { --window-radius: 8px; }
      Inset by 2px: the row sits flush against the scroller's edge, and an
      outward ring would be clipped there. */
   [data-kbd-nav] [data-roving]:focus {
-    outline: 2px solid var(--ring);
-    outline-offset: -2px;
+    /* The same 1px edge a focused field wears (--field-focus-edge), so the
+       search box and the row the arrows land on read as one focus style. A
+       2px full-strength ring was twice as heavy as the field above it. */
+    outline: 1px solid var(--field-focus-edge);
+    outline-offset: -1px;
   }
 
   /* Portaled overlays - these render outside #app so must explicitly inherit

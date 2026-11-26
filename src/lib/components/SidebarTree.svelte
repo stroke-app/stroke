@@ -1398,7 +1398,7 @@
     {/if}
     <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
       <span class={cn('min-w-0 shrink truncate text-ui-sm leading-4 -my-1 py-1', (n.kind === 'connection' && n.data?.live) || (n.kind === 'database' && n.data?.current) ? 'font-medium text-foreground' : '')}>
-        {#if hit}{hit[0]}<mark class="rounded-[2px] bg-primary/25 text-inherit">{hit[1]}</mark>{hit[2]}{:else}{n.label}{/if}
+        {#if hit}{hit[0]}<mark class="search-hit">{hit[1]}</mark>{hit[2]}{:else}{n.label}{/if}
       </span>
       {#if n.meta}
         <span class="min-w-0 shrink-[2] truncate text-ui-2xs text-muted-foreground">{n.meta}</span>
