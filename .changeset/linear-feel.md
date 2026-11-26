@@ -16,6 +16,7 @@
 - **Looser command search** - Type letters with some left out: "stng" finds Settings. The pages you picked last sit at the top of an empty command menu.
 - **Table row keys** - On a focused sidebar table, Space peeks at its columns, P pins it, X selects it and Ctrl+C / ⌘C copies its name.
 - **Recent tables** - The new tab page lists the tables you opened last.
+- **Searchable tab list** - The menu at the end of the tab bar has a search field and opens on the tab in front.
 
 ### Bug Fixes
 - Clear all history in the AI chat deleted every conversation without asking. It asks first now, as do key changes in the document and DynamoDB editors.
