@@ -11373,7 +11373,7 @@ let rowSearch = $state('')
             showProGate = false
             openLicenseTab()
           }}
-          class="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-foreground px-4 text-ui-xs font-medium text-background transition-colors hover:bg-foreground/90"
+          class="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 text-ui-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80"
         >
           <KeyRound class="size-3" />
           Activate Pro

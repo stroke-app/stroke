@@ -849,7 +849,7 @@
     {#if newColumn}
       <span class="text-ui-3xs text-success">New column, fill in details then save</span>
       <button type="button" disabled={confirmLoading}
-        class="ml-auto inline-flex h-6 items-center gap-1 rounded-md bg-foreground px-2.5 text-ui-2xs font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
+        class="ml-auto inline-flex h-6 items-center gap-1 rounded-md bg-primary px-2.5 text-ui-2xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80 disabled:opacity-40"
         onclick={saveNewColumn}>
         {#if confirmLoading}<Loader class="mr-0.5 size-3 shrink-0 animate-spin" />{/if}
         Save column
@@ -861,7 +861,7 @@
       {#if hasPending}
         <span class="text-ui-3xs text-warning">{pendingCount} pending {pendingCount === 1 ? 'change' : 'changes'}</span>
         <button type="button" disabled={confirmLoading}
-          class="inline-flex h-6 items-center gap-1 rounded-md bg-foreground px-2.5 text-ui-2xs font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
+          class="inline-flex h-6 items-center gap-1 rounded-md bg-primary px-2.5 text-ui-2xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80 disabled:opacity-40"
           onclick={applyPendingDdl}>
           {#if confirmLoading}<Loader class="size-3 shrink-0 animate-spin" />{:else}<Check class="size-3 shrink-0" />{/if}
           Apply {pendingCount}

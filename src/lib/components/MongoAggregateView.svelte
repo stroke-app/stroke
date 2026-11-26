@@ -283,7 +283,7 @@
     </DropdownMenu.Root>
     <button
       type="button"
-      class="ml-1 inline-flex h-7 items-center gap-1.5 rounded-full bg-foreground px-3.5 text-ui-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-40"
+      class="ml-1 inline-flex h-7 items-center gap-1.5 rounded-full bg-primary px-3.5 text-ui-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80 disabled:opacity-40"
       onclick={() => void runFull()}
       disabled={running || !stages.some((s) => s.on)}
       title="Run the whole pipeline (first {RUN_CAP.toLocaleString()} results)"

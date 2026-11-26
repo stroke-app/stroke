@@ -877,7 +877,7 @@
           <button
             onclick={doCapture}
             disabled={captureLoadingSchemas || captureLoadingDbs || (!connectionId && !captureConn)}
-            class="flex items-center gap-1.5 rounded-lg bg-foreground px-4 py-1.5 text-ui-xs font-medium text-background hover:opacity-85 disabled:opacity-30"
+            class="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-ui-xs font-medium text-primary-foreground hover:bg-primary/90 active:bg-primary/80 disabled:opacity-30"
           >
             <Camera class="size-3 shrink-0" />
             Capture

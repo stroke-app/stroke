@@ -181,7 +181,7 @@
       </div>
       <button
         type="button"
-        class="flex items-center gap-2 rounded-md bg-foreground px-4 py-1.5 text-ui-sm font-medium text-background transition-colors hover:bg-foreground/80"
+        class="flex items-center gap-2 rounded-md bg-primary px-4 py-1.5 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80"
         onclick={startLogin}
       >
         <GitBranch class="size-3.5 shrink-0" />
