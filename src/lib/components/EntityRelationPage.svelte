@@ -2360,6 +2360,14 @@
   <!-- ── Canvas + docked inspector ─────────────────────────────────────────── -->
   <div class="flex min-h-0 flex-1">
   <div class="relative min-h-0 min-w-0 flex-1">
+    <!-- Tables known but no card placed yet (the first layout, or a reload):
+         the canvas sat empty for seconds with nothing saying work was going on. -->
+    {#if (loading || layingOut) && nodes.length === 0 && tableMeta.size > 0 && !error}
+      <div class="loading-reveal pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" role="status">
+        <Loader class="size-6 shrink-0 animate-spin text-muted-foreground" />
+        <p class="font-mono text-ui-xs text-muted-foreground">{layingOut ? 'Laying out the diagram…' : 'Loading schema structure…'}</p>
+      </div>
+    {/if}
     {#if loading && tableMeta.size === 0}
       <div class="loading-reveal absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background">
         <Loader class="size-6 shrink-0 animate-spin text-muted-foreground" />
