@@ -138,6 +138,8 @@
     onsaveinplace = async (sql) => false,
     /** Name of the saved query this tab belongs to, or ''. */
     savedQueryName = '',
+    /** A name I gave this editor tab (renamed from its default), or ''. */
+    tabName = '',
     /** Called when user clicks "Fix with AI" - parent opens sidebar and sends the message */
     /** @param {{ error: string, sql: string }} detail */
     onfixwithai = /** @type {((detail: { error: string, sql: string }) => void) | undefined} */ (undefined),
@@ -880,7 +882,8 @@
   /** Save as a new query: the name dialog. Ctrl/Cmd+Shift+S, Shift+click Save. */
   function openSaveDialog() {
     if (!sql.trim()) return;
-    saveQueryName = savedQueryName ? `${savedQueryName} copy` : queryTitle(sql);
+    // A tab I renamed already says what the query is: that, not its first line.
+    saveQueryName = savedQueryName ? `${savedQueryName} copy` : tabName || queryTitle(sql);
     saveDialogOpen = true;
   }
 

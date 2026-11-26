@@ -3928,7 +3928,7 @@ let rowSearch = $state('')
 
   /** A query editor tab's own name (TabBar). @param {string} id @param {string} title */
   function renameTab(id, title) {
-    tabs = tabs.map((t) => (t.id === id ? { ...t, title } : t))
+    tabs = tabs.map((t) => (t.id === id ? { ...t, title, renamed: true } : t))
   }
 
   // Reopen the most recently closed tab (browser-style).
@@ -5252,7 +5252,8 @@ let rowSearch = $state('')
     const kept = loadSqlTabs(cid)
     if (!kept.length) return []
     const added = kept.map((k) => {
-      const tab = createSqlTab(k.sql, k.title)
+      const tab = /** @type {any} */ (createSqlTab(k.sql, k.title))
+      if (/** @type {any} */ (k).renamed) tab.renamed = true
       return k.savedQueryId ? { ...tab, savedQueryId: k.savedQueryId } : tab
     })
     tabs = [...tabs, ...added]
@@ -12625,6 +12626,7 @@ let rowSearch = $state('')
             onsavequery={handleSaveQuery}
             onsaveinplace={handleSaveInPlace}
             savedQueryName={activeSavedQuery?.name ?? ''}
+            tabName={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).renamed ? activeTab.title : ''}
             onfixwithai={handleFixWithAi}
             onrevertrun={revertSqlRun}
             onprorequired={() => (showProGate = true)}
