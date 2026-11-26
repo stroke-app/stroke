@@ -75,6 +75,17 @@ export function toCamel(name) {
   return first + parts.slice(1).map((p) => p[0].toUpperCase() + p.slice(1)).join('')
 }
 
+/**
+ * The Drizzle const for a Postgres enum: `order_status` → `orderStatusEnum`.
+ * A type already named for what it is (`order_status_enum`, the usual
+ * TypeORM name) stays `orderStatusEnum`, not `orderStatusEnumEnum`.
+ * @param {string} name
+ */
+export function enumConstName(name) {
+  const base = toCamel(name)
+  return /Enum$/.test(base) ? base : `${base}Enum`
+}
+
 /** `user_profiles` → `UserProfiles`. */
 export function toPascal(name) {
   const camel = toCamel(name)
@@ -548,7 +559,7 @@ function drizzleColumn(c, model) {
 
   // The enum constant is declared in this same file, so it needs no import.
   if (c.enumName && model.family === 'postgres') {
-    return { expr: `${toCamel(c.enumName)}Enum(${name})`, helpers: [] }
+    return { expr: `${enumConstName(c.enumName)}(${name})`, helpers: [] }
   }
 
   if (model.family === 'sqlite') {
@@ -664,7 +675,7 @@ export function renderDrizzleSchema(model) {
   if (model.family === 'postgres' && model.enums.length) {
     helpers.add('pgEnum')
     for (const e of model.enums) {
-      body.push(`export const ${toCamel(e.name)}Enum = pgEnum(${quote(e.name)}, [${e.values.map(quote).join(', ')}])`)
+      body.push(`export const ${enumConstName(e.name)} = pgEnum(${quote(e.name)}, [${e.values.map(quote).join(', ')}])`)
     }
     body.push('')
   }
