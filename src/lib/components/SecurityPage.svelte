@@ -500,13 +500,18 @@
               >
                 <td class="px-3 py-2">
                   <div class="flex items-center gap-2">
+                    <!-- The initials repeat the name beside them: decoration, so
+                         hidden from screen readers. The tint carries the kind;
+                         primary-coloured letters on the primary tint measured
+                         3.86:1 on dark, so the letters are the text colour. -->
                     <span
+                      aria-hidden="true"
                       class={cn(
                         "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-ui-3xs font-semibold uppercase",
                         isSuper
                           ? "bg-destructive/10 text-destructive"
                           : isLogin
-                            ? "bg-primary/10 text-primary"
+                            ? "bg-primary/15 text-foreground"
                             : "bg-muted text-muted-foreground",
                       )}>{String(role.rolname).slice(0, 2)}</span
                     >
