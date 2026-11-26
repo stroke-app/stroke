@@ -27,7 +27,7 @@
 - Each snapshot on the Schema timeline shows its table count again.
 
 ### Changes
-- Deleting a saved connection, dashboard, dashboard card, saved chart, diagram or schema snapshot asks nothing and offers Undo for 8 seconds instead.
+- Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, diagram or schema snapshot asks nothing and offers Undo for 8 seconds instead.
 - Every dialog's main button is drawn in the accent colour.
 - On a new install, notifications appear in the bottom right corner, clear of the tab bar. Settings, Appearance moves them.
 - Dialogs in dark themes stand a step lighter than the page behind them.

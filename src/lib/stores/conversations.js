@@ -67,10 +67,21 @@ export async function updateConversation(id, patch) {
   await db.put(STORE, { ...existing, ...patch, updatedAt: Date.now() })
 }
 
-/** @param {string} id */
+/**
+ * @param {string} id
+ * @returns {Promise<Conversation | undefined>} what was deleted, for an Undo
+ */
 export async function deleteConversation(id) {
   const db = await getDb()
+  const gone = await db.get(STORE, id)
   await db.delete(STORE, id)
+  return gone
+}
+
+/** Put a deleted conversation back as it was, for an Undo. @param {Conversation} conv */
+export async function restoreConversation(conv) {
+  const db = await getDb()
+  await db.put(STORE, conv)
 }
 
 /**

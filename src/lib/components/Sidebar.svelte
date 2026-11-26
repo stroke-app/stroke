@@ -38,14 +38,14 @@
   import RedisSidebarNav from "./RedisSidebarNav.svelte";
 
   import { Button } from '$lib/components/ui/button/index.js'
-  import { cn } from "$lib/utils.js";
+  import { cn, errorText } from "$lib/utils.js";
   import { CRASH_WORD, isMagic, armCrash } from '$lib/games/easter-eggs.js'
   import { flushSync, tick } from "svelte";
   import { t, tx } from "$lib/i18n.js";
   import { visibleRowCount, soleMatch } from "$lib/sidebar-filter.js";
   import { splitSchemas, isSystemSchema } from "$lib/system-schemas.js";
   import { aiChatList, requestChat } from "$lib/stores/ai-chat-bridge.js";
-  import { listConversations, deleteConversation, updateConversation } from "$lib/stores/conversations.js";
+  import { listConversations, deleteConversation, restoreConversation, updateConversation } from "$lib/stores/conversations.js";
   import { formatTableRowCount, compareCreated } from "$lib/table-list.js";
   import {
     clampNavSidebarWidth,
@@ -1768,14 +1768,8 @@
   /** @type {string | null} */
   let renamingChatId = $state(null)
   let renamingChatTitle = $state('')
-  /** The chat whose delete button has been pressed once (it asks again). */
-  /** @type {string | null} */
-  let confirmDeleteChatId = $state(null)
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  let confirmDeleteTimer
   /** @param {{ id: string, title: string }} chat */
   function startChatRename(chat) {
-    confirmDeleteChatId = null
     renamingChatId = chat.id
     renamingChatTitle = chat.title
   }
@@ -1790,20 +1784,31 @@
     storedChats = storedChats.map((c) => (c.id === id ? { ...c, title } : c))
     await updateConversation(id, { title }).catch(() => { storedChats = before })
   }
-  /** @param {string} id */
+  /**
+   * No confirm: the chat goes at once and the toast offers Undo. With the AI
+   * tab mounted it owns the list and raises that toast itself.
+   * @param {string} id
+   */
   async function deleteChat(id) {
-    if (confirmDeleteChatId !== id) {
-      confirmDeleteChatId = id
-      clearTimeout(confirmDeleteTimer)
-      confirmDeleteTimer = setTimeout(() => (confirmDeleteChatId = null), 3000)
-      return
-    }
-    confirmDeleteChatId = null
-    clearTimeout(confirmDeleteTimer)
     if (liveChats) return requestChat({ type: 'delete', id })
     const before = storedChats
+    const index = before.findIndex((c) => c.id === id)
     storedChats = storedChats.filter((c) => c.id !== id)
-    await deleteConversation(id).catch(() => { storedChats = before })
+    let gone
+    try { gone = await deleteConversation(id) } catch { storedChats = before; return }
+    if (!gone || index < 0) return
+    const row = before[index]
+    toast.message('Chat deleted', {
+      description: row.title,
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: async () => {
+          try { await restoreConversation(gone) } catch (err) { toast.error(`Couldn't undo: ${errorText(err)}`); return }
+          if (!storedChats.some((c) => c.id === id)) storedChats = [...storedChats.slice(0, index), row, ...storedChats.slice(index)]
+        },
+      },
+    })
   }
   /** Focus and select a field as it mounts. @param {HTMLInputElement} el */
   function selectOnMount(el) {
@@ -3607,7 +3612,6 @@
           {#each chatsShown as chat (chat.id)}
             {@const open = aiTabActive && liveChats && $aiChatList.activeId === chat.id}
             {@const busy = liveChats && chatBusy.includes(chat.id)}
-            {@const confirming = confirmDeleteChatId === chat.id}
             <!-- One line per chat: the title, then the time or "Working". On
                  hover (or focus) the time gives way to rename and delete; where
                  it worked (database · schema) is in the tooltip. -->
@@ -3645,12 +3649,11 @@
                   {#if busy}
                     <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-primary" aria-label="Working" />
                   {:else}
-                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground', !confirming && 'group-hover/chat:invisible group-focus-within/chat:invisible')}>{confirming ? '' : ago(chat.updatedAt)}</span>
+                    <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground group-hover/chat:invisible group-focus-within/chat:invisible">{ago(chat.updatedAt)}</span>
                   {/if}
                 </button>
                 {#if !busy}
-                  <div class={cn('absolute inset-y-0 right-1 flex items-center gap-0.5', confirming ? 'flex' : 'hidden group-hover/chat:flex group-focus-within/chat:flex')}>
-                    {#if !confirming}
+                  <div class="absolute inset-y-0 right-1 hidden items-center gap-0.5 group-hover/chat:flex group-focus-within/chat:flex">
                       <button
                         type="button"
                         class="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.97]"
@@ -3660,19 +3663,14 @@
                       >
                         <Icon name="pencil" class="size-3 shrink-0" />
                       </button>
-                    {/if}
                     <button
                       type="button"
-                      class={cn(
-                        'inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-sm transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97]',
-                        confirming ? 'bg-destructive/12 px-1.5 text-ui-2xs font-medium text-destructive hover:bg-destructive/20' : 'w-5 text-muted-foreground hover:bg-sidebar-accent hover:text-destructive',
-                      )}
-                      title={confirming ? 'Click again to delete' : 'Delete'}
-                      aria-label={confirming ? 'Confirm delete chat' : 'Delete chat'}
+                      class="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-destructive active:scale-[0.97]"
+                      title="Delete"
+                      aria-label="Delete chat"
                       onclick={() => void deleteChat(chat.id)}
                     >
                       <Icon name="trash-2" class="size-3 shrink-0" />
-                      {#if confirming}Delete{/if}
                     </button>
                   </div>
                 {/if}
@@ -3686,7 +3684,7 @@
                   <Icon name="pencil" class="size-3.5 shrink-0" />Rename
                 </ContextMenu.Item>
                 <ContextMenu.Separator />
-                <ContextMenu.Item variant="destructive" onSelect={() => { confirmDeleteChatId = chat.id; void deleteChat(chat.id) }}>
+                <ContextMenu.Item variant="destructive" onSelect={() => void deleteChat(chat.id)}>
                   <Icon name="trash-2" class="size-3.5 shrink-0" />Delete
                 </ContextMenu.Item>
               </ContextMenu.Content>

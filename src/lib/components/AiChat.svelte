@@ -159,6 +159,7 @@
     createConversation,
     updateConversation,
     deleteConversation,
+    restoreConversation,
   } from "$lib/stores/conversations.js";
   import { generateSuggestions } from "$lib/ai-suggestions.js";
   import { formatCompactCount } from "$lib/table-list.js";
@@ -511,7 +512,7 @@
       if (req.type === "delete") {
         // Replying in another instance: the parent ends that one too.
         if (backgroundBusy.includes(req.id)) onhandoff?.(req);
-        return removeConversation(req.id);
+        return removeConversation(req.id, { undoable: true });
       }
       if (req.type === "rename") {
         const title = req.title.trim();
@@ -666,9 +667,24 @@
     errorDetailOpen = false;
   });
 
-  async function removeConversation(/** @type {string} */ id) {
+  /**
+   * @param {string} id
+   * @param {{ undoable?: boolean }} [opts] a single delete asks nothing and
+   *   offers Undo in the toast; a bulk delete has already asked
+   */
+  async function removeConversation(id, { undoable = false } = {}) {
     closeContextMenu();
-    await deleteConversation(id);
+    const gone = await deleteConversation(id);
+    if (undoable && gone) {
+      toast.message("Chat deleted", {
+        description: gone.title || "New chat",
+        duration: 8000,
+        action: {
+          label: "Undo",
+          onClick: () => void restoreConversation($state.snapshot(gone)).then(loadConvList, (err) => toast.error(`Couldn't undo: ${errorText(err)}`)),
+        },
+      });
+    }
     convList = convList.filter((c) => c.id !== id);
     if (openTabIds.includes(id)) {
       openTabIds = openTabIds.filter((t) => t !== id);
@@ -4711,7 +4727,7 @@
                   title="Delete"
                   onclick={(e) => {
                     e.stopPropagation();
-                    void removeConversation(conv.id);
+                    void removeConversation(conv.id, { undoable: true });
                   }}
                 >
                   <Trash2 class="size-3 shrink-0" />
@@ -6775,7 +6791,7 @@
       <button
         type="button"
         class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-sm text-destructive hover:bg-destructive/10"
-        onclick={() => void removeConversation(menu.id)}
+        onclick={() => void removeConversation(menu.id, { undoable: true })}
       >
         <Trash2 class="size-3 shrink-0" /> Delete
       </button>
