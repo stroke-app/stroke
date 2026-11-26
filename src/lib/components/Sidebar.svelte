@@ -2814,7 +2814,7 @@
                               data-roving
                               tabindex={stopKey === `db:${db.key}` ? 0 : -1}
                               class={cn(
-                                "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1 text-left transition-colors",
+                                "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors",
                                 isCurrent
                                   ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                                   : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
@@ -2899,7 +2899,7 @@
                     <li class="group/recent">
                       <div
                         class={cn(
-                          "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1 transition-colors cursor-pointer",
+                          "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 transition-colors cursor-pointer",
                           activeTable === item.table
                             ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                             : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
@@ -3032,7 +3032,7 @@
                           data-roving
                           data-sidebar-current={activeTable === tableName ? '' : undefined}
                           class={cn(
-                            "group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1 text-left transition-colors",
+                            "group grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors",
                             isSelected
                               ? "bg-primary/10 text-foreground"
                               : activeTable === tableName
@@ -3391,7 +3391,7 @@
                       data-sidebar-row="view:{v.name}"
                       data-sidebar-current={activeTable === v.name ? '' : undefined}
                       class={cn(
-                        'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1 text-left transition-colors',
+                        'grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors',
                         activeTable === v.name
                           ? 'bg-sidebar-accent font-medium text-sidebar-accent-foreground'
                           : 'text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
