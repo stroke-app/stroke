@@ -6443,6 +6443,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       Number.isInteger(dy * blitScale) &&
       Number.isInteger(HEADER_H * blitScale) &&
       !_sawSkeleton &&
+      !_sawFade &&
       !newRowDrafts &&
       visibleColumns.length > 0
 
@@ -6472,6 +6473,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       Number.isInteger(dxs * blitScale) &&
       geom.frozenWidth === 0 &&
       !_sawSkeleton &&
+      !_sawFade &&
       !newRowDrafts &&
       visibleColumns.length > 0
     /** Columns outside [stripX0, stripX1) are skipped this frame (CSS px). */
@@ -6482,6 +6484,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       !canBlitX &&
       band !== null &&
       !_sawSkeleton &&
+      !_sawFade &&
       !newRowDrafts &&
       visibleColumns.length > 0
     if (!canBlit && !canBlitX && !partial) _imgWanted.clear()
@@ -6497,6 +6500,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // skeleton row painted below; the tail uses it to decide whether to keep
     // animating, so a fully loaded grid schedules nothing at all.
     _sawSkeleton = false
+    _sawFade = false
+    _frameNow = performance.now()
+    // Last frame's skeleton rows become this frame's fade candidates.
+    const _swap = _skelPrev
+    _skelPrev = _skelCur
+    _skelCur = _swap
+    _skelCur.clear()
     _skelMin = -1
     _skelMax = -1
     _shimmerFill = null
@@ -6853,6 +6863,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         _shimmerTimer = setTimeout(() => { _shimmerTimer = 0; scheduleDraw() }, 32)
       }
     }
+    // Rows easing in from a skeleton: keep painting until the last one is
+    // opaque, and forget any that scrolled away mid-fade.
+    if (_fadeAt.size) {
+      for (const [k, at] of _fadeAt) if (_frameNow - at >= ROW_FADE_MS) _fadeAt.delete(k)
+      if (_sawFade) scheduleDraw()
+    }
     publishLoadingSpan()
   }
 
@@ -6953,6 +6969,20 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   const SHIMMER_PERIOD = 1400
   /** True while any skeleton row was painted this frame - drives the shimmer loop. */
   let _sawSkeleton = false
+  // ── Landing fade ──────────────────────────────────────────────────────────
+  // A row that was a skeleton last frame and has data this frame eases its
+  // values in over ROW_FADE_MS rather than swapping bars for text in one
+  // frame. Only the values fade: the row's background, gutter and grid were
+  // already drawn by the skeleton and stay put.
+  const ROW_FADE_MS = 180
+  /** Rows painted as skeletons in the previous / current frame. */
+  let _skelPrev = new Set()
+  let _skelCur = new Set()
+  /** Row index -> when its data first painted (performance.now()). @type {Map<number, number>} */
+  const _fadeAt = new Map()
+  /** Any row painted mid-fade this frame (blits stay off while it is). */
+  let _sawFade = false
+  let _frameNow = 0
   /** Skeleton bar opacity over the muted text colour. */
   const SKELETON_ALPHA = 0.16
   let _shimmerPhase = 0
@@ -6983,6 +7013,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       ctx.fillRect(0, ry, c.usedW, rh)
     }
     _sawSkeleton = true
+    if (_shimmerOn) _skelCur.add(idx)
     if (_skelMin < 0 || idx < _skelMin) _skelMin = idx
     if (idx > _skelMax) _skelMax = idx
     // Sit on the text's own band: cap height, centred where the glyphs will be, so
@@ -7120,6 +7151,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       ctx.fillStyle = _rowBg
       ctx.fillRect(0, ry, c.usedW, rh)
     }
+    const fade = rowFade(idx)
+    if (fade < 1) ctx.globalAlpha = fade
 
     // Non-pinned cells. geom.cols is ordered by ascending contentX: start at the
     // frame's precomputed first visible index (c.firstColIdx) and break once a
@@ -7260,7 +7293,20 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
     }
 
+    if (fade < 1) ctx.globalAlpha = 1
     drawRowGrid(ctx, idx, ry, rh, c)
+  }
+
+  /** Opacity for a row's values: below 1 while it eases in from a skeleton. */
+  function rowFade(idx) {
+    if (_skelPrev.has(idx) && !_fadeAt.has(idx)) _fadeAt.set(idx, _frameNow)
+    const at = _fadeAt.get(idx)
+    if (at === undefined) return 1
+    const t = (_frameNow - at) / ROW_FADE_MS
+    if (t >= 1) { _fadeAt.delete(idx); return 1 }
+    _sawFade = true
+    // Ease out, from a quarter: the first frame already says where text is.
+    return 0.25 + 0.75 * (1 - (1 - t) * (1 - t))
   }
 
   /**

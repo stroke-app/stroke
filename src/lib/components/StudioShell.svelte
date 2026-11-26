@@ -2409,6 +2409,9 @@
   let _windowLoaded = new Set()
   /** @type {Set<number>} */
   let _windowFetching = new Set()
+  /** Windows in flight to the database, not read from the mirror. Only these
+   *  are slow enough for fillVisibleGap to race. @type {Set<number>} */
+  let _windowRemote = new Set()
   /** Windows wanted but not yet started, nearest-to-viewport first. @type {number[]} */
   let _windowQueue = []
   let _windowInFlight = 0
@@ -7328,6 +7331,7 @@ let rowSearch = $state('')
     _windowSeq++
     _windowLoaded = new Set()
     _windowFetching = new Set()
+    _windowRemote = new Set()
     _windowQueue = []
     _windowInFlight = 0
     _windowSlow = false
@@ -7361,6 +7365,7 @@ let rowSearch = $state('')
     _windowSeq++
     _windowLoaded = new Set(s.windowedLoaded ?? [])
     _windowFetching = new Set()
+    _windowRemote = new Set()
     _windowQueue = []
     _windowInFlight = 0
     _windowSlow = false
@@ -7384,6 +7389,7 @@ let rowSearch = $state('')
     _windowSeq++
     _windowLoaded = new Set()
     _windowFetching = new Set()
+    _windowRemote = new Set()
     _windowQueue = []
     _windowInFlight = 0
     _windowSlow = false
@@ -7441,6 +7447,8 @@ let rowSearch = $state('')
   // for.
   /** Where the grid is looking (handleVisibleRange), for a screenful-first fetch. */
   let _visStart = 0
+  /** Row-level scroll direction (1 down, -1 up), for the gap fetch's read-ahead. */
+  let _visDir = 1
   let _visEnd = 0
   /** A window larger than this gets its on-screen rows fetched first on a jump. */
   const VIEWPORT_FIRST_MIN = 1000
@@ -7537,6 +7545,7 @@ let rowSearch = $state('')
         } catch { /* dropped or unreadable: the remote path below */ }
         if (seq !== _windowSeq) return
       }
+      if (!local) _windowRemote.add(w)
       // A jump to rows nothing has loaded near: put the screenful up first. The
       // whole window is 10,000 rows, ~1.5 MB, most of a second over a far
       // link, for the ~30 rows on screen. Those are asked for alone (a few
@@ -7608,6 +7617,7 @@ let rowSearch = $state('')
       }
     } finally {
       _windowFetching.delete(w)
+      _windowRemote.delete(w)
       // Clamped: a reset (new query) zeroes the counter while requests are still
       // in flight, and their finallys must not drive it negative.
       _windowInFlight = Math.max(0, _windowInFlight - 1)
@@ -7730,6 +7740,7 @@ let rowSearch = $state('')
    */
   function handleVisibleRange(start, end) {
     if (!windowed) return
+    if (start !== _visStart) _visDir = start > _visStart ? 1 : -1
     _visStart = start
     _visEnd = end
     const firstW = Math.floor(start / _windowRows)
@@ -7771,6 +7782,8 @@ let rowSearch = $state('')
    * rows. One at a time, re-checked when it lands.
    */
   let _gapInFlight = false
+  /** Most a gap fetch carries: one quick round trip, not a window. */
+  const GAP_MAX_BYTES = 160_000
   /** Screenful-first fetches running (fetchWindow): they already cover the screen. */
   let _screenfulInFlight = 0
   /** @param {number} start @param {number} end */
@@ -7782,12 +7795,23 @@ let rowSearch = $state('')
     if (from < 0) return
     let to = from
     for (let i = last; i > from; i--) if (rows[i] === undefined) { to = i; break }
-    // Only behind a window already in flight: a window still queued fetches
-    // its own screenful first (fetchWindow), and a mirror read is local.
+    // Only behind a window already on its way to the database: a window still
+    // queued fetches its own screenful first (fetchWindow), and one read from
+    // the mirror is local. A mirror that merely exists used to count too, and
+    // every large table starts one on open, empty: rows 100-130 then waited
+    // ~2 s for the whole 600 KB first window on a 4 Mbit link.
     const w = Math.floor(from / _windowRows)
-    if (!_windowFetching.has(w) || activeMirror()) return
-    const begin = Math.max(0, from - 10)
-    const count = Math.min(400, to - begin + 1 + 30, _windowCount - begin)
+    if (!_windowRemote.has(w)) return
+    // Read ahead in the direction of travel: two screens, so a steady scroll
+    // finds the next rows already here instead of asking for each screenful
+    // as it arrives. Capped by bytes, so wide rows don't make it a window.
+    const screen = Math.max(20, end - start + 1)
+    const byteCap = _windowBytesPerRow > 0 ? Math.max(60, Math.floor(GAP_MAX_BYTES / _windowBytesPerRow)) : 400
+    const cap = Math.min(400, byteCap)
+    const span = to - from + 1
+    const extra = Math.max(0, Math.min(screen * 2, cap - span - 10))
+    const begin = _visDir < 0 ? Math.max(0, from - 10 - extra) : Math.max(0, from - 10)
+    const count = Math.min(cap, to - begin + 1 + (_visDir < 0 ? 10 : extra), _windowCount - begin)
     const seq = _windowSeq
     const schema = activeSchema
     const table = activeTable
