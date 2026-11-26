@@ -1,6 +1,7 @@
 <script>
   import { tx } from '$lib/i18n.js'
   import { commandFilter } from '$lib/command-filter.js'
+  import { loadRecentCommands, rememberCommand } from '$lib/stores/recent-commands.js'
   import { openTransfer } from '$lib/stores/transfer-ui.js'
   import { EXPORT_FORMATS } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
@@ -770,6 +771,10 @@
    * and typing mounts everything at once so search always sees every row.
    */
   const FIRST_PAINT_ROWS = 12
+
+  /** The last few page rows picked, newest first, shown above Views on an empty search. */
+  let recentCommands = $state(loadRecentCommands())
+  const recentRows = $derived(recentCommands.map((l) => pageItems.find((p) => p.label === l)).filter((p) => !!p))
   let mountAll = $state(false)
   const listAll = $derived(mountAll || !!paletteSearch.trim())
   $effect(() => {
@@ -874,11 +879,12 @@
         {/if}
 
         <!-- Shared page-destination row (root "Views" + "Go to page" navigator) -->
-        {#snippet pageRow(/** @type {typeof pageItems[number]} */ it)}
+        {#snippet pageRow(/** @type {typeof pageItems[number]} */ it, /** @type {boolean} */ recent = false)}
           {@const shown = $tx('cmd.' + it.label, it.label)}
           <!-- Translated name shown and searchable; the English words stay in
-               the value so either language finds it. -->
-          <Command.Item value={shown === it.label ? it.value : `${it.value} ${shown}`} keywords={[shown]} onSelect={() => run(it.action)}>
+               the value so either language finds it. A recent row repeats one
+               further down, so its value carries a prefix to stay unique. -->
+          <Command.Item value={(recent ? 'recent ' : '') + (shown === it.label ? it.value : `${it.value} ${shown}`)} keywords={[shown]} onSelect={() => { recentCommands = rememberCommand(it.label); run(it.action) }}>
             <Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
             <span data-slot="command-label" class="truncate">{shown}</span>
             {#if it.keys}<Command.Shortcut keys={it.keys} />{/if}
@@ -980,6 +986,13 @@
           {/if}
 
           {#if connected}
+            {#if recentRows.length && !paletteSearch.trim()}
+              <Command.Group heading={$tx('group.Recent', 'Recent')}>
+                {#each recentRows as it (it.label)}
+                  {@render pageRow(it, true)}
+                {/each}
+              </Command.Group>
+            {/if}
             <Command.Group heading={$tx('group.Views', 'Views')}>
               {#each listAll ? pageItems : pageItems.slice(0, FIRST_PAINT_ROWS) as it (it.label)}
                 {@render pageRow(it)}
