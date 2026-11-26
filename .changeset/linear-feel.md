@@ -35,6 +35,11 @@
 - Settings searches and other search fields lit up purple instead of the accent colour on most Linux and Windows screens.
 - The Resume button on the connect screen cut the connection name short with room to spare.
 - In the sidebar's More menu, Recent's count sat where its shortcut belongs.
+- Typing "queries" in Go to page opened Instance insights: a command whose keywords start with the word now ranks above one whose keywords end with it.
+- After a new row was discarded, the next Add left the caret on the Add button. A new row also put the caret in a uuid key with a default instead of the first column it needs.
+- Ctrl+Shift+6 showed Find & replace with the caret still in the grid.
+- The AI model picker opened on Stroke Free instead of the model in use.
+- A connection's hover card printed the engine's id (sqlite) instead of its name.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
@@ -51,3 +56,7 @@
 - Search tables, Go to page and the theme picker in the command menu take a third to half the time per letter, and moving through grid cells with the arrow keys does less work per key.
 - Tooltips wait for the pointer to move, so a button that slides under a still cursor no longer pops one up.
 - The Snippets settings and the result map use the app's own select menu instead of the system one.
+- The sidebar's connections take arrow keys from the search, and the row with focus shows it.
+- Closing a notebook with unsaved changes offers Undo.
+- Data diff picks its connection, database, schema and table from the app's select menu, and every table row's menu offers Open in schema diagram.
+- A new notebook opens with the caret in its cell, Recent table names use the full row width, and the peek card shows long table names whole.
