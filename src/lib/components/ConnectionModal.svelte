@@ -6466,7 +6466,7 @@
                    buttons at a single gap, which is how "Resume" ends up looking like
                    a peer of "Connect". 4px inside a group against 20px between them
                    is the 1:5 ratio that makes the split legible without a divider. -->
-                <div class="ml-auto flex shrink-0 items-center gap-5">
+                <div class="ml-auto flex min-w-0 items-center gap-5">
                   {#if activeConnectionName || (lastId && saved.find((c) => c.id === lastId))}
                   <div class="flex min-w-0 items-center gap-1">
                   <!-- Ending the live session belongs next to resuming it: both act
@@ -6489,7 +6489,7 @@
                     {@const lastConn = saved.find((c) => c.id === lastId)}
                     <Button
                       variant="ghost"
-                      class="max-w-[12.5rem] text-muted-foreground"
+                      class="min-w-0 shrink max-w-[17.5rem] text-muted-foreground"
                       disabled={isBusy}
                       title={`Resume ${lastConn.name} (${comboTitle('Mod+Shift+Enter')})`}
                       aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
