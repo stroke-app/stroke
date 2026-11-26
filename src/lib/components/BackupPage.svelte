@@ -1,5 +1,6 @@
 <script>
   import EmptyState from './EmptyState.svelte'
+  import { formatCompactCount } from '$lib/table-list.js'
   import { onDestroy, untrack } from 'svelte'
   import FieldSelect from './FieldSelect.svelte'
   import ScheduledBackups from './ScheduledBackups.svelte'
@@ -808,7 +809,7 @@
           {@render emptyState(
             Download,
             'Export to a .sql file',
-            `${tablesText(selectedTables.size)}${estSelectedRows ? `, about ${rowsText(estSelectedRows)}` : ''}. The file restores here${cliName ? ` or with ${cliName}` : ''}.`,
+            `${tablesText(selectedTables.size)}${estSelectedRows ? `, about ${formatCompactCount(estSelectedRows)} ${estSelectedRows === 1 ? 'row' : 'rows'}` : ''}. The file restores here${cliName ? ` or with ${cliName}` : ''}.`,
           )}
         {:else}
           <div class="flex shrink-0 flex-col gap-3 border-b border-border/60 p-4">
