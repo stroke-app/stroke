@@ -10045,12 +10045,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         <ContextMenu.Item onSelect={() => runMenuAction(() => headerSortDirect(hcol, 'asc'))}>
           <ArrowUp />
           {$t('menu.sortAsc')}
-          {#if hAsc}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+          {#if hAsc}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
         </ContextMenu.Item>
         <ContextMenu.Item onSelect={() => runMenuAction(() => headerSortDirect(hcol, 'desc'))}>
           <ArrowDown />
           {$t('menu.sortDesc')}
-          {#if hDesc}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+          {#if hDesc}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
         </ContextMenu.Item>
         {#if hSorted}
           <ContextMenu.Item onSelect={() => runMenuAction(() => { if (pendingEdits.size > 0) { toast.error('Unsaved changes', { description: 'Apply or reset your edits before sorting.' }); return } onsortchange([]) })}>
@@ -10148,7 +10148,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
           <ContextMenu.Item onSelect={() => runMenuAction(() => { statsCol = statsCol === hcol ? null : hcol })}>
             <BarChart2 />
             {$t('menu.columnStats')}
-            {#if statsCol === hcol}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+            {#if statsCol === hcol}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
           </ContextMenu.Item>
         {/if}
         <ContextMenu.Separator />
@@ -10163,7 +10163,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
               <ContextMenu.Item onSelect={() => runMenuAction(() => setColHighlight(hcol, h.id))}>
                 <span class="size-3.5 shrink-0 rounded-full border border-border/40" style="background:{h.hex}"></span>
                 <span data-slot="menu-label">{h.label}</span>
-                {#if colHighlights[hcol]?.color === h.id}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+                {#if colHighlights[hcol]?.color === h.id}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
               </ContextMenu.Item>
             {/each}
             {#if colHighlights[hcol]?.color}
@@ -10198,7 +10198,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                 <ContextMenu.Item onSelect={() => runMenuAction(() => setColTransform(hcol, t.id))}>
                   <Wand2 />
                   <span data-slot="menu-label">{t.label}</span>
-                  {#if colTransforms[hcol] === t.id}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+                  {#if colTransforms[hcol] === t.id}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
                 </ContextMenu.Item>
               {/each}
             {:else}

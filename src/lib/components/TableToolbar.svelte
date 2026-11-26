@@ -1180,7 +1180,7 @@
           {#if it.dir === "asc"}<Icon name="arrow-up" class="size-3.5 shrink-0 text-muted-foreground" />{:else}<Icon name="arrow-down" class="size-3.5 shrink-0 text-muted-foreground" />{/if}
           <span class="min-w-0 flex-1 truncate">{it.label}</span>
           <span class="shrink-0 text-ui-3xs text-muted-foreground">{it.dir === "asc" ? "Asc" : "Desc"}</span>
-          {#if it.active}<span class="shrink-0 text-primary">✓</span>{/if}
+          {#if it.active}<Check class="size-3.5 shrink-0 text-primary" />{/if}
         {/snippet}
       </SearchableMenu>
 
