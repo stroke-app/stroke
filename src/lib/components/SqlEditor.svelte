@@ -1352,8 +1352,10 @@
     // SQL editor - several notebook cells are visible at once.
     /** @param {KeyboardEvent} e */
     function docRunHandler(e) {
-      if (!host || host.clientWidth === 0) return
+      // The key first: reading clientWidth forces a layout, and this runs for
+      // every key typed anywhere, once per SQL editor open in any tab.
       if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter' || e.shiftKey || e.altKey) return
+      if (!host || host.clientWidth === 0) return
       const ae = document.activeElement
       if (ae && ae !== document.body && !host.contains(ae)) {
         if (ae.closest('.sql-editor-host')) return
