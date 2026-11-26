@@ -10343,6 +10343,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   {#if group.title}<ContextMenu.Label>{group.title}</ContextMenu.Label>{/if}
                   {#each group.items as item (item.key)}
                     <ContextMenu.Item onSelect={() => runMenuAction(() => onquickfilter(menuColName, item.op, item.value))}>
+                      <!-- An icon's width, so the label lines up with By this value above. -->
+                      <span class="size-3.5 shrink-0" aria-hidden="true"></span>
                       <span data-slot="menu-label">{item.label}</span>
                       {#if item.active}<Check class="ml-auto text-primary" />{/if}
                     </ContextMenu.Item>
