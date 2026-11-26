@@ -4,7 +4,7 @@
  * that connection's charts. An empty connectionId shows nothing.
  */
 import { notifyLocalChange } from '$lib/sync/changes.js'
-import { writable } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 import { debounce } from '$lib/utils.js'
 
 /**
@@ -120,9 +120,24 @@ export function saveChart(chart) {
   return id
 }
 
-/** @param {string} id */
+/**
+ * @param {string} id
+ * @returns {(() => boolean) | null} puts it back in its place, for an Undo; false
+ *   once the charts on screen belong to another connection
+ */
 export function deleteChart(id) {
+  const list = get(savedCharts)
+  const index = list.findIndex(c => c.id === id)
+  if (index < 0) return null
+  const chart = list[index]
+  const conn = _connId
   savedCharts.update(cs => cs.filter(c => c.id !== id))
+  return () => {
+    if (_connId !== conn || get(savedCharts).some(c => c.id === id)) return false
+    savedCharts.update(cs => [...cs.slice(0, index), chart, ...cs.slice(index)])
+    chartGroups.update(gs => gs.includes(chart.group) ? gs : [...gs, chart.group])
+    return true
+  }
 }
 
 /** @param {string} id @param {Partial<SavedChart>} patch */

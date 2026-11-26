@@ -71,8 +71,6 @@
   /** @type {string | null} */
   let moveChartId = $state(null);
 
-  /** @type {string | null} */
-  let confirmDeleteId = $state(null);
 
   // Dashboard picker popover per chart
   /** @type {string | null} */
@@ -202,15 +200,15 @@
     renameChartInput = "";
   }
 
-  /** @param {string} id */
-  function handleDeleteChart(id) {
-    if (confirmDeleteId === id) {
-      deleteChart(id);
-      confirmDeleteId = null;
-      toast.success("Chart deleted");
-    } else {
-      confirmDeleteId = id;
-    }
+  /** No confirm: it goes at once and the toast offers Undo. @param {{ id: string, name: string }} chart */
+  function handleDeleteChart(chart) {
+    const undo = deleteChart(chart.id);
+    if (!undo) return;
+    toast.message("Chart deleted", {
+      description: chart.name,
+      duration: 8000,
+      action: { label: "Undo", onClick: () => { if (!undo()) toast.error("Couldn't undo: the charts changed since."); } },
+    });
   }
 
   /** @param {string} id @param {string} toGroup */
@@ -422,7 +420,7 @@
                             {/if}
                             <DropdownMenu.DropdownMenuItem onclick={() => startRenameChart(chart.id)}><Pencil class="size-3.5 shrink-0" />Rename</DropdownMenu.DropdownMenuItem>
                             <DropdownMenu.DropdownMenuSeparator />
-                            <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => { deleteChart(chart.id); toast.success("Chart deleted"); }}><Trash2 class="size-3.5 shrink-0" />Delete</DropdownMenu.DropdownMenuItem>
+                            <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => handleDeleteChart(chart)}><Trash2 class="size-3.5 shrink-0" />Delete</DropdownMenu.DropdownMenuItem>
                           </DropdownMenu.DropdownMenuContent>
                         </DropdownMenu.DropdownMenu>
                       </div>
