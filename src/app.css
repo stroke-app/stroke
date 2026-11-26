@@ -2010,9 +2010,14 @@ html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-state="ope
 }
 /* Dark themes: a dialog sat on the page's own colour and only its shadow
    (which barely reads on near-black) set it apart. Raised a step toward the
-   popover surface, as menus already are. Light themes keep white. */
+   popover surface, as menus already are. */
 html.dark [data-slot="dialog-content"] {
   background-color: color-mix(in oklab, var(--background), var(--popover) 60%);
+}
+/* Light themes: --background is the grey of the page around the panel, so a
+   dialog on it read as a grey sheet. Dialogs are white like the menus. */
+html:not(.dark) [data-slot="dialog-content"] {
+  background-color: var(--popover);
 }
 /* The command menu opens many times an hour: the shorter, smaller motion. */
 html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-command-dialog][data-state="open"] {
