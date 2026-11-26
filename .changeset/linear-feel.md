@@ -9,6 +9,7 @@
 - **Sliding sidebar** - Ctrl+B / ⌘B slides the sidebar out and back while the page moves into the space. Menus grow from the button that opened them and dialogs settle into place. On by default on macOS and Windows; Settings, Appearance, Animate panels.
 - **Back and forward** - Move through the tabs you visited with the ‹ › buttons at the start of the tab bar, or Ctrl+[ and Ctrl+] (⌘[ and ⌘]).
 - **New tab button** - A + after the last tab.
+- **Rename a query editor tab** - Double-click it, or right-click and Rename Tab. The name stays when the app reopens.
 
 #### Keyboard and search
 - **Shortcuts in tooltips** - Every tooltip shows its shortcut as keys, and the next tooltip along a toolbar appears at once.

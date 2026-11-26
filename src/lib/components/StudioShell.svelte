@@ -3897,6 +3897,11 @@ let rowSearch = $state('')
     return true
   }
 
+  /** A query editor tab's own name (TabBar). @param {string} id @param {string} title */
+  function renameTab(id, title) {
+    tabs = tabs.map((t) => (t.id === id ? { ...t, title } : t))
+  }
+
   // Reopen the most recently closed tab (browser-style).
   createCommandHotkey('tab.reopen', (e) => {
     if (!connection) return
@@ -11572,6 +11577,7 @@ let rowSearch = $state('')
             onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onrename={renameTab}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
@@ -11857,6 +11863,7 @@ let rowSearch = $state('')
             onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onrename={renameTab}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
@@ -11885,6 +11892,7 @@ let rowSearch = $state('')
             onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onrename={renameTab}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}

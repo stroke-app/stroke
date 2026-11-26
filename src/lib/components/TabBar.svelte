@@ -1,6 +1,6 @@
 <script>
   import { titleBarDoubleClick } from '$lib/titlebar-double-click.js'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
   import { t } from '$lib/i18n.js'
@@ -59,7 +59,43 @@
     ondragtabstart = /** @param {string} _id */ (_id) => {},
     ondragtabmove = /** @type {(clientX: number, clientY: number) => void} */ (() => {}),
     ondragtabend = () => {},
+    /** Rename a query editor tab. Absent: no Rename. @type {((id: string, title: string) => void) | null} */
+    onrename = null,
   } = $props()
+
+  // ── Rename a query editor tab in place ─────────────────────────────────────
+  // Every editor tab read "Query Editor", "Query Editor 2"...; a name says
+  // which buffer is which. Double-click the tab or use its menu; Enter or
+  // leaving the field keeps it, Escape puts the old name back.
+  let renamingId = $state(/** @type {string | null} */ (null))
+  let renameValue = $state('')
+  /** @param {any} tab */
+  const canRename = (tab) => !!onrename && tab.kind === 'sql'
+  /** @param {any} tab */
+  function startRename(tab) {
+    if (!canRename(tab)) return
+    renameValue = tabDisplayTitle(tab)
+    renamingId = tab.id
+  }
+  /** @param {boolean} [refocus] back to the tab, after Enter or Escape */
+  function commitRename(refocus = false, keep = true) {
+    const id = renamingId
+    const title = renameValue.trim()
+    renamingId = null
+    if (id && title && keep) onrename?.(id, title)
+    if (refocus && id) {
+      void tick().then(() => /** @type {HTMLElement | null} */ (document.querySelector(`[data-tab-id="${CSS.escape(id)}"] [role="tab"]`))?.focus())
+    }
+  }
+  /** @param {HTMLInputElement} el */
+  function focusSelect(el) {
+    // Again a moment later: the selection made on mount was collapsed to the
+    // end by the tab re-rendering after the click, so typing appended to the
+    // old name.
+    el.focus()
+    el.select()
+    setTimeout(() => { if (document.activeElement === el) el.select() }, 80)
+  }
 
   /** Titles that tabs from different databases share (two "orders" tables):
    *  those tabs name their database after the title. */
@@ -280,6 +316,21 @@
           )}
         >
           <!-- Tab button, font-medium on ALL states to prevent layout shift on activation -->
+          {#if renamingId === tab.id}
+            <input
+              use:focusSelect
+              bind:value={renameValue}
+              aria-label="Tab name"
+              class="no-field-frame my-0.5 ml-1 h-5 min-w-0 flex-1 rounded-sm bg-background px-1.5 text-ui-xs text-foreground outline-none ring-1 ring-ring"
+              onkeydown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') { e.preventDefault(); commitRename(true) }
+                else if (e.key === 'Escape') { e.preventDefault(); commitRename(true, false) }
+              }}
+              onblur={() => commitRename()}
+              onpointerdown={(e) => e.stopPropagation()}
+            />
+          {:else}
           <button
             type="button"
             role="tab"
@@ -295,10 +346,12 @@
               active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
             )}
             onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
+            ondblclick={() => startRename(tab)}
           >
             <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
             <span class="truncate leading-normal">{tabDisplayTitle(tab)}{#if tab.connLabel && clashing.has(tabDisplayTitle(tab))}<span class="text-muted-foreground">{` · ${tab.connLabel}`}</span>{/if}</span>
           </button>
+          {/if}
 
           {#if tab.pinned}
             <!-- Pinned: pin badge replaces close, click to unpin -->
@@ -362,6 +415,12 @@
             <ContextMenu.Item onSelect={() => onduplicate(tab.id)}>
               <Icon name="copy" class="size-3.5 shrink-0" />
               Duplicate Tab
+            </ContextMenu.Item>
+          {/if}
+          {#if canRename(tab)}
+            <ContextMenu.Item onSelect={() => setTimeout(() => startRename(tab), 0)}>
+              <Icon name="pencil" class="size-3.5 shrink-0" />
+              Rename Tab
             </ContextMenu.Item>
           {/if}
           {#if tab.kind === 'table'}
