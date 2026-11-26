@@ -926,7 +926,7 @@
               <!-- algorithm -->
               <td class="border-b border-border/20 p-0 align-middle overflow-hidden">
                 <DropdownMenu.Root>
-                  <DropdownMenu.Trigger class="group/alg flex h-full w-full cursor-pointer items-center gap-1 px-3 font-mono text-ui-xs uppercase text-foreground hover:bg-accent/20">
+                  <DropdownMenu.Trigger class="group/alg flex h-full w-full cursor-pointer items-center gap-1 px-3 text-left font-mono text-ui-xs uppercase text-foreground hover:bg-accent/20">
                     <span class="flex-1">{idx.indexType}</span>
                     <svg class="size-3 shrink-0 text-muted-foreground opacity-0 group-hover/alg:opacity-100" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
                   </DropdownMenu.Trigger>
@@ -947,11 +947,12 @@
                 <div class="flex h-full items-center px-3">
                   <button
                     type="button"
-                    class="rounded-md px-1.5 py-0.5 font-mono text-ui-3xs font-semibold transition-colors {idx.isUnique ? 'bg-success/10 text-success hover:bg-success/20' : 'bg-muted/30 text-muted-foreground hover:bg-muted/60 hover:text-foreground'}"
+                    class="rounded-md px-1.5 py-0.5 font-mono text-ui-3xs font-semibold transition-colors {idx.isUnique ? 'bg-success/10 text-success hover:bg-success/20' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'}"
                     onclick={() => requestIndexRecreate(idx, idx.indexType, !idx.isUnique, idx.columns)}
                     title="Click to toggle uniqueness"
                   >
-                    {idx.isUnique ? 'TRUE' : 'FALSE'}
+                    <!-- YES / NO, as Nullable reads on the Columns tab. -->
+                    {idx.isUnique ? 'YES' : 'NO'}
                   </button>
                 </div>
               </td>
@@ -1006,7 +1007,7 @@
               </td>
               <td class="border-b border-r border-success/20 p-0">
                 <DropdownMenu.Root>
-                  <DropdownMenu.Trigger class="group/na flex h-full w-full cursor-pointer items-center gap-1 px-3 font-mono text-ui-xs uppercase text-foreground hover:bg-accent/20">
+                  <DropdownMenu.Trigger class="group/na flex h-full w-full cursor-pointer items-center gap-1 px-3 text-left font-mono text-ui-xs uppercase text-foreground hover:bg-accent/20">
                     <span class="flex-1">{newIndex.algorithm || 'BTREE'}</span>
                     <svg class="size-3 text-muted-foreground opacity-0 group-hover/na:opacity-100" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
                   </DropdownMenu.Trigger>
