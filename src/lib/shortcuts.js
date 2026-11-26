@@ -163,7 +163,7 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Control+Shift+`', desc: 'New terminal tab', id: 'view.terminalNew' },
       { combo: 'Mod+Shift+X', desc: 'Extensions', id: 'view.extensions' },
       { combo: 'Mod+I', desc: 'Toggle AI panel', id: 'ai.panel' },
-      { combo: 'Mod+Shift+E', desc: 'Toggle AI sidebar', id: 'ai.sidebar' },
+      { combo: 'Mod+Shift+E', desc: 'Toggle AI panel', id: 'ai.sidebar' },
       { combo: 'Mod+Shift+L', desc: 'Activity log', id: 'view.logs' },
       { combo: 'Mod+Shift+K', desc: 'Toggle query log', id: 'view.queryLog' },
       { combo: 'Mod+Shift+G', desc: 'Find in database', id: 'search.database' },

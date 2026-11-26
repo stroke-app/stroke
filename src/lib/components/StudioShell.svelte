@@ -11571,6 +11571,7 @@ let rowSearch = $state('')
   onreadonlytoggle={() => { tableReadonly = !tableReadonly }}
   onopenai={() => openAiTab()}
   onopenaisidebar={() => { if (aiMode) exitAiMode(); toggleAiSidebar() }}
+  aiSidebarEnabled={AI_SIDEBAR_ENABLED}
   {aiMode}
   ontoggleaimode={() => aiMode ? exitAiMode() : enterAiMode()}
   onopenorm={() => { if (aiMode) exitAiMode(); openOrmTab() }}

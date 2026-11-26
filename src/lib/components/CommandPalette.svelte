@@ -57,6 +57,8 @@
     onrefresh = () => {},
     onopenai = () => {},
     onopenaisidebar = () => {},
+    /** The docked AI sidebar exists (StudioShell's AI_SIDEBAR_ENABLED). Off, its row would open the same view as Open AI panel. */
+    aiSidebarEnabled = false,
     /** Whether the app is currently in AI mode (fullscreen chat) */
     aiMode = false,
     /** Toggle between AI mode and dev mode */
@@ -1201,11 +1203,13 @@
                 <span data-slot="command-label" class="truncate">Ask AI</span>
                 <Command.Shortcut command="ai.panel" />
               </Command.Item>
+              {#if aiSidebarEnabled}
               <Command.Item value="toggle ai sidebar inline assistant context" onSelect={() => run(onopenaisidebar)} keywords={['AI sidebar']}>
                 <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">AI sidebar</span>
                 <Command.Shortcut command="ai.sidebar" />
               </Command.Item>
+              {/if}
               <Command.Item
                 value={aiMode ? "close ai panel hide assistant" : "open ai panel show assistant chat"}
                 keywords={[aiMode ? 'Close AI panel' : 'Open AI panel']}
