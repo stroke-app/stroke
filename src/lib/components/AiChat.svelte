@@ -6561,7 +6561,7 @@
                   <textarea
                     id="skill-content"
                     class="min-h-[90px] w-full resize-y rounded-lg border-2 border-border bg-background px-2.5 py-2 font-mono text-ui-xs leading-relaxed text-foreground outline-none focus:border-ring/55 focus:ring-2 focus:ring-ring/15 placeholder:text-muted-foreground"
-                    placeholder="# My Skill&#10;&#10;Guidelines in Markdown..."
+                    placeholder="# My Skill&#10;&#10;Guidelines in Markdown…"
                     bind:value={newSkillContent}
                   ></textarea>
                 </div>
