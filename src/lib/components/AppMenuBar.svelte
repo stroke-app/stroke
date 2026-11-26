@@ -139,11 +139,11 @@
       <Menubar.Content class={contentCls} align="start" sideOffset={6}>
         {@render item("search", "Search rows", "search", "table.search", !connected)}
         {@render item("replace", "Find & replace…", "findReplace", "table.findReplaceAlt", !connected)}
-        {@render item("list-filter", "Find in database…", "findInDatabase", "", !connected)}
+        {@render item("list-filter", "Find in database…", "findInDatabase", "search.database", !connected)}
         <Menubar.Separator class={sepCls} />
         {@render item("check", "Apply staged changes", "applyEdits", "table.apply", !connected)}
         {@render item("clipboard-copy", "Copy staged changes as SQL", "copyEditsSql", "table.copySql", !connected)}
-        {@render item("undo-2", "Discard staged changes", "resetEdits", "", !connected)}
+        {@render item("undo-2", "Discard staged changes", "resetEdits", "table.discard", !connected)}
       </Menubar.Content>
     </Menubar.Portal>
   </Menubar.Menu>
