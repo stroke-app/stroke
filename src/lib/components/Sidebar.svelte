@@ -1993,6 +1993,12 @@
   </ContextMenu.Item>
   {/if}
   {#if sqlTables}
+  <ContextMenu.Item onSelect={() => onopentableerd(name)}>
+    <Icon name="git-branch" />
+    Open in schema diagram
+  </ContextMenu.Item>
+  {/if}
+  {#if sqlTables}
   <ContextMenu.Item onSelect={() => onviewddl(name)}>
     <Icon name="code-2" />
     View DDL
