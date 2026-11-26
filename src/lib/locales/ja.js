@@ -74,6 +74,8 @@ export default {
   "settings.kbd.cycleTheme": "テーマを切り替え",
   "settings.kbd.prevTheme": "前のテーマ",
   "settings.kbd.zoom": "ズーム",
+  "settings.kbd.zoomIn": "拡大",
+  "settings.kbd.zoomOut": "縮小",
   "settings.kbd.resetZoom": "ズームをリセット",
   "common.cancel": "キャンセル",
   "common.close": "閉じる",

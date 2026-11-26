@@ -74,6 +74,8 @@ export default {
   "settings.kbd.cycleTheme": "cycle theme",
   "settings.kbd.prevTheme": "previous theme",
   "settings.kbd.zoom": "zoom",
+  "settings.kbd.zoomIn": "zoom in",
+  "settings.kbd.zoomOut": "zoom out",
   "settings.kbd.resetZoom": "reset zoom",
   "common.cancel": "Cancel",
   "common.close": "Close",

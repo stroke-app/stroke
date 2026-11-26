@@ -2152,8 +2152,8 @@
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
       {#if bindingFor('theme.next')}{@render shortcut(bindingFor('theme.next'), $t('settings.kbd.cycleTheme'))}{/if}
       {#if bindingFor('theme.prev')}{@render shortcut(bindingFor('theme.prev'), $t('settings.kbd.prevTheme'))}{/if}
-      {@render shortcut('Mod+Plus', $t('settings.kbd.zoom'))}
-      {@render shortcut('Mod+Minus', $t('settings.kbd.zoom'))}
+      {@render shortcut('Mod+Plus', $t('settings.kbd.zoomIn'))}
+      {@render shortcut('Mod+Minus', $t('settings.kbd.zoomOut'))}
       {@render shortcut('Mod+0', $t('settings.kbd.resetZoom'))}
     </div>
   {/if}
