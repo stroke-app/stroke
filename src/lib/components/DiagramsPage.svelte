@@ -1,5 +1,6 @@
 <script>
   import { Button } from '$lib/components/ui/button/index.js'
+  import EmptyState from './EmptyState.svelte'
   import { savedDiagrams, saveDiagram, updateDiagram, deleteDiagram, switchDiagramsConnection } from '$lib/stores/saved-diagrams.js'
   import MermaidViewer from './MermaidViewer.svelte'
   import CodeEditor from './CodeEditor.svelte'
@@ -236,12 +237,11 @@
       <!-- List -->
       <div class="min-h-0 flex-1 overflow-y-auto px-1 py-1">
         {#if filtered.length === 0}
-          <div class="flex flex-col items-center gap-1.5 px-3 py-6 text-center">
-            <GitBranch class="size-5 shrink-0 text-muted-foreground" />
-            <p class="text-ui-2xs text-muted-foreground">
-              {searchQ ? 'No results' : 'No diagrams yet'}
-            </p>
-          </div>
+          <!-- With no diagrams at all the main area says so and offers New
+               diagram; the list repeating it was the same sentence twice. -->
+          {#if searchQ}
+            <p class="px-3 py-6 text-center text-ui-xs text-muted-foreground">No diagrams match.</p>
+          {/if}
         {:else}
           {#each Object.entries(grouped) as [group, items]}
             <p class="px-2 pb-1 pt-3 text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground first:pt-1">
@@ -431,13 +431,14 @@
 
       {:else}
         <!-- State A: Empty state -->
-        <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-          <GitBranch class="size-8 shrink-0 text-muted-foreground" />
-          <div>
-            <p class="text-ui-sm font-medium text-muted-foreground">No diagram selected</p>
-            <p class="mt-0.5 text-ui-xs text-muted-foreground">Pick one from the list or create a new one</p>
-          </div>
-        </div>
+        <EmptyState
+          class="flex-1 justify-center"
+          icon={GitBranch}
+          title={filtered.length ? 'No diagram open' : 'No diagrams yet'}
+          description={filtered.length ? 'Pick one from the list, or start a new one.' : 'Draw how your tables relate, or anything else, with Mermaid. Diagrams are saved per connection.'}
+        >
+          <Button size="sm" onclick={startNew}>New diagram</Button>
+        </EmptyState>
       {/if}
     </div>
   </div>

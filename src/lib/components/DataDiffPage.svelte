@@ -1,5 +1,6 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import EmptyState from './EmptyState.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import GitCompare from '@lucide/svelte/icons/git-compare'
   import { getAppScale } from '$lib/app-zoom.js'
@@ -921,14 +922,11 @@
       <Loader2 class="size-5 shrink-0 animate-spin text-muted-foreground" />
     </div>
   {:else}
-    <div class="flex flex-1 flex-col items-center justify-center gap-4">
-      <div class="flex size-14 items-center justify-center rounded-full border border-border/15 bg-muted/8">
-        <GitCompare class="size-6 shrink-0 opacity-20" />
-      </div>
-      <div class="text-center">
-        <p class="text-ui-sm font-medium text-foreground">Compare any two data sources</p>
-        <p class="mt-1 text-ui-xs text-muted-foreground">{bothReady ? 'Tables or SQL, even across different hosts' : 'Pick a table or write SQL for the source and the target'}</p>
-      </div>
-    </div>
+    <EmptyState
+      class="flex-1 justify-center"
+      icon={GitCompare}
+      title="Compare any two data sources"
+      description={bothReady ? 'Tables or SQL, even across different hosts. Press Compare to see what differs.' : 'Pick a table or write SQL for the source and the target, above.'}
+    />
   {/if}
 </div>
