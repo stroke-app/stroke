@@ -81,13 +81,20 @@
   const filteredGroups = $derived.by(() => {
     const q = query.toLowerCase().trim();
     if (!q) return groups;
+    // Each word typed has to start a word of the description: "tab" listed
+    // Switch database, from the middle of "database". Several words may come
+    // in any order ("tab close"). Key names still match anywhere ("ctrl w").
+    const tokens = q.split(/\s+/).filter(Boolean);
+    /** @param {string} desc */
+    const descMatches = (desc) => {
+      const words = desc.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      return tokens.every((t) => words.some((w) => w.startsWith(t)) || (/[^\p{L}\p{N}]/u.test(t) && desc.toLowerCase().includes(t)));
+    };
     return groups
       .map((g) => ({
         ...g,
         shortcuts: g.shortcuts.filter(
-          (s) =>
-            s.desc.toLowerCase().includes(q) ||
-            comboText(s.combo).includes(q),
+          (s) => descMatches(s.desc) || comboText(s.combo).includes(q),
         ),
       }))
       .filter((g) => g.shortcuts.length > 0);
