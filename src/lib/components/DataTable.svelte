@@ -6953,6 +6953,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   const SHIMMER_PERIOD = 1400
   /** True while any skeleton row was painted this frame - drives the shimmer loop. */
   let _sawSkeleton = false
+  /** Skeleton bar opacity over the muted text colour. */
+  const SKELETON_ALPHA = 0.16
   let _shimmerPhase = 0
   let _lastShimmerFrame = 0
   /** The frame's highlight gradient, built once and shared by every skeleton row.
@@ -7010,12 +7012,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       any = true
     }
     if (!any) return
-    ctx.fillStyle = withAlpha(c.cMutedBg, 0.4)
+    // The muted text colour, faint: --muted at 40% was the old fill, and on a
+    // near-black theme (Mono's --muted is L 0.15) it came out a shade off the
+    // background, so the bars all but vanished.
+    ctx.fillStyle = withAlpha(c.cMuted, SKELETON_ALPHA)
     ctx.fill()
     if (!_shimmerOn) return
     // Same path again under the sweep. The gradient is transparent outside the
     // band, so bars away from it are untouched without testing them.
-    if (!_shimmerFill) _shimmerFill = buildShimmerFill(ctx, c.cMutedBg)
+    if (!_shimmerFill) _shimmerFill = buildShimmerFill(ctx, c.cMuted)
     ctx.fillStyle = _shimmerFill
     ctx.fill()
   }
@@ -7039,7 +7044,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // mid-grid once a period - a blink, exactly on the beat.
     const cx = -band + _shimmerPhase * (_viewportWidth + band * 2)
     const g = ctx.createLinearGradient(cx - band / 2, 0, cx + band / 2, band * 0.35)
-    const peak = 0.34
+    const peak = SKELETON_ALPHA * 0.8
     g.addColorStop(0, withAlpha(mutedBg, 0))
     g.addColorStop(0.35, withAlpha(mutedBg, peak * 0.45))
     g.addColorStop(0.5, withAlpha(mutedBg, peak))
@@ -7096,7 +7101,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   /** @param {CanvasRenderingContext2D} ctx */
   function drawBodyRow(ctx, idx, ry, c) {
     const rh = ROW_HEIGHT
-    if (windowed && rows[idx] === undefined) { _rowBg = null; drawLoadingRow(ctx, idx, ry, rh, c); return }
+    if (windowed && rows[idx] === undefined) {
+      _rowBg = null
+      drawLoadingRow(ctx, idx, ry, rh, c)
+      // The same gutter (checkbox, row number) and grid as a loaded row, so the
+      // table's structure runs on past the last loaded row and only the values
+      // are placeholders.
+      const sl = c.scrollLeft
+      if (gutterWidth - sl > Math.max(0, c.stripX0) && -sl < Math.min(c.viewportWidth, c.stripX1)) drawRowGutters(ctx, idx, -sl, ry, rh, c)
+      drawRowGrid(ctx, idx, ry, rh, c)
+      return
+    }
     syncRowDisplayCache(idx)
     const isSel = selected.has(idx)
     const isPendingDelete = hasPendingDeletes && pendingDeletes.has(idx)
@@ -7245,6 +7260,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
     }
 
+    drawRowGrid(ctx, idx, ry, rh, c)
+  }
+
+  /**
+   * The row's grid lines, in the active grid style. Shared by loaded and
+   * skeleton rows: a skeleton row that skipped it drew bars on a bare
+   * background, so the grid stopped at the last loaded row and the rows still
+   * coming read as a different layout.
+   * @param {CanvasRenderingContext2D} ctx
+   */
+  function drawRowGrid(ctx, idx, ry, rh, c) {
     // ── Batched grid pass ───────────────────────────────────────────────────
     // All separators (column edges, virtual edges, gutter, bottom row line) are
     // collected into ONE path and stroked once - instead of a beginPath/stroke
