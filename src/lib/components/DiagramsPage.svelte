@@ -107,7 +107,6 @@
   let draftCode = $state('')
   let draftName = $state('')
   let draftGroup = $state('Default')
-  let confirmingDelete = $state(false)
   let fullscreenCode = $state(/** @type {string | null} */ (null))
 
   // The diagram list folds away for a wide canvas; remembered across sessions.
@@ -140,7 +139,6 @@
     draftName = 'Untitled Diagram'
     draftGroup = 'Default'
     selectedId = null
-    confirmingDelete = false
   }
 
   function startEdit() {
@@ -171,12 +169,25 @@
     isNew = false
   }
 
-  function confirmDelete() {
+  /** No confirm: it goes at once and the toast offers Undo. */
+  function removeSelected() {
     if (!selectedId) return
-    deleteDiagram(selectedId)
+    const id = selectedId
+    const name = selected?.name ?? ''
+    const undo = deleteDiagram(id)
     selectedId = null
-    confirmingDelete = false
-    toast.success('Diagram deleted')
+    if (!undo) return
+    toast.message('Diagram deleted', {
+      description: name,
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          if (undo()) selectedId = id
+          else toast.error("Couldn't undo: the diagrams changed since.")
+        },
+      },
+    })
   }
 
   /** @param {KeyboardEvent} e */
@@ -194,8 +205,12 @@
 
 <div class="flex h-full min-h-0 flex-col overflow-hidden bg-background">
   <!-- Page header -->
-  <div class="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
+  <div class="flex min-h-13 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
     <div class="flex min-w-0 items-center gap-1.5">
+      <!-- With no diagram yet there is no list to show, nothing to search and
+           no count beyond 0: the rail, its toggle and the second New diagram
+           button wait for the first one. -->
+      {#if all.length > 0}
       <button
         type="button"
         onclick={toggleList}
@@ -206,8 +221,10 @@
       >
         {#if listOpen}<PanelLeftClose class="size-3.5 shrink-0" />{:else}<PanelLeftOpen class="size-3.5 shrink-0" />{/if}
       </button>
+      {/if}
       <h2 class="text-ui-sm font-medium text-foreground">Diagrams</h2>
     </div>
+    {#if all.length > 0}
     <Button
       onclick={startNew}
        size="sm"
@@ -215,12 +232,13 @@
       <Plus class="size-3 shrink-0" />
       New diagram
     </Button>
+    {/if}
   </div>
 
   <!-- Body: sidebar + main -->
   <div class="flex min-h-0 flex-1 overflow-hidden">
     <!-- Left sidebar -->
-    <div class="flex w-56 shrink-0 flex-col overflow-hidden border-r border-border/50 bg-panel" style:display={listOpen ? null : 'none'}>
+    <div class="flex w-56 shrink-0 flex-col overflow-hidden border-r border-border/50 bg-panel" style:display={listOpen && all.length > 0 ? null : 'none'}>
       <!-- Search -->
       <div class="shrink-0 border-b border-border/40 px-2 py-2">
         <div class="relative flex items-center">
@@ -251,7 +269,7 @@
               {@const Icon = diagramIcon(d.code)}
               <button
                 type="button"
-                onclick={() => { selectedId = d.id; editing = false; isNew = false; confirmingDelete = false }}
+                onclick={() => { selectedId = d.id; editing = false; isNew = false }}
                 class={cn(
                   'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors cursor-pointer',
                   selectedId === d.id
@@ -358,25 +376,13 @@
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Edit"
             ><Pencil class="size-3.5 shrink-0" /></button>
-            {#if confirmingDelete}
-              <button
-                type="button"
-                onclick={confirmDelete}
-                class="inline-flex h-7 items-center gap-1 rounded-md bg-destructive px-2 text-ui-3xs text-destructive-foreground hover:opacity-90"
-              ><Check class="size-3 shrink-0" />Confirm</button>
-              <button aria-label="Cancel delete" title="Cancel delete"
-                type="button"
-                onclick={() => confirmingDelete = false}
-                class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              ><X class="size-3.5 shrink-0" /></button>
-            {:else}
-              <button
-                type="button"
-                onclick={() => confirmingDelete = true}
-                class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
-                title="Delete"
-              ><Trash2 class="size-3.5 shrink-0" /></button>
-            {/if}
+            <button
+              type="button"
+              onclick={removeSelected}
+              class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
+              title="Delete"
+              aria-label="Delete"
+            ><Trash2 class="size-3.5 shrink-0" /></button>
             <div class="mx-1 h-4 w-px bg-border/40"></div>
             <button
               type="button"
