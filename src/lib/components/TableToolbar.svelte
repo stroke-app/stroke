@@ -1314,7 +1314,7 @@
         type="button"
         class={cn("inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30", hideAt(12))}
         disabled={loading || columns.length === 0 || readonly}
-        title={readonly ? "Read-only mode" : `Stage a new row (${KEY.addRow}), again for another`}
+        title={readonly ? "Read-only mode" : `Stage a new row, one more each press (${KEY.addRow})`}
         onclick={onaddrow}
       >
         <Icon name="plus" class="size-3.5 shrink-0" />
