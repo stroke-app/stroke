@@ -1949,10 +1949,10 @@
       () => { settings = updateSettings({ insetPanel: settings.insetPanel === false }); },
     )}
   {/if}
-  {#if show('Animate panels', 'Slide the sidebar, the terminal and the AI panel open and closed')}
+  {#if show('Animate panels', 'Slide the sidebar, the terminal and the AI panel; menus and dialogs ease in')}
     {@render switchRow(
       'Animate panels',
-      'The sidebar, the terminal dock and the AI panel slide open and closed. Off, they appear at once.',
+      'The sidebar, the terminal dock and the AI panel slide, and menus and dialogs ease in. Off, everything appears at once.',
       settings.slidePanels === true,
       () => { settings = updateSettings({ slidePanels: settings.slidePanels !== true }); },
     )}

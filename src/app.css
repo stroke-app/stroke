@@ -1969,3 +1969,48 @@ html[data-layout="inset"] :not(:has(> [data-studio-region="statusbar"])) > [data
 html[data-layout="inset"] [data-studio-panel]:first-child {
   margin-top: 0.5rem;
 }
+
+/* ── Surfaces arriving (Settings → Appearance → Animate panels) ──────────────
+   Hover and press colours still snap (see "Native feel"). What moves is a
+   surface arriving: a menu grows from the edge of what opened it, a dialog
+   settles in, a pressed button gives a little, a check pops in. Short (120 to
+   160ms), ease-out, transform and opacity only, so the compositor does it.
+   Gated on the panel-motion switch: on by default where WebKit composites on
+   the GPU (macOS, Windows), off on Linux's software renderer, where a scaling
+   surface repainted its shadow every frame. Reduced motion zeroes all of it
+   (the blocks above). Submenus stay fade-only: they open under a pointer
+   already moving toward them. */
+@keyframes stroke-surface-in {
+  from { opacity: 0; transform: scale(0.97); }
+}
+@keyframes stroke-dialog-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+@keyframes stroke-check-in {
+  from { opacity: 0; transform: scale(0.6); }
+}
+html:not([data-panel-motion="off"]) :is(
+  [data-slot="dropdown-menu-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="popover-content"],
+  [data-slot="select-content"]
+)[data-state="open"] {
+  transform-origin: var(--bits-floating-transform-origin, top center);
+  animation: stroke-surface-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-state="open"] {
+  animation: stroke-dialog-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+/* The command menu opens many times an hour: the shorter, smaller motion. */
+html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-command-dialog][data-state="open"] {
+  animation: stroke-surface-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+html:not([data-panel-motion="off"]) [data-slot="button"] {
+  transition: transform 80ms cubic-bezier(0.2, 0, 0, 1);
+}
+html:not([data-panel-motion="off"]) [data-slot="button"]:active:not(:disabled) {
+  transform: scale(0.98);
+}
+html:not([data-panel-motion="off"]) [data-slot="checkbox-indicator"] > svg {
+  animation: stroke-check-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
