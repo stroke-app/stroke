@@ -465,6 +465,9 @@
 <div class="flex h-full min-h-0 overflow-hidden">
 
   <!-- ── Sidebar ────────────────────────────────────────────────────────── -->
+  <!-- Only once there is a snapshot to list: before that it was an empty
+       column with a second New button beside the page's own Capture. -->
+  {#if loading || snapshots.length > 0}
   <div class="flex w-64 shrink-0 flex-col overflow-hidden border-r border-border/30 bg-panel">
 
     <!-- Sidebar header -->
@@ -592,6 +595,7 @@
       {/if}
     </div>
   </div>
+  {/if}
 
   <!-- ── Right: comparison ──────────────────────────────────────────────── -->
   <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
