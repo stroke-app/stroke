@@ -1050,7 +1050,7 @@
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="start" class="min-w-64 p-0 text-ui-sm">
             <div class="flex items-center border-b border-border/50 px-3 py-1.5">
-              <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.savedViews', 'Saved views')}</span>
+              <span class="text-ui-2xs font-medium text-muted-foreground">{$tx('tb.savedViews', 'Saved views')}</span>
               <button
                 type="button"
                 class="ml-auto rounded px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-[background-color,color] hover:bg-accent hover:text-foreground"
@@ -1209,7 +1209,7 @@
         {/snippet}
         {#snippet header()}
           <div class="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.columns', 'Columns')}</span>
+            <span class="text-ui-2xs font-medium text-muted-foreground">{$tx('tb.columns', 'Columns')}</span>
             <!-- Both actions, whenever both mean something. One toggle that
                  flipped on "anything hidden" made "Hide all" unreachable as
                  soon as a single column was hidden. -->
@@ -1271,7 +1271,7 @@
         {/snippet}
         {#snippet header()}
           <div class="border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.jumpToHead', 'Jump to column')}</span>
+            <span class="text-ui-2xs font-medium text-muted-foreground">{$tx('tb.jumpToHead', 'Jump to column')}</span>
           </div>
         {/snippet}
         {#snippet item(it)}

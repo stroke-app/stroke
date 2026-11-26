@@ -754,7 +754,7 @@
   {/if}
   {#if dropSql}
     <div class="px-5 py-4">
-      <p class="mb-2 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Will execute</p>
+      <p class="mb-2 text-ui-xs font-medium text-muted-foreground">Will execute</p>
       <div class="rounded-lg border border-border/20 bg-muted/[0.3] px-3.5 py-2.5">
         <code class="break-all font-mono text-ui-xs text-destructive">{dropSql}</code>
       </div>

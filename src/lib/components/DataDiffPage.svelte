@@ -617,7 +617,7 @@
         <div class="flex items-center gap-2.5 px-5 py-2.5">
           <span class="flex w-[4.625rem] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-info"></span>
-            <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-info">Source</span>
+            <span class="text-ui-xs font-medium text-info">Source</span>
           </span>
           {@render ConnSelect({ id: 'L.conn', value: L.connId, onchange: (v) => { L = { ...L, connId: v }; onConnChange('L') } })}
           {#if L.mode === 'table'}
@@ -654,7 +654,7 @@
         <div class="flex items-center gap-2.5 px-5 py-2.5">
           <span class="flex w-[4.625rem] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-success"></span>
-            <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-success">Target</span>
+            <span class="text-ui-xs font-medium text-success">Target</span>
           </span>
           {@render ConnSelect({ id: 'R.conn', value: R.connId, onchange: (v) => { R = { ...R, connId: v }; onConnChange('R') } })}
           {#if R.mode === 'table'}
@@ -684,7 +684,7 @@
 
     <!-- Key cols + compare -->
     <div class="flex items-center gap-2.5 border-t border-border/15 px-5 py-2.5">
-      <span class="w-[4.625rem] shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
+      <span class="w-[4.625rem] shrink-0 text-ui-xs font-medium text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
       <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {#each [...selectedKeyCols] as col}
           <button onclick={() => toggleKeyCol(col)}

@@ -1060,7 +1060,7 @@
     {#if activeTab === 'relations'}
     <div class="font-mono">
       <div class="flex items-center gap-2 border-b border-border/30 bg-muted/[0.08] px-3 py-2">
-        <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Foreign key relations</span>
+        <span class="text-ui-xs font-medium text-muted-foreground">Foreign key relations</span>
       </div>
       <table class="cell-fields border-collapse" style="table-layout: fixed; width: max-content; min-width: 100%">
         <colgroup>
@@ -1113,7 +1113,7 @@
     <div class="font-mono">
       <div class="flex items-center gap-2 border-b border-border/30 bg-muted/[0.08] px-3 py-2">
         <GitBranch class="size-3 shrink-0 text-muted-foreground" />
-        <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+        <span class="text-ui-xs font-medium text-muted-foreground">
           Triggers
           {#if columnSearch && visibleTriggers.length !== tableTriggers.length}
             <span class="ml-1 font-normal text-muted-foreground">({visibleTriggers.length}/{tableTriggers.length})</span>

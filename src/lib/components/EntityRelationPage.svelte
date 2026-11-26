@@ -2403,7 +2403,7 @@
                 onclick={() => (mermaidCodeOpen = false)}
                 class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               ><PanelLeftClose class="size-3.5 shrink-0" /></button>
-              <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Mermaid</span>
+              <span class="shrink-0 text-ui-xs font-medium text-muted-foreground">Mermaid</span>
               <span class="min-w-0 truncate font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{shownTables.length} tables, {mermaidRels.length} relationships">
                 {shownTables.length} {plural(shownTables.length, "table")} · {mermaidRels.length} {plural(mermaidRels.length, "link")}
               </span>
@@ -2453,7 +2453,7 @@
           {/if}
           <div class="flex min-w-0 flex-1 flex-col">
             <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2.5">
-              <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Preview</span>
+              <span class="text-ui-xs font-medium text-muted-foreground">Preview</span>
               <span class="ml-auto"></span>
               <button type="button" title="Zoom out" onclick={() => mermaidViewer?.dispatch('diagram:zoomout')} class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5 shrink-0" /></button>
               <button type="button" title="Zoom in" onclick={() => mermaidViewer?.dispatch('diagram:zoomin')} class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5 shrink-0" /></button>
@@ -2514,7 +2514,7 @@
               <thead class="sticky top-0 z-10 bg-panel">
                 <tr>
                   {#each ['Table', 'Column', 'Type', 'Null', 'Key', 'References'] as h (h)}
-                    <th class="border-b border-border/60 px-3 py-1.5 text-left text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{h}</th>
+                    <th class="border-b border-border/60 px-3 py-1.5 text-left text-ui-xs font-medium text-muted-foreground">{h}</th>
                   {/each}
                 </tr>
               </thead>
