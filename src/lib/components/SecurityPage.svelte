@@ -720,6 +720,9 @@
 
       <!-- Policies -->
     {:else if activeTab === "policies"}
+      <!-- The count and New policy wait for the first policy: with none, the
+           empty state below says 0 and offers the same button. -->
+      {#if (policies?.length ?? 0) > 0}
       <div
         class="flex items-center justify-between border-b border-border/40 px-3 py-2"
       >
@@ -736,6 +739,7 @@
           <Plus class="size-3.5 shrink-0" />New policy
         </button>
       </div>
+      {/if}
 
       {#if policiesLoading || policies === null}
         <SkeletonRows cols={[45, 20, 15, 15, 15]} />
