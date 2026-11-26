@@ -287,6 +287,18 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Escape', desc: 'Dismiss / close' },
     ],
   },
+  {
+    // Last on purpose: these keys act only on a focused sidebar row, so a
+    // conflict check for Mod+C should name the grid's Copy cell value first.
+    label: 'Sidebar table row',
+    icon: 'table-2',
+    shortcuts: [
+      { combo: 'Space', desc: "Peek at the table's columns" },
+      { combo: 'Mod+C', desc: "Copy the table's name" },
+      { combo: 'P', desc: 'Pin or unpin the table' },
+      { combo: 'X', desc: 'Select the table' },
+    ],
+  },
 ]
 
 /**
