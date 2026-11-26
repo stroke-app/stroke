@@ -3034,6 +3034,7 @@
                             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(tableName, e.shiftKey); } }}
                             role="checkbox"
                             aria-checked={isSelected}
+                            aria-label={`Select ${tableName}`}
                             tabindex="-1"
                           >
                             {#if isSelected}
@@ -3269,6 +3270,7 @@
                         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(table.name, e.shiftKey); } }}
                         role="checkbox"
                         aria-checked={isSelected}
+                        aria-label={`Select ${table.name}`}
                         tabindex="-1"
                       >
                         {#if isSelected}
