@@ -160,10 +160,12 @@
   // Every word, in any order: "page size" has to find "Rows per page ... page
   // size", and "theme dark" the dark theme row.
   const qWords = $derived(q.split(/\s+/).filter(Boolean));
+  // At word starts: anywhere, "port" found every Import, Export and Report.
   const show = (/** @type {string} */ title, /** @type {string} */ desc = '') => {
     if (!q) return true;
     const hay = `${title} ${desc}`.toLowerCase();
-    return qWords.every((w) => hay.includes(w));
+    const words = hay.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    return qWords.every((w) => words.some((x) => x.startsWith(w)) || (/[^\p{L}\p{N}]/u.test(w) && hay.includes(w)));
   };
   const activeCategory = $derived(CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[0]);
   // A caller asking for a page (the command palette's "Keyboard shortcuts")
