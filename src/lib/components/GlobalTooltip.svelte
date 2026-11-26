@@ -187,9 +187,11 @@
   class={cn(
     'pointer-events-none fixed z-[300] max-w-xs rounded-md border border-border/70 bg-popover px-2 py-1',
     'text-ui-2xs leading-snug text-popover-foreground elevate-2-rim',
-    'transition-opacity duration-75 ease-out',
+    // A 2px drift as it fades in: it reads as coming from the trigger rather
+    // than switching on. Small enough to be cheap on any renderer.
+    'transition-[opacity,translate] duration-100 ease-out',
     'motion-reduce:transition-none',
-    shown ? 'opacity-100' : 'opacity-0',
+    shown ? 'translate-y-0 opacity-100' : '-translate-y-0.5 opacity-0',
   )}
   style="top:{top}px; left:{left}px;"
   style:visibility={text ? 'visible' : 'hidden'}
