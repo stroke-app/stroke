@@ -61,7 +61,11 @@ export function commandFilter(value, search, keywords = []) {
     if (label.startsWith(s)) return 0.95
     if (wordStart(label)) return 0.9
   }
-  if (wordStart(v)) return 0.7
+  // A word of the hidden keywords: the earlier it comes, the more the row is
+  // about it. "queries" leads Query history's keywords and closes Instance
+  // insights' ("... slow queries"); level, Instance insights won on page order.
+  const vi = v.split(/[^a-z0-9]+/).filter(Boolean).findIndex((w) => w.startsWith(s))
+  if (vi >= 0) return 0.7 + 0.05 / (1 + vi)
   // Inside a word of the hidden keywords only from 3 letters: two letters sit
   // in the middle of half of them, so "ai" listed Migrations (f-ai-led) and
   // Schema diagram (merm-ai-d) above Ask AI.

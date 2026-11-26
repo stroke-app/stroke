@@ -749,11 +749,12 @@
     const best = new Map(ROOT_GROUPS.map((g) => [g, localFilter.best(g)]))
     return [...ROOT_GROUPS].sort((a, b) => (best.get(b) ?? 0) - (best.get(a) ?? 0))
   })
-  // Go to page is one flat list, so its order is the ranking: best match first
-  // while searching, as bits-ui sorted it. Same value and keywords the row
-  // scores itself with (pageRow), so the two agree.
+  // Page rows, best match first while searching, as bits-ui sorted them: Go to
+  // page is one flat list, and on the root page Views is the group whose rows
+  // differ most. Same value and keywords the row scores itself with (pageRow),
+  // so the order and the highlight agree.
   const pagesRanked = $derived.by(() => {
-    const q = page === 'pages' ? localFilter.search : ''
+    const q = page === 'pages' || page === 'root' ? localFilter.search : ''
     if (!q) return pageItems
     const scoreOf = (/** @type {typeof pageItems[number]} */ it) => {
       const shown = $tx('cmd.' + it.label, it.label)
@@ -1133,7 +1134,7 @@
           {#snippet group_views()}
             {#if connected}
             <Command.Group value="views" heading={$tx('group.Views', 'Views')}>
-              {#each listAll ? pageItems : pageItems.slice(0, FIRST_PAINT_ROWS) as it (it.label)}
+              {#each listAll ? pagesRanked : pagesRanked.slice(0, FIRST_PAINT_ROWS) as it (it.label)}
                 {@render pageRow(it)}
               {/each}
             </Command.Group>

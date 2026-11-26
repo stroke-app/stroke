@@ -59,3 +59,14 @@ describe('cachedCommandFilter', () => {
     expect(f('x', 'alp', ['Beta'])).toBe(0)
   })
 })
+
+describe('commandFilter keyword position', () => {
+  it('ranks a row whose keywords start with the word above one that ends with it', () => {
+    const history = commandFilter('queries query history saved queries past runs charts', 'queries', ['Query history'])
+    const insights = commandFilter('open instance insights monitoring sessions processes activity locks replication config pg_settings slow queries', 'queries', ['Instance insights'])
+    expect(history).toBeGreaterThan(insights)
+    expect(insights).toBeGreaterThanOrEqual(0.7)
+    // Still below any match in the visible label.
+    expect(history).toBeLessThan(commandFilter('x', 'query', ['Query history']))
+  })
+})
