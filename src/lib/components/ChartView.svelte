@@ -461,7 +461,7 @@
       </div>
 
       <!-- Separator -->
-      <span class="h-4 w-px shrink-0 bg-border/50"></span>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
 
       <!-- Axis pickers, integrated label + select tokens -->
       {#snippet axisPicker(

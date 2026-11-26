@@ -1878,7 +1878,7 @@
         <ChevronDown class="size-3.5 shrink-0 rotate-90" />
         Rows
       </button>
-      <span class="mx-0.5 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
     {/if}
     <Network class="size-3.5 shrink-0 text-muted-foreground" aria-label="Schema diagram" />
 
@@ -2226,7 +2226,7 @@
         </DropdownMenu.Content>
       </DropdownMenu.Root>
 
-      <div class="h-4 w-px shrink-0 bg-border/60"></div>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
 
       {#if erdView === 'canvas'}
       <!-- Diagram settings: cards, layout and lines, so the Diagram's alone. -->

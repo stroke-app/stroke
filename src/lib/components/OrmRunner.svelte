@@ -417,7 +417,7 @@
       Format
     </Button>
 
-    <div class="h-4 w-px shrink-0 bg-border/80" aria-hidden="true"></div>
+    <span class="w-2 shrink-0" aria-hidden="true"></span>
 
     <div
     class= "field-surface inline-flex h-7 items-center bg-muted/20 p-0.5"
@@ -442,10 +442,7 @@
           >{copied === "sql" ? "Copied!" : "Copy SQL"}</span
         >
       </Button>
-      <div
-        class="mx-0.5 h-3.5 w-px shrink-0 bg-border/70"
-        aria-hidden="true"
-      ></div>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
       <Button
         type="button"
         variant="ghost"

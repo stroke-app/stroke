@@ -363,7 +363,7 @@
           {rows.length.toLocaleString('en-US')}
           {rows.length === 1 ? 'row' : 'rows'}{#if hidden.size}{' '}· {shownColumns.length} of {columns.length} columns{/if}
         </span>
-        <div class="mx-0.5 h-4 w-px bg-border"></div>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
       {/if}
 
       <button

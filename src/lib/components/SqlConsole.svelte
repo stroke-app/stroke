@@ -1581,7 +1581,7 @@
         </button>
       {/if}
       {#if resultShown && currentDisplay.rows.length > 0}
-        <span class="mx-1 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
         {#if findOpen}
           <div class="search-shell flex h-7 items-center gap-1 ps-2 pe-0.5" role="search">
             <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />

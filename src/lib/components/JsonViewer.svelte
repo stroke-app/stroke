@@ -174,7 +174,7 @@
         >{shownRows.toLocaleString()} of {rowCount.toLocaleString()} {plural(rowCount, "row")}</span>
       {:else if rowCount > 0}
         <span class="select-none px-2 font-mono text-ui-2xs text-muted-foreground">{rowCount} {plural(rowCount, "row")}</span>
-        <div class="h-4 w-px bg-border/60"></div>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
       {/if}
 
       <JsonWrapToggle />
@@ -215,7 +215,7 @@
         </button>
       {/if}
 
-      <div class="h-4 w-px bg-border/60"></div>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
 
       <button
         type="button"

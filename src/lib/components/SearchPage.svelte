@@ -367,7 +367,7 @@
           ><X class="size-3.5 shrink-0" /></button>
         {/if}
         {#if optionsSupported}
-          <span class="mx-0.5 h-5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
+          <span class="w-2 shrink-0" aria-hidden="true"></span>
           {#each [
             { key: 'matchCase', on: matchCase, label: 'Match case', glyph: 'Aa' },
             { key: 'wholeWord', on: wholeWord, label: 'Whole word', glyph: 'ab' },

@@ -6938,7 +6938,7 @@
         >
           <ZoomIn class="size-3 shrink-0" />
         </button>
-        <div class="mx-1 h-4 w-px bg-border"></div>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
         <!-- Export -->
         <button
           type="button"
@@ -6956,7 +6956,7 @@
         >
           <ArrowDownToLine class="size-3 shrink-0" />PNG
         </button>
-        <div class="mx-1 h-4 w-px bg-border"></div>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
         <!-- Close -->
         <button
           type="button"

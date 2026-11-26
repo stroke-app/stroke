@@ -383,7 +383,7 @@
               title="Delete"
               aria-label="Delete"
             ><Trash2 class="size-3.5 shrink-0" /></button>
-            <div class="mx-1 h-4 w-px bg-border/40"></div>
+            <span class="w-2 shrink-0" aria-hidden="true"></span>
             <button
               type="button"
               onclick={() => viewerRef?.dispatch('diagram:zoomin')}
@@ -402,7 +402,7 @@
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Reset view (double-click)"
             ><RefreshCw class="size-3.5 shrink-0" /></button>
-            <div class="mx-1 h-4 w-px bg-border/40"></div>
+            <span class="w-2 shrink-0" aria-hidden="true"></span>
             <button
               type="button"
               onclick={() => void copyDiagram()}
@@ -421,7 +421,7 @@
               class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Export PNG"
             ><Download class="size-3 shrink-0" />PNG</button>
-            <div class="mx-1 h-4 w-px bg-border/40"></div>
+            <span class="w-2 shrink-0" aria-hidden="true"></span>
             <button
               type="button"
               onclick={() => fullscreenCode = selected.code}
@@ -464,7 +464,7 @@
       <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:zoomin')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Zoom in"><ZoomIn class="size-3.5 shrink-0" /></button>
       <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:zoomout')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Zoom out"><ZoomOut class="size-3.5 shrink-0" /></button>
       <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:reset')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Reset"><RefreshCw class="size-3.5 shrink-0" /></button>
-      <div class="mx-1 h-4 w-px bg-border/40"></div>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
       <button
         type="button"
         onclick={() => fullscreenCode = null}

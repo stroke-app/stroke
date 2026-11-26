@@ -529,7 +529,7 @@
           <span class="text-ui-2xs text-warning" title="All stops at {ALL_CAP.toLocaleString()} items so the grid stays fast. Query to narrow it down.">first {ALL_CAP.toLocaleString()}</span>
         {/if}
       </div>
-      <span class="mx-1 h-4 w-px shrink-0 bg-border/50" aria-hidden="true"></span>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
       <div class="flex items-center" role="group" aria-label="View">
         {#each [{ v: 'table', l: 'Table', I: Sheet }, { v: 'json', l: 'JSON', I: Braces }] as m (m.v)}
           {@const I = m.I}

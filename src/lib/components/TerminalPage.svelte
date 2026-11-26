@@ -1720,7 +1720,7 @@
         </button>
       {/if}
       {#if onclose}
-        <span class="mx-0.5 h-4 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"

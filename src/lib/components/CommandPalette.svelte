@@ -1477,7 +1477,7 @@
             {#if lastAnswer}
               <button type="button" class={askBar} onclick={() => void copyAnswer()}>{answerCopied ? 'Copied' : 'Copy answer'} <Kbd combo="Mod+Shift+C" /></button>
             {/if}
-            <span class="h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+            <span class="w-2 shrink-0" aria-hidden="true"></span>
             <button type="button" class={cn(askBar, 'text-foreground')} onclick={continueInChat}>Continue in chat <Kbd combo="Mod+Enter" /></button>
           {/if}
         </div>
