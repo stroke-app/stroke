@@ -22,6 +22,7 @@
 - Success, warning, error, info and accent text, and highlighted SQL, now read clearly in every theme.
 - At the smallest window size the SQL results pane kept its width and its toolbar stayed whole.
 - ? and Ctrl+? / ⌘? never opened the keyboard shortcuts.
+- The command menu kept its groups in a fixed order whatever you typed, so "ai" put Advisor first and Enter opened it. The best match now comes first, and two letters no longer match inside the middle of a hidden keyword.
 - Back and forward stopped at pages that put the caret in their editor on their own (the SQL editor, an empty JSON viewer).
 - Each snapshot on the Schema timeline shows its table count again.
 

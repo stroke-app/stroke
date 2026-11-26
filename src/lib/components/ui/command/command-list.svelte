@@ -5,6 +5,7 @@
 	let {
 		ref = $bindable(null),
 		class: className,
+		children,
 		...restProps
 	} = $props();
 </script>
@@ -20,4 +21,11 @@
 		className
 	)}
 	{...restProps}
-/>
+>
+	<!-- bits-ui ranks a search by moving the best groups and rows up inside the
+	     viewport, and does nothing without one: "ai" left Views (Advisor) above
+	     the AI group, and Enter ran the wrong row. -->
+	<CommandPrimitive.Viewport>
+		{@render children?.()}
+	</CommandPrimitive.Viewport>
+</CommandPrimitive.List>

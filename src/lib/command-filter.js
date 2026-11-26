@@ -62,7 +62,10 @@ export function commandFilter(value, search, keywords = []) {
     if (wordStart(label)) return 0.9
   }
   if (wordStart(v)) return 0.7
-  if (v.includes(s) || label.includes(s)) return 0.5
+  // Inside a word of the hidden keywords only from 3 letters: two letters sit
+  // in the middle of half of them, so "ai" listed Migrations (f-ai-led) and
+  // Schema diagram (merm-ai-d) above Ask AI.
+  if (label.includes(s) || (s.length >= 3 && v.includes(s))) return 0.5
   // Several words in any order, each the start of a word: "ai chat" finds
   // Ask AI ("ask ai assistant chat query"), which as one phrase it never did.
   const tokens = s.split(/\s+/).filter(Boolean)

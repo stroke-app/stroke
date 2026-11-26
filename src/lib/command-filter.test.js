@@ -38,3 +38,11 @@ describe('commandFilter', () => {
     expect(looseLabelScore('stats', 'stts')).toBeGreaterThan(looseLabelScore('status', 'stts'))
   })
 })
+
+describe('two-letter queries', () => {
+  it('ignore letters in the middle of a hidden keyword', () => {
+    expect(commandFilter('migrations prisma drizzle applied pending failed', 'ai', ['Migrations'])).toBe(0)
+    expect(commandFilter('ai sidebar', 'ai', ['AI sidebar'])).toBeGreaterThan(0.9)
+    expect(commandFilter('migrations prisma drizzle applied pending failed', 'ile', ['Migrations'])).toBe(0.5)
+  })
+})
