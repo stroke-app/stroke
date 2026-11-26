@@ -78,6 +78,7 @@
     clearTimeout(showTimer)
     restoreTitle(currentEl)
     currentEl = null
+    still = null
     if (shown) cooledAt = performance.now()
     shown = false
   }
@@ -150,11 +151,32 @@
     if (!value) return
 
     currentEl = el
+    // The page moved under a still pointer (a panel opened, a list re-sorted):
+    // the browser reports an "over" at the spot the pointer last moved to. No
+    // tip until the pointer itself moves.
+    if (e.clientX === moveX && e.clientY === moveY) { still = { el, value }; return }
+    arm(el, value)
+  }
+
+  function arm(/** @type {Element} */ el, /** @type {string} */ value) {
+    still = null
     clearTimeout(showTimer)
     const warm = performance.now() - cooledAt < WARM_MS
     showTimer = setTimeout(() => {
       if (currentEl === el && !isOpenTrigger(el)) show(el, value)
     }, warm ? 0 : DELAY)
+  }
+
+  /** Where the pointer last moved to, and the trigger it came to rest over without moving. */
+  let moveX = NaN
+  let moveY = NaN
+  /** @type {{ el: Element, value: string } | null} */
+  let still = null
+  function onPointerMove(/** @type {PointerEvent} */ e) {
+    if (e.clientX === moveX && e.clientY === moveY) return
+    moveX = e.clientX
+    moveY = e.clientY
+    if (still && still.el === currentEl) arm(still.el, still.value)
   }
 
   function onPointerOut(/** @type {PointerEvent} */ e) {
@@ -179,6 +201,7 @@
     const opts = { capture: true, passive: true }
     document.addEventListener('pointerover', onPointerOver, true)
     document.addEventListener('pointerout', onPointerOut, true)
+    document.addEventListener('pointermove', onPointerMove, opts)
     // A click is a decision: the next tooltip waits the full delay again.
     document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('wheel', hide, opts)
@@ -189,6 +212,7 @@
       restoreTitle(currentEl)
       document.removeEventListener('pointerover', onPointerOver, true)
       document.removeEventListener('pointerout', onPointerOut, true)
+      document.removeEventListener('pointermove', onPointerMove, opts)
       document.removeEventListener('pointerdown', onPointerDown, true)
       document.removeEventListener('wheel', hide, opts)
       document.removeEventListener('scroll', hide, opts)
