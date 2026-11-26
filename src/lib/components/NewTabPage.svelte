@@ -83,7 +83,8 @@
   // and mono webfonts have no U+21E7, so "Ctrl⇧E" fell back mid-word.
   const isMac = IS_MAC
   const mod = isMac ? '⌘' : 'Ctrl'
-  const shiftKey = isMac ? '⇧' : 'Shift'
+  // The keycap glyph on every platform, as the shortcut reference and menus draw it.
+  const shiftKey = '⇧'
 
   /** `Postgres · prod-db.c1uwsk8m01gi.ap-south-1.rds.amazonaws.com` → `Postgres · prod-db`: the host's first label says enough. @param {string} w */
   function shortWhere(w) {
