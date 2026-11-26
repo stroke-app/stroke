@@ -688,7 +688,7 @@
                   <input
                     type="text"
                     value={defaultDraft[col.name] ?? displayDefault}
-                    placeholder="NULL"
+                    placeholder={displayNullable ? 'NULL' : 'No default'}
                     readonly={!canEdit}
                     class="{INP} pr-6 placeholder:text-muted-foreground {stagedValues['default:' + col.name] !== undefined ? 'text-warning' : displayDefault ? '' : 'text-muted-foreground'} {canEdit ? '' : 'cursor-default'}"
                     onfocus={(e) => {
