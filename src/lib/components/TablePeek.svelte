@@ -78,9 +78,11 @@
   aria-label="Columns of {table}"
   data-surface-in
 >
-  <div class="flex min-w-0 items-baseline gap-2 px-3 pt-2.5 pb-2">
-    <p class="min-w-0 flex-1 truncate font-medium text-foreground">{table}</p>
-    <p class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">
+  <!-- The name over the counts: side by side, the counts kept their width and
+       "application_forms" was cut to "application...". -->
+  <div class="flex min-w-0 flex-col gap-0.5 px-3 pt-2.5 pb-2">
+    <p class="min-w-0 truncate font-medium text-foreground" title={table}>{table}</p>
+    <p class="font-mono text-ui-2xs tabular-nums text-muted-foreground">
       {meta}
     </p>
   </div>
