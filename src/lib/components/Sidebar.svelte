@@ -3638,7 +3638,7 @@
               <div class="flex h-7 w-full min-w-0 items-center rounded-md bg-sidebar-accent px-1">
                 <input
                   use:selectOnMount
-                  class="h-6 min-w-0 flex-1 rounded-sm bg-transparent px-1 text-ui-sm text-foreground outline-none ring-1 ring-ring"
+                  class="no-field-frame h-6 min-w-0 flex-1 rounded-sm bg-transparent px-1 text-ui-sm text-foreground outline-none ring-1 ring-ring"
                   aria-label="Chat name"
                   bind:value={renamingChatTitle}
                   onkeydown={(e) => {
