@@ -1,6 +1,7 @@
 <script>
   import Kbd from './Kbd.svelte'
   import { toastConnectionRemoved } from "$lib/connection-undo.js";
+  import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
   import { engineId } from '$lib/connection-provider.js'
@@ -1227,6 +1228,52 @@
     return keys[0] ?? null
   })
 
+  /**
+   * The table a focused row stands for: a table row or its pin. Views, recents
+   * and databases have menus of their own and no keys yet.
+   * @param {EventTarget | null} target
+   */
+  function focusedTableName(target) {
+    const row = target instanceof Element ? target.closest('[data-sidebar-row]') : null
+    const key = row instanceof HTMLElement ? row.dataset.sidebarRow ?? '' : ''
+    const m = /^(?:table|pin):(.+)$/.exec(key)
+    return m ? m[1] : null
+  }
+
+  /**
+   * Mod+C, P and X on a focused table row. True when the key was used.
+   * @param {KeyboardEvent} e
+   */
+  function handleRowActionKey(e) {
+    if (e.altKey || e.repeat) return false
+    const name = focusedTableName(e.target)
+    if (!name) return false
+    const mod = e.ctrlKey || e.metaKey
+    const k = e.key.toLowerCase()
+    if (mod && !e.shiftKey && k === 'c') {
+      // A text selection inside the row is the user's to copy.
+      if (String(window.getSelection?.() ?? '')) return false
+      e.preventDefault()
+      void navigator.clipboard.writeText(name).then(
+        () => toast.success('Copied table name', { description: name, duration: 1500 }),
+        () => toast.error("Couldn't copy to the clipboard"),
+      )
+      return true
+    }
+    if (mod || e.shiftKey) return false
+    if (k === 'p') {
+      e.preventDefault()
+      togglePin(name)
+      // Pinning moves the row to Pinned (and unpinning moves it back), so the
+      // focused element unmounts: focus follows the table to its new row.
+      const key = `${pinnedTables.includes(name) ? 'pin' : 'table'}:${name}`
+      void tick().then(() => { kbdNav = true; focusRow(key) })
+      return true
+    }
+    if (k === 'x') { e.preventDefault(); toggleSelect(name); return true }
+    return false
+  }
+
   /** The rendered element for a row key, if it is in the DOM. @param {string | null} key */
   function rowEl(key) {
     const root = scrollContainerEl
@@ -1812,6 +1859,7 @@
   <ContextMenu.Item onSelect={() => { navigator.clipboard.writeText(name) }}>
     <Icon name="clipboard-copy" />
     Copy name
+    {#if !inTree}<ContextMenu.Shortcut combo="Mod+C" />{/if}
   </ContextMenu.Item>
   {#if sqlTables}
   <ContextMenu.Item onSelect={() => oncopycolumns(name)}>
@@ -1833,6 +1881,7 @@
       <Icon name="pin" />
       Pin table
     {/if}
+    {#if !inTree}<ContextMenu.Shortcut combo="P" />{/if}
   </ContextMenu.Item>
   {#if !inTree}
   <ContextMenu.Item onSelect={() => toggleSelect(name)}>
@@ -1843,6 +1892,7 @@
       <Icon name="square-check" />
       Select
     {/if}
+    <ContextMenu.Shortcut combo="X" />
   </ContextMenu.Item>
   {/if}
   <ContextMenu.Separator />
@@ -2548,6 +2598,11 @@
               tick().then(() => focusMainRegion())
               return
             }
+            // One key acts on the focused table, as the menu beside it lists:
+            // Mod+C copies its name, P pins it, X selects it. A row's actions
+            // were only in the right-click menu, so the keyboard could open a
+            // table and nothing else.
+            if (handleRowActionKey(e)) return
             // Tab walks the list, one row per press, because that is what the
             // key does everywhere else in this panel and pressing it twice from
             // the filter box otherwise skipped the whole list to land in the
