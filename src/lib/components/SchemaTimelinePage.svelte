@@ -1,5 +1,6 @@
 <script>
   import AlertTriangle from '@lucide/svelte/icons/triangle-alert'
+  import EmptyState from './EmptyState.svelte'
   import PenLine from '@lucide/svelte/icons/pen-line'
   import SelectMenu from './SelectMenu.svelte'
   import DbIcon from './DbIcon.svelte'
@@ -526,9 +527,8 @@
         </div>
 
       {:else if snapshots.length === 0}
-        <p class="px-2 py-6 text-ui-xs leading-relaxed text-muted-foreground">
-          No snapshots yet. Capture the schema to start a timeline.
-        </p>
+        <!-- The page beside the list explains an empty timeline and offers
+             Capture snapshot; the list saying it too was the same thing twice. -->
 
       {:else}
         {#each snapshots as snap (snap.id)}
@@ -596,30 +596,23 @@
   <!-- ── Right: comparison ──────────────────────────────────────────────── -->
   <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
     {#if !beforeSnap || !afterSnap}
-      <div class="flex flex-1 flex-col items-center justify-center px-8">
-        <div class="w-full max-w-sm">
-          <h2 class="text-ui-lg font-semibold tracking-tight text-foreground">Compare schema snapshots</h2>
-          <p class="mt-1.5 text-ui-xs leading-relaxed text-muted-foreground">
-            {#if snapshots.length === 0}
-              Capture the schema now, change it, then capture again to see what moved.
-            {:else if snapshots.length === 1}
-              One snapshot so far. Capture another after a change, then compare the two.
-            {:else}
-              Hover a snapshot and pick <span class="text-foreground">Base</span>, then another as <span class="text-foreground">Compare</span>.
-            {/if}
-          </p>
-          {#if snapshots.length < 2}
-            <button
-              onclick={openCaptureModal}
-              disabled={capturing}
-              class="mt-4 inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground px-3.5 text-ui-xs font-medium text-background hover:bg-foreground/90 disabled:opacity-40"
-            >
-              <Camera class="size-3.5 shrink-0" />
-              Capture snapshot
-            </button>
+      <EmptyState class="flex-1 justify-center" icon={ArrowLeftRight} title="Compare schema snapshots">
+        {#snippet body()}
+          {#if snapshots.length === 0}
+            Capture the schema now, change it, then capture again to see what moved.
+          {:else if snapshots.length === 1}
+            One snapshot so far. Capture another after a change, then compare the two.
+          {:else}
+            Hover a snapshot and pick <span class="text-foreground">Base</span>, then another as <span class="text-foreground">Compare</span>.
           {/if}
-        </div>
-      </div>
+        {/snippet}
+        {#if snapshots.length < 2}
+          <Button size="sm" onclick={openCaptureModal} disabled={capturing}>
+            <Camera class="size-3.5 shrink-0" />
+            Capture snapshot
+          </Button>
+        {/if}
+      </EmptyState>
 
     {:else}
       <!-- Comparison header bar -->
