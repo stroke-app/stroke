@@ -299,9 +299,14 @@
     if (!hit.sampleRow) return []
     const n = matchCase ? needle : needle.toLowerCase()
     const cells = hit.columns.map((c, i) => {
-      const text = displayValue(hit.sampleRow?.[i])
-      const hay = matchCase ? String(hit.sampleRow?.[i] ?? '') : String(hit.sampleRow?.[i] ?? '').toLowerCase()
-      return { name: c.name, text, hit: !!n && hay.includes(n), isNull: hit.sampleRow?.[i] == null }
+      const v = hit.sampleRow?.[i]
+      const raw = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+      const at = n ? (matchCase ? raw : raw.toLowerCase()).indexOf(n) : -1
+      // A match deep in a long value (HTML, JSON, a log line) was cut off with
+      // the rest, so the cell said nothing about why the row matched: start
+      // just before the match instead.
+      const text = at > 12 ? '…' + displayValue(raw.slice(at - 10)) : displayValue(v)
+      return { name: c.name, text, hit: at >= 0, isNull: v == null }
     })
     return [...cells.filter((c) => c.hit), ...cells.filter((c) => !c.hit)].slice(0, 6)
   }
