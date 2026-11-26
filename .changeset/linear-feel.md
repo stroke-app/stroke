@@ -26,6 +26,7 @@
 - The command menu kept its groups in a fixed order whatever you typed, so "ai" put Advisor first and Enter opened it. The best match now comes first, and two letters no longer match inside the middle of a hidden keyword.
 - Back and forward stopped at pages that put the caret in their editor on their own (the SQL editor, an empty JSON viewer).
 - Each snapshot on the Schema timeline shows its table count again.
+- The theme list in the command menu opened at the top with the current theme out of sight, and every dropdown opened on its first row. Both open on the current choice now, scrolled into view.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, diagram or schema snapshot asks nothing and offers Undo for 8 seconds instead.

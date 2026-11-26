@@ -39,6 +39,9 @@
     header,
     /** optional snippet() rendered below the list (e.g. a footer action) */
     footer,
+    /** The value chosen now. With nothing typed the menu opens on that row,
+     *  scrolled into view, instead of the first one. */
+    current = undefined,
   } = $props();
 
   let search = $state("");
@@ -105,9 +108,24 @@
   // top result as you type, so Enter picked whatever the previous query had
   // highlighted ("sql" then "dyn" + Enter chose SQL Server). Reset it per query.
   let highlighted = $state("");
+  /** The row for `current`, while nothing is typed. */
+  const currentRow = $derived(
+    current == null || search.trim() ? null : (shown.find((it) => !it.disabled && String(it.value) === String(current)) ?? null),
+  );
   $effect(() => {
     search;
-    highlighted = shown.find((it) => !it.disabled)?.value ?? "";
+    highlighted = currentRow?.value ?? shown.find((it) => !it.disabled)?.value ?? "";
+  });
+  // A long list opened at its top with the chosen row out of sight (a schema
+  // or a database far down): bring it into view once the rows are there.
+  $effect(() => {
+    if (!open || !currentRow || !listEl) return;
+    const value = String(currentRow.value);
+    const list = listEl;
+    const raf = requestAnimationFrame(() => {
+      list.querySelector(`[data-command-item][data-value="${CSS.escape(value)}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(raf);
   });
 
   /** Esc closes; Tab / Shift+Tab map onto the Command's Arrow navigation. */

@@ -11,6 +11,7 @@
   import * as Command from '$lib/components/ui/command/index.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
+  import { tick } from 'svelte'
   import { chatCompletionStream, buildSystemPrompt, AI_TOOLS, isDestructiveSql, classifyDbError } from '$lib/ai.js'
   import { aiSettings, isAiConfigured } from '$lib/stores/ai-settings.js'
   import { profileAgent } from '$lib/local-agents.js'
@@ -237,11 +238,18 @@
       inner = requestAnimationFrame(() => {
         const t = origin ? getThemeDefinition(origin) : null
         const group = themePageGroups.find((g) => g.themes.some((x) => x.id === t?.id))
-        if (t && group) highlighted = themeRowValue(t, group.label)
+        const value = t && group ? themeRowValue(t, group.label) : null
+        if (value) highlighted = value
         themePreviewArmed = true
-        document
-          .querySelector('[data-slot="command-item"][data-selected]')
-          ?.scrollIntoView({ block: 'nearest' })
+        // After the row is marked: queried at once it found the first row,
+        // still selected, and the list stayed at the top with the current
+        // theme (often in the Light group, further down) out of sight.
+        void tick().then(() => {
+          const row = value
+            ? document.querySelector(`[data-slot="command-item"][data-value="${CSS.escape(value)}"]`)
+            : document.querySelector('[data-slot="command-item"][data-selected]')
+          row?.scrollIntoView({ block: 'center' })
+        })
       })
     })
     return () => {
