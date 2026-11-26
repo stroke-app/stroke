@@ -552,7 +552,7 @@
                   )}
                   onclick={() => pickEngine(e.id)}
                 >
-                  <span style="color: color-mix(in oklch, {e.color} {on ? 70 : 45}%, var(--foreground))"><DbIcon id={e.id} class="size-6" /></span>
+                  <span style="color: color-mix(in oklab, {e.color} {on ? 70 : 45}%, var(--foreground))"><DbIcon id={e.id} class="size-6" /></span>
                   <span class="truncate">{e.label}</span>
                 </button>
               {/each}

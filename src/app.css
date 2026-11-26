@@ -310,7 +310,7 @@ textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
    themes. */
 :root { --field-focus-edge: var(--ring); }
 @media (max-resolution: 1.5dppx) {
-  :root { --field-focus-edge: color-mix(in oklch, var(--ring) 65%, var(--field-border)); }
+  :root { --field-focus-edge: color-mix(in oklab, var(--ring) 65%, var(--field-border)); }
 }
 
 /* A filter's match inside a sidebar name (tables, views, objects, the tree).
@@ -870,7 +870,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     font-size: var(--fs-2xs);  /* text-ui-2xs - crisper than a fixed 10px */
     font-weight: 500;
     line-height: 1;
-    color: color-mix(in oklch, var(--muted-foreground) 85%, var(--foreground));
+    color: color-mix(in oklab, var(--muted-foreground) 85%, var(--foreground));
     background: color-mix(in oklch, var(--muted) 45%, transparent);
     border: 1px solid color-mix(in oklch, var(--border) 75%, transparent);
     border-radius: 6px;
@@ -1152,7 +1152,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
 
   /* Skeleton placeholders (shadcn-style pulse) */
   .skeleton {
-    background-color: color-mix(in oklch, var(--muted-foreground) 14%, var(--muted));
+    background-color: color-mix(in oklab, var(--muted-foreground) 14%, var(--muted));
     animation: skeleton-pulse 1.6s ease-in-out infinite;
   }
 
@@ -1170,7 +1170,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
   .shimmer {
     position: relative;
     overflow: hidden;
-    background-color: color-mix(in oklch, var(--muted-foreground) 14%, var(--muted));
+    background-color: color-mix(in oklab, var(--muted-foreground) 14%, var(--muted));
     animation: skeleton-pulse 1.6s ease-in-out infinite;
   }
 
@@ -1702,8 +1702,8 @@ pre code,
   border-radius: var(--radius-sm);
   line-height: 1;
   letter-spacing: 0.01em;
-  color: color-mix(in oklch, var(--chip) 90%, var(--foreground));
-  background: color-mix(in oklch, var(--foreground) 7%, var(--background));
+  color: color-mix(in oklab, var(--chip) 90%, var(--foreground));
+  background: color-mix(in oklab, var(--foreground) 7%, var(--background));
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent);
 }
 .chip-gloss.chip-warning { --chip: var(--warning); }
@@ -1719,7 +1719,7 @@ pre code,
   align-items: center;
   border-radius: var(--radius-sm);
   color: var(--foreground);
-  background: color-mix(in oklch, var(--foreground) 6%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 6%, var(--background));
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 14%, transparent);
 }
 .key-gloss::before,
@@ -1754,16 +1754,16 @@ pre code,
    Clean hairline button surface with instant native press tint (no bounce). */
 .keycap-btn {
   color: var(--foreground);
-  background: color-mix(in oklch, var(--foreground) 7%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 7%, var(--background));
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent);
 }
 @media (hover: hover) and (pointer: fine) {
   .keycap-btn:not(:disabled):hover {
-    background: color-mix(in oklch, var(--foreground) 11%, var(--background));
+    background: color-mix(in oklab, var(--foreground) 11%, var(--background));
   }
 }
 .keycap-btn:not(:disabled):active {
-  background: color-mix(in oklch, var(--foreground) 15%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 15%, var(--background));
 }
 .keycap-btn:focus-visible {
   outline: 2px solid var(--ring);
@@ -1776,21 +1776,21 @@ html:not(.dark) .keycap-btn {
 }
 @media (hover: hover) and (pointer: fine) {
   html:not(.dark) .keycap-btn:not(:disabled):hover {
-    background: color-mix(in oklch, var(--foreground) 4%, var(--background));
+    background: color-mix(in oklab, var(--foreground) 4%, var(--background));
   }
 }
 html:not(.dark) .keycap-btn:not(:disabled):active {
-  background: color-mix(in oklch, var(--foreground) 8%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 8%, var(--background));
 }
 html:not(.dark) .key-well { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 14%, transparent); }
 html:not(.dark) .key-well:focus-within { box-shadow: inset 0 0 0 1px var(--ring); }
 /* A field drawn as a well: a step darker than its surface, hairline edge. */
 .key-well {
-  background: color-mix(in oklch, var(--foreground) 4%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 4%, var(--background));
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent);
 }
 .key-well:focus-within {
-  background: color-mix(in oklch, var(--foreground) 2%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 2%, var(--background));
   box-shadow: inset 0 0 0 1px var(--ring);
 }
 .key-well[data-invalid] {

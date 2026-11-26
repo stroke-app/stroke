@@ -279,7 +279,7 @@
   }
   :global(.nb-prose li) { margin: 0.2rem 0; }
   :global(.nb-prose blockquote) {
-    border-left: 3px solid color-mix(in oklch, var(--border) 80%, var(--foreground) 10%);
+    border-left: 3px solid color-mix(in oklab, var(--border) 80%, var(--foreground) 10%);
     margin: 0.6rem 0;
     padding: 0.1rem 0 0.1rem 1rem;
     color: color-mix(in oklch, var(--foreground) 70%, transparent);
@@ -288,7 +288,7 @@
   :global(.nb-prose code) {
     font-family: "Geist Mono Variable", ui-monospace, monospace;
     font-size: 0.8em;
-    background: color-mix(in oklch, var(--muted) 90%, var(--foreground) 5%);
+    background: color-mix(in oklab, var(--muted) 90%, var(--foreground) 5%);
     border: 1px solid color-mix(in oklch, var(--border) 70%, transparent);
     border-radius: 4px;
     padding: 0.15em 0.4em;
@@ -326,7 +326,7 @@
     padding: 0.35rem 0.75rem;
   }
   :global(.nb-prose a) {
-    color: color-mix(in oklch, var(--primary) 80%, var(--foreground) 10%);
+    color: color-mix(in oklab, var(--primary) 80%, var(--foreground) 10%);
     text-decoration: underline;
     text-underline-offset: 2px;
   }
