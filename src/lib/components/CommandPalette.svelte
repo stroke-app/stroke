@@ -1,6 +1,6 @@
 <script>
   import { tx } from '$lib/i18n.js'
-  import { commandFilter } from '$lib/command-filter.js'
+  import { cachedCommandFilter } from '$lib/command-filter.js'
   import { loadRecentCommands, rememberCommand } from '$lib/stores/recent-commands.js'
   import { openTransfer } from '$lib/stores/transfer-ui.js'
   import { EXPORT_FORMATS } from '$lib/export.js'
@@ -11,7 +11,8 @@
   import * as Command from '$lib/components/ui/command/index.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
-  import { tick } from 'svelte'
+  import { tick, setContext, untrack } from 'svelte'
+  import { createLocalFilter, LOCAL_FILTER } from '$lib/command-local-filter.svelte.js'
   import { chatCompletionStream, buildSystemPrompt, AI_TOOLS, isDestructiveSql, classifyDbError } from '$lib/ai.js'
   import { aiSettings, isAiConfigured } from '$lib/stores/ai-settings.js'
   import { profileAgent } from '$lib/local-agents.js'
@@ -155,6 +156,9 @@
   /** @param {'docker' | 'connections' | 'tables' | 'ask' | 'pages'} target */
   function navigate(target) {
     page = target
+    // A sub-page starts with an empty search: the words that found its row
+    // ("all tables", "connections") filtered the page down to nothing.
+    paletteSearch = ''
   }
 
   // ── Theme page: live preview while the highlight moves ──────────────────────
@@ -700,6 +704,39 @@
   // all on each keystroke), which keeps the rendered list small and scrolling
   // smooth even with thousands of tables.
   let paletteSearch = $state('')
+  const paletteFilter = cachedCommandFilter()
+  // The root page filters its own rows: bits-ui's search stays empty there, so
+  // it never rebuilds or re-sorts the list (see command-local-filter.svelte.js).
+  const localFilter = createLocalFilter(() => (page === 'root' ? paletteSearch.trim() : ''), paletteFilter)
+  setContext(LOCAL_FILTER, localFilter)
+  const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'actions', 'switchdb', 'database', 'launch', 'appearance']
+  /** Root groups in page order, or best match first while searching. */
+  const rootOrder = $derived.by(() => {
+    if (!localFilter.search) return ROOT_GROUPS
+    const best = new Map(ROOT_GROUPS.map((g) => [g, localFilter.best(g)]))
+    return [...ROOT_GROUPS].sort((a, b) => (best.get(b) ?? 0) - (best.get(a) ?? 0))
+  })
+  // Highlight the best match as the search changes: bits-ui did this while it
+  // filtered, and with its search empty it no longer does.
+  let _wasSearching = false
+  $effect(() => {
+    if (page !== 'root') return
+    if (!localFilter.search) {
+      // Cleared: back to the first row, as a fresh menu opens.
+      if (!_wasSearching) return
+      _wasSearching = false
+      void tick().then(() => {
+        const first = document.querySelector('[data-command-dialog] [data-command-item]:not([aria-disabled="true"])')
+        const v = first?.getAttribute('data-value')
+        if (v) highlighted = v
+      })
+      return
+    }
+    _wasSearching = true
+    const order = rootOrder
+    const top = localFilter.top((g) => order.indexOf(g ?? ''))
+    if (top && top !== untrack(() => highlighted)) highlighted = top
+  })
   const TABLES_PAGE_CAP = 100
 
   // Strip word separators so "-", "_", "." and spaces are all interchangeable:
@@ -853,7 +890,7 @@
 <Command.Dialog
   bind:open
   bind:value={highlighted}
-  filter={commandFilter}
+  filter={paletteFilter}
   shouldFilter={shouldFilter}
   title="Command menu"
   description="Search tables, schemas, and commands"
@@ -869,6 +906,7 @@
     <div class="flex flex-col" onkeydown={handleKeydown}>
       <Command.Input
         bind:value={paletteSearch}
+        filterValue={page === 'root' ? '' : undefined}
         oninput={(/** @type {Event} */ e) => { paletteSearch = /** @type {HTMLInputElement} */ (e.currentTarget).value }}
         placeholder={
           page === 'root' ? $tx('cmd.ph.root', 'Search tables, schemas, commands…')
@@ -1005,8 +1043,12 @@
 
         <!-- ── ROOT PAGE ─────────────────────────────────────────────── -->
         {#if page === 'root'}
+          <!-- Each group is a snippet so a search can put the group with the
+               best match first: the keyed each below moves their DOM nodes
+               instead of bits-ui rebuilding the list (command-local-filter.svelte.js). -->
+          {#snippet group_ask()}
           {#if paletteSearch.trim() && $appCmdkAi}
-            <Command.Group heading={$tx('group.Ask', 'Ask')}>
+            <Command.Group value="ask" heading={$tx('group.Ask', 'Ask')}>
               <Command.Item value={"ask ai " + paletteSearch} onSelect={() => startAsk(paletteSearch)}>
                 <Icon name="sparkles" class="size-4 shrink-0 text-primary" />
                 <span data-slot="command-label" class="truncate">Ask AI: <span class="text-muted-foreground">"{paletteSearch}"</span></span>
@@ -1014,26 +1056,33 @@
               </Command.Item>
             </Command.Group>
           {/if}
-
-          {#if connected}
+          {/snippet}
+          {#snippet group_recent()}
+            {#if connected}
             {#if recentRows.length && !paletteSearch.trim()}
-              <Command.Group heading={$tx('group.Recent', 'Recent')}>
+              <Command.Group value="recent" heading={$tx('group.Recent', 'Recent')}>
                 {#each recentRows as it (it.label)}
                   {@render pageRow(it, true)}
                 {/each}
               </Command.Group>
             {/if}
-            <Command.Group heading={$tx('group.Views', 'Views')}>
+            {/if}
+          {/snippet}
+          {#snippet group_views()}
+            {#if connected}
+            <Command.Group value="views" heading={$tx('group.Views', 'Views')}>
               {#each listAll ? pageItems : pageItems.slice(0, FIRST_PAINT_ROWS) as it (it.label)}
                 {@render pageRow(it)}
               {/each}
             </Command.Group>
-
-            {#if listAll}
+            {/if}
+          {/snippet}
+          {#snippet group_schemas()}
+            {#if connected && listAll}
             {#if schemas.length > 0}
-              <Command.Group heading={$tx('group.Schemas', 'Schemas')}>
+              <Command.Group value="schemas" heading={$tx('group.Schemas', 'Schemas')}>
                 {#each schemas as schema (schema)}
-                  <Command.Item value="schema {schema}" onSelect={() => run(() => onschemachange(schema))}>
+                  <Command.Item value="schema {schema}" keywords={[schema]} onSelect={() => run(() => onschemachange(schema))}>
                     <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{schema}</span>
                     {#if schema === activeSchema}
@@ -1043,32 +1092,35 @@
                 {/each}
               </Command.Group>
             {/if}
-
+            {/if}
+          {/snippet}
+          {#snippet group_tables()}
+            {#if connected && listAll}
             {#if tables.length > 0}
-              <Command.Group heading={$tx('group.Tables', 'Tables')}>
+              <Command.Group value="tables" heading={$tx('group.Tables', 'Tables')}>
                 {#each regularTables.slice(0, 8) as table (table.name)}
-                  <Command.Item value="table {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
+                  <Command.Item value="table {activeSchema} {table.name}" keywords={[table.name]} onSelect={() => run(() => ontableselect(table.name))}>
                     <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-xs tabular-nums text-muted-foreground">{formatTableRowCount(table.rowCount)}</span>
                   </Command.Item>
                 {/each}
                 {#each viewTables.slice(0, 4) as table (table.name)}
-                  <Command.Item value="view {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
+                  <Command.Item value="view {activeSchema} {table.name}" keywords={[table.name]} onSelect={() => run(() => ontableselect(table.name))}>
                     <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">view</span>
                   </Command.Item>
                 {/each}
                 {#each matViewTables.slice(0, 4) as table (table.name)}
-                  <Command.Item value="materialized view {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
+                  <Command.Item value="materialized view {activeSchema} {table.name}" keywords={[table.name]} onSelect={() => run(() => ontableselect(table.name))}>
                     <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">mat. view</span>
                   </Command.Item>
                 {/each}
                 {#if tables.length > 12}
-                  <Command.Item value="browse all tables views search" onSelect={() => navigate('tables')}>
+                  <Command.Item value="browse all tables views search" keywords={[`All ${tables.length} tables & views`]} onSelect={() => navigate('tables')}>
                     <Icon name="table-2" class="size-4 shrink-0 opacity-40" />
                     <span data-slot="command-label" class="truncate text-muted-foreground">All {tables.length} tables & views…</span>
                     <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
@@ -1076,8 +1128,11 @@
                 {/if}
               </Command.Group>
             {/if}
-
-            <Command.Group heading={$tx('group.AI', 'AI')}>
+            {/if}
+          {/snippet}
+          {#snippet group_ai()}
+            {#if connected && listAll}
+            <Command.Group value="ai" heading={$tx('group.AI', 'AI')}>
               <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)} keywords={['Ask AI']}>
                 <Icon name="bot" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Ask AI</span>
@@ -1090,47 +1145,60 @@
               </Command.Item>
               <Command.Item
                 value={aiMode ? "close ai panel hide assistant" : "open ai panel show assistant chat"}
+                keywords={[aiMode ? 'Close AI panel' : 'Open AI panel']}
                 onSelect={() => run(ontoggleaimode)}
               >
                 <Icon name="arrow-left-right" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">{aiMode ? 'Close AI panel' : 'Open AI panel'}</span>
               </Command.Item>
             </Command.Group>
-
-            <Command.Group heading={$tx('group.Queries', 'Queries')}>
+            {/if}
+          {/snippet}
+          {#snippet group_queries()}
+            {#if connected && listAll}
+            <Command.Group value="queries" heading={$tx('group.Queries', 'Queries')}>
               <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)} keywords={['Query history']}>
                 <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Query history</span>
               </Command.Item>
             </Command.Group>
-
+            {/if}
+          {/snippet}
+          {#snippet group_saved()}
+            {#if connected && listAll}
             {#if savedQueries.length > 0}
-              <Command.Group heading={$tx('group.Saved queries', 'Saved queries')}>
+              <Command.Group value="saved" heading={$tx('group.Saved queries', 'Saved queries')}>
                 {#each savedQueries as entry (entry.id)}
-                  <Command.Item value="saved query {entry.name} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
+                  <Command.Item value="saved query {entry.name} {entry.sql}" keywords={[entry.name]} onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="min-w-0 truncate text-ui-xs">{entry.name}</span>
                   </Command.Item>
                 {/each}
               </Command.Group>
             {/if}
-
+            {/if}
+          {/snippet}
+          {#snippet group_recentq()}
+            {#if connected && listAll}
             {#if queryHistory.length > 0}
-              <Command.Group heading={$tx('group.Recent queries', 'Recent queries')}>
+              <Command.Group value="recentq" heading={$tx('group.Recent queries', 'Recent queries')}>
                 {#each queryHistory.slice(0, 20) as entry (entry.id)}
-                  <Command.Item value="recent query {entry.title} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
+                  <Command.Item value="recent query {entry.title} {entry.sql}" keywords={[entry.title ?? '']} onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="min-w-0 truncate font-mono text-ui-xs">{entry.title}</span>
                   </Command.Item>
                 {/each}
               </Command.Group>
             {/if}
-
+            {/if}
+          {/snippet}
+          {#snippet group_export()}
+            {#if connected && listAll}
             {#if (onexporttable || onimporttable) && paletteSearch.trim()}
               <!-- Export was only in the table toolbar's menu: "export" here
                    found Backup & restore and nothing else. Only while searching,
                    so eight format rows don't sit in the root list. -->
-              <Command.Group heading={$tx('group.Export and import', 'Export and import')}>
+              <Command.Group value="export" heading={$tx('group.Export and import', 'Export and import')}>
                 {#each onexporttable ? EXPORT_FORMATS : [] as fmt (fmt.id)}
                   <Command.Item value={`export download save table rows ${fmt.label} ${fmt.id} ${fmt.hint}`} keywords={[`Export as ${fmt.label}`]} onSelect={() => run(() => onexporttable?.(fmt.id))}>
                     <Icon name="file-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1146,7 +1214,11 @@
                 {/if}
               </Command.Group>
             {/if}
-            <Command.Group heading={$tx('group.Actions', 'Actions')}>
+            {/if}
+          {/snippet}
+          {#snippet group_actions()}
+            {#if connected && listAll}
+            <Command.Group value="actions" heading={$tx('group.Actions', 'Actions')}>
               {#if onexplainquery}
                 <!-- Explain was only a button in the results bar. -->
                 <Command.Item value="explain query plan analyze cost why slow performance" keywords={['Explain query']} onSelect={() => run(onexplainquery)}>
@@ -1235,17 +1307,18 @@
               </Command.Item>
             </Command.Group>
             {/if}
-          {/if}
-
-          {#if listAll || !connected}
+          {/snippet}
+          {#snippet group_switchdb()}
+            {#if listAll || !connected}
 
           <!-- ── Switch database, other saved connections, right at root ── -->
           {@const otherConns = savedConnections.filter((c) => c.id !== activeConnectionId)}
           {#if otherConns.length > 0}
-            <Command.Group heading={$tx('group.Switch database', 'Switch database')}>
+            <Command.Group value="switchdb" heading={$tx('group.Switch database', 'Switch database')}>
               {#each otherConns.slice(0, 8) as conn (conn.id)}
                 <Command.Item
                   value="switch database connection {conn.name} {connSubtitle(conn)} {conn.type}"
+                  keywords={[conn.name]}
                   onSelect={() => run(() => onswitchdatabase(conn))}
                 >
                   <Icon name={driverIcon(conn.type ?? 'postgres')} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1260,11 +1333,16 @@
               {/each}
             </Command.Group>
           {/if}
+            {/if}
+          {/snippet}
+          {#snippet group_database()}
+            {#if listAll || !connected}
 
           <!-- ── Drill-in: Connections ───────────────────────────────── -->
-          <Command.Group heading={$tx('group.Database', 'Database')}>
+          <Command.Group value="database" heading={$tx('group.Database', 'Database')}>
             <Command.Item
               value="connections switch database connect postgres mysql sqlite saved {savedConnections.map(c => c.name).join(' ')}"
+              keywords={['Connections']}
               onSelect={() => navigate('connections')}
             >
               <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1281,18 +1359,26 @@
               <span data-slot="command-label" class="truncate">New connection…</span>
             </Command.Item>
           </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_launch()}
+            {#if listAll || !connected}
 
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
-          <Command.Group heading={$tx('group.Launch', 'Launch')}>
+          <Command.Group value="launch" heading={$tx('group.Launch', 'Launch')}>
             <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')} keywords={['Docker']}>
               <DbIcon id="docker" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
             </Command.Item>
           </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_appearance()}
+            {#if listAll || !connected}
 
           <!-- ── Drill-in: Theme ────────────────────────────────────── -->
-          <Command.Group heading={$tx('group.Appearance', 'Appearance')}>
+          <Command.Group value="appearance" heading={$tx('group.Appearance', 'Appearance')}>
             <Command.Item value="theme appearance colour color scheme palette dark light mode switch change" onSelect={openThemePage} keywords={['Theme…']}>
               <Icon name={getThemeDefinition($appThemeId)?.isDark ? 'moon' : 'sun'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Theme…</span>
@@ -1309,8 +1395,28 @@
               <span data-slot="command-label" class="truncate">Theme builder</span>
             </Command.Item>
           </Command.Group>
-
-        <!-- ── TABLES PAGE ───────────────────────────────────────────── -->
+            {/if}
+          {/snippet}
+          {#each rootOrder as id (id)}
+            {#if id === 'ask'}{@render group_ask()}
+            {:else if id === 'recent'}{@render group_recent()}
+            {:else if id === 'views'}{@render group_views()}
+            {:else if id === 'schemas'}{@render group_schemas()}
+            {:else if id === 'tables'}{@render group_tables()}
+            {:else if id === 'ai'}{@render group_ai()}
+            {:else if id === 'queries'}{@render group_queries()}
+            {:else if id === 'saved'}{@render group_saved()}
+            {:else if id === 'recentq'}{@render group_recentq()}
+            {:else if id === 'export'}{@render group_export()}
+            {:else if id === 'actions'}{@render group_actions()}
+            {:else if id === 'switchdb'}{@render group_switchdb()}
+            {:else if id === 'database'}{@render group_database()}
+            {:else if id === 'launch'}{@render group_launch()}
+            {:else if id === 'appearance'}{@render group_appearance()}
+            {/if}
+          {/each}
+          {#if page === 'root' && localFilter.search && localFilter.count === 0}
+            <p class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</p>
           {/if}
         {:else if page === 'tables'}
           {#if tablesPageRegular.total > 0}

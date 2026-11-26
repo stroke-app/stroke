@@ -1,17 +1,41 @@
 <script>
 	import { Command as CommandPrimitive } from "bits-ui";
+	import { getContext } from "svelte";
 	import { cn } from "$lib/utils.js";
+	import { LOCAL_FILTER, LOCAL_GROUP } from "$lib/command-local-filter.svelte.js";
 
 	let {
 		ref = $bindable(null),
 		class: className,
 		children,
+		value = "",
+		keywords = [],
 		...restProps
 	} = $props();
+
+	/** @type {ReturnType<typeof import("$lib/command-local-filter.svelte.js").createLocalFilter> | undefined} */
+	const local = getContext(LOCAL_FILTER);
+	/** @type {{ key: string } | undefined} */
+	const group = getContext(LOCAL_GROUP);
+
+	// A page that filters its own rows (command-local-filter.svelte.js): this
+	// row scores itself and draws nothing when it does not match. (Keeping it
+	// mounted but hidden and disabled measured no faster.) Elsewhere bits-ui
+	// filters as usual.
+	const score = $derived(local?.search ? local.score(value, local.search, keywords) : 1);
+	$effect(() => {
+		if (!local) return;
+		const v = value;
+		local.report(v, group?.key, score);
+		return () => local.forget(v);
+	});
 </script>
 
+{#if score > 0}
 <CommandPrimitive.Item
 	bind:ref
+	{value}
+	{keywords}
 	data-slot="command-item"
 	class={cn(
 		"group/command-item relative flex w-full min-w-0 cursor-default items-center gap-3 rounded-md px-2.5 py-1.5 min-h-9 text-ui-sm outline-hidden select-none",
@@ -29,3 +53,4 @@
 >
 	{@render children?.()}
 </CommandPrimitive.Item>
+{/if}

@@ -35,6 +35,6 @@
 - Shortcuts print the same way in every menu row, radio and checkbox rows included.
 - On a new install, notifications appear in the bottom right corner, clear of the tab bar. Settings, Appearance moves them.
 - Dialogs and the command menu are white in light themes (they took the grey of the page around the panel) and a step lighter than the page in dark ones. Every page in the content panel now shares one background; the AI view, Advisor and Diagrams sat a shade darker.
-- The command menu, the Schema explorer and switching between tables are faster.
+- The command menu, the Schema explorer and switching between tables are faster. Typing in the command menu takes about half the time per letter it did, and drilling into Tables or Connections starts with an empty search.
 - Grid checkboxes show on the row you point at, and on every row once you select one.
 - Empty pages share one design, with the first step as a button. Diagrams, Dashboard and Schema timeline hide their lists and toolbars until there is something in them.

@@ -46,3 +46,16 @@ describe('two-letter queries', () => {
     expect(commandFilter('migrations prisma drizzle applied pending failed', 'ile', ['Migrations'])).toBe(0.5)
   })
 })
+
+describe('cachedCommandFilter', () => {
+  it('scores like commandFilter and forgets on a new search', async () => {
+    const { cachedCommandFilter } = await import('./command-filter.js')
+    const f = cachedCommandFilter()
+    expect(f('open settings', 'set', ['Settings'])).toBe(commandFilter('open settings', 'set', ['Settings']))
+    expect(f('open settings', 'set', ['Settings'])).toBe(commandFilter('open settings', 'set', ['Settings']))
+    expect(f('open settings', 'zzz', ['Settings'])).toBe(0)
+    // Same value, different label: scored apart, not served from one cache entry.
+    expect(f('x', 'alp', ['Alpha'])).toBeGreaterThan(0)
+    expect(f('x', 'alp', ['Beta'])).toBe(0)
+  })
+})

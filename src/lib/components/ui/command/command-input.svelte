@@ -7,6 +7,9 @@
 		ref = $bindable(null),
 		class: className,
 		value = $bindable(""),
+		/** What bits-ui filters by, when it is not what the field shows: a page
+		 *  that filters its own rows (command-local-filter.svelte.js) passes "". */
+		filterValue = undefined,
 		...restProps
 	} = $props();
 </script>
@@ -15,7 +18,7 @@
 <div data-slot="command-input-wrapper" class="flex h-12 items-center gap-3 px-4">
 	<SearchIcon class="size-4 shrink-0 text-muted-foreground" />
 	<CommandPrimitive.Input
-		bind:value
+		value={filterValue ?? value}
 		data-slot="command-input"
 		class={cn("", className)}
 		{...restProps}

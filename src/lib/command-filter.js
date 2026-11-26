@@ -82,3 +82,25 @@ export function commandFilter(value, search, keywords = []) {
   }
   return looseLabelScore(label, q)
 }
+
+/**
+ * `commandFilter` remembered for the current search. bits-ui scores every row
+ * again for each row it unmounts (its unregister re-runs the whole filter), so
+ * the first letter typed into the command menu scored ~110 rows ~70 times over:
+ * thousands of calls for one keystroke. The score only depends on the row and
+ * the search, so a new search starts a fresh cache.
+ * @returns {(value: string, search: string, keywords?: string[]) => number}
+ */
+export function cachedCommandFilter() {
+  let forSearch = ''
+  /** @type {Map<string, number>} */
+  let cache = new Map()
+  return (value, search, keywords = []) => {
+    if (search !== forSearch) { forSearch = search; cache = new Map() }
+    const key = keywords.length ? `${value}\u0000${keywords.join('\u0001')}` : value
+    let score = cache.get(key)
+    if (score === undefined) { score = commandFilter(value, search, keywords); cache.set(key, score) }
+    return score
+  }
+}
+
