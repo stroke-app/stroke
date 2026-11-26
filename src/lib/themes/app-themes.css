@@ -1276,7 +1276,7 @@ html[data-theme="dark"] {
   --warning-text: color-mix(in oklab, var(--warning) 90%, var(--foreground));
   --destructive-text: var(--destructive);
   --info-text: color-mix(in oklab, var(--info) 80%, var(--foreground));
-  --primary-text: color-mix(in oklab, var(--primary) 85%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 80%, var(--foreground));
 }
 html[data-theme="obsidian"] {
   --success-text: color-mix(in oklab, var(--success) 80%, var(--foreground));
@@ -1297,14 +1297,14 @@ html[data-theme="hotdog"] {
   --warning-text: color-mix(in oklab, var(--warning) 75%, var(--foreground));
   --destructive-text: var(--destructive);
   --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
-  --primary-text: color-mix(in oklab, var(--primary) 70%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 65%, var(--foreground));
 }
 html[data-theme="bro"] {
   --success-text: color-mix(in oklab, var(--success) 80%, var(--foreground));
   --warning-text: color-mix(in oklab, var(--warning) 85%, var(--foreground));
   --destructive-text: var(--destructive);
   --info-text: color-mix(in oklab, var(--info) 75%, var(--foreground));
-  --primary-text: color-mix(in oklab, var(--primary) 85%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 80%, var(--foreground));
 }
 html[data-theme="midnight"] {
   --success-text: color-mix(in oklab, var(--success) 80%, var(--foreground));
@@ -1346,7 +1346,7 @@ html[data-theme="github-light"] {
   --warning-text: color-mix(in oklab, var(--warning) 90%, var(--foreground));
   --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
   --info-text: var(--info);
-  --primary-text: color-mix(in oklab, var(--primary) 95%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 90%, var(--foreground));
 }
 html[data-theme="rose-pine"] {
   --success-text: color-mix(in oklab, var(--success) 70%, var(--foreground));
@@ -1367,14 +1367,14 @@ html[data-theme="solarized"] {
   --warning-text: color-mix(in oklab, var(--warning) 30%, var(--foreground));
   --destructive-text: color-mix(in oklab, var(--destructive) 50%, var(--foreground));
   --info-text: color-mix(in oklab, var(--info) 25%, var(--foreground));
-  --primary-text: color-mix(in oklab, var(--primary) 40%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 15%, var(--foreground));
 }
 html[data-theme="graphite"] {
   --success-text: color-mix(in oklab, var(--success) 65%, var(--foreground));
   --warning-text: color-mix(in oklab, var(--warning) 70%, var(--foreground));
   --destructive-text: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
   --info-text: color-mix(in oklab, var(--info) 60%, var(--foreground));
-  --primary-text: color-mix(in oklab, var(--primary) 70%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 60%, var(--foreground));
 }
 html[data-theme="dark-high-contrast"] {
   --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
@@ -1402,7 +1402,7 @@ html[data-theme="claude-light"] {
   --warning-text: color-mix(in oklab, var(--warning) 85%, var(--foreground));
   --destructive-text: var(--destructive);
   --info-text: color-mix(in oklab, var(--info) 95%, var(--foreground));
-  --primary-text: color-mix(in oklab, var(--primary) 85%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 80%, var(--foreground));
 }
 html[data-theme="moss-light"] {
   --success-text: color-mix(in oklab, var(--success) 90%, var(--foreground));
@@ -1444,7 +1444,7 @@ html[data-theme="glass-dark"] {
   --warning-text: color-mix(in oklab, var(--warning) 85%, var(--foreground));
   --destructive-text: var(--destructive);
   --info-text: color-mix(in oklab, var(--info) 75%, var(--foreground));
-  --primary-text: color-mix(in oklab, var(--primary) 85%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 80%, var(--foreground));
 }
 html[data-theme="glass-light"] {
   --success-text: color-mix(in oklab, var(--success) 90%, var(--foreground));
