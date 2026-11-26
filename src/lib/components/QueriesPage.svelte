@@ -63,6 +63,7 @@
   </header>
   {#key view}
     <QueryHistoryPanel
+      page
       {view}
       {history}
       {saved}

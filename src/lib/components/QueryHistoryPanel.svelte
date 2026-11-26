@@ -46,6 +46,8 @@
     onrefresh = async () => {},
     /** Escape from the list: back to the editor. */
     onescape = () => {},
+    /** On a full page: the search and the rows line up with the page title. */
+    page = false,
   } = $props()
 
   /**
@@ -218,9 +220,9 @@
   const total = $derived(view === 'history' ? history.length : view === 'saved' ? saved.length : $savedCharts.length)
 </script>
 
-<div class="flex min-h-0 flex-1 flex-col bg-panel">
+<div class="group/list flex min-h-0 flex-1 flex-col bg-panel">
   <!-- Search, how many, and Clear for the history. -->
-  <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 px-2">
+  <div class={cn('flex shrink-0 items-center gap-2 border-b border-border/50', page ? 'h-10 px-3' : 'h-9 px-2')}>
     <div class="relative flex w-72 min-w-0 shrink items-center">
       <Search class="pointer-events-none absolute left-2 size-3.5 shrink-0 text-muted-foreground" />
       <input
@@ -283,7 +285,13 @@
           data-row={i}
           role="option"
           aria-selected={on}
-          class={cn('group/row mx-1.5 flex items-center gap-2 rounded-lg py-2 pl-3 pr-1.5', on ? 'bg-accent/60' : 'hover:bg-muted/50')}
+          class={cn(
+            'group/row flex items-center gap-2 rounded-lg py-2 pr-1.5',
+            page ? 'mx-3 pl-2' : 'mx-1.5 pl-3',
+            // The cursor row only reads as picked while I am in the search or
+            // the list; on a page I just opened, a lit first row looked selected.
+            on ? 'group-focus-within/list:bg-accent/60 hover:bg-muted/50' : 'hover:bg-muted/50',
+          )}
         >
           <!-- Two lines: what ran (or the saved name), then when, how long and
                how often, with a failure's message in full width under it. -->
@@ -320,7 +328,7 @@
             <button
               type="button"
               tabindex="-1"
-              class={cn('inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100', on ? 'opacity-100' : 'opacity-0')}
+              class={cn('inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-[opacity,background-color,color] hover:bg-accent hover:text-foreground focus-visible:opacity-100 group-hover/row:opacity-100', on ? 'opacity-0 group-focus-within/list:opacity-100' : 'opacity-0')}
               title="Load and run"
               aria-label="Load and run"
               onclick={() => { cursor = i; run(row) }}
@@ -331,7 +339,7 @@
                 tabindex="-1"
                 class={cn(
                   'inline-flex size-6 items-center justify-center rounded-md transition-[opacity,background-color,color] hover:bg-accent focus-visible:opacity-100 group-hover/row:opacity-100',
-                  row.starred ? 'text-warning opacity-100' : cn('text-muted-foreground hover:text-warning', on ? 'opacity-100' : 'opacity-0'),
+                  row.starred ? 'text-warning opacity-100' : cn('text-muted-foreground hover:text-warning', on ? 'opacity-0 group-focus-within/list:opacity-100' : 'opacity-0'),
                 )}
                 title={row.starred ? 'Unstar' : 'Star, so Clear keeps it'}
                 aria-label={row.starred ? 'Unstar' : 'Star'}
@@ -343,7 +351,7 @@
               <button
                 type="button"
                 tabindex="-1"
-                class={cn('inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-[opacity,background-color,color] hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover/row:opacity-100', on ? 'opacity-100' : 'opacity-0')}
+                class={cn('inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-[opacity,background-color,color] hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 group-hover/row:opacity-100', on ? 'opacity-0 group-focus-within/list:opacity-100' : 'opacity-0')}
                 title="Delete (Del)"
                 aria-label="Delete"
                 onclick={() => void remove(row)}
