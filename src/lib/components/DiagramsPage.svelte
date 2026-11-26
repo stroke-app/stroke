@@ -443,7 +443,7 @@
           title={filtered.length ? 'No diagram open' : 'No diagrams yet'}
           description={filtered.length ? 'Pick one from the list, or start a new one.' : 'Draw how your tables relate, or anything else, with Mermaid. Diagrams are saved per connection.'}
         >
-          <Button size="sm" onclick={startNew}>New diagram</Button>
+          <Button size="sm" onclick={startNew}><Plus class="size-3.5 shrink-0" />New diagram</Button>
         </EmptyState>
       {/if}
     </div>
