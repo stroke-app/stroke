@@ -1825,6 +1825,8 @@
   let connsQuery = $state('')
   /** @type {HTMLInputElement | null} */
   let connsSearchEl = $state(null)
+  /** The connection list, for arrow keys from the search into its rows. @type {HTMLDivElement | null} */
+  let connsListEl = $state(null)
   /** The list after the search: name, engine, host or database. */
   const connsShown = $derived.by(() => {
     const q = connsQuery.trim().toLowerCase()
@@ -3858,6 +3860,11 @@
               class="search-box no-field-frame w-full min-w-0 pl-8 pr-8 text-ui-sm"
               onkeydown={(e) => {
                 if (e.key === 'Escape') { connsQuery = ''; e.stopPropagation() }
+                else if (e.key === 'ArrowDown') {
+                  // Into the list, as the table filter does.
+                  const first = connsListEl?.querySelector('[data-conn-id]')
+                  if (first instanceof HTMLElement) { e.preventDefault(); first.focus() }
+                }
                 else if (e.key === 'Enter' && connsShown.length === 1 && connsShown[0].id !== activeConnectionId) onswitchconnection(connsShown[0])
               }}
             />
@@ -3869,8 +3876,20 @@
           </div>
         {/if}
         <div
+          bind:this={connsListEl}
           class="app-scroll min-h-0 overflow-y-auto px-2 pb-2"
           role="presentation"
+          onkeydown={(e) => {
+            // Up and Down between connections; Up from the first goes back to the search.
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+            const rows = [...e.currentTarget.querySelectorAll('[data-conn-id]')]
+            const i = rows.indexOf(/** @type {Element} */ (document.activeElement))
+            if (i < 0) return
+            e.preventDefault()
+            const next = rows[e.key === 'ArrowDown' ? Math.min(i + 1, rows.length - 1) : i - 1]
+            if (next instanceof HTMLElement) { next.focus(); next.scrollIntoView({ block: 'nearest' }) }
+            else connsSearchEl?.focus()
+          }}
           onpointerenter={() => (connsFrozenOrder = wsConnections.map((c) => c.id))}
           onpointerleave={() => (connsFrozenOrder = null)}
         >
@@ -3896,8 +3915,8 @@
               type="button"
               data-conn-id={c.id}
               class={cn(
-                'flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm',
-                current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                'flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm outline-none',
+                current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground focus:bg-sidebar-accent/60 focus:text-foreground',
               )}
               onclick={() => { hideConnCard(); if (!current) onswitchconnection(c) }}
               onpointerdown={hideConnCard}
