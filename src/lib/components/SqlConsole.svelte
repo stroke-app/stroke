@@ -1982,7 +1982,7 @@
       <Input
         id="save-query-name"
         bind:value={saveQueryName}
-        class="font-mono text-ui-sm"
+        class="text-ui-sm"
         placeholder={$tx('sql.queryName', 'Query name')}
         onkeydown={(e) => {
           if (e.key === 'Enter') void confirmSaveQuery()
