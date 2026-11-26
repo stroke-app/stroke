@@ -7,7 +7,7 @@
   //
   // Sizing + color come from `class` (size-*, text-*), matching how Lucide icons
   // are used across the app - so this is a drop-in replacement for a bare glyph.
-  import { HugeiconsIcon } from '@hugeicons/svelte'
+  import HugeIcon from './HugeIcon.svelte'
   import { iconFamily } from '$lib/icon-family.svelte.js'
   import { ICON_MAP } from '$lib/icon-registry.js'
   import { cn } from '$lib/utils.js'
@@ -33,12 +33,9 @@
 {#if Phosphor}
   <Phosphor class={cn('shrink-0', className)} weight={iconFamily.phosphorWeight} size="100%" {...rest} />
 {:else if useHuge}
-  <!-- Keyed: HugeiconsIcon reads `icon` once, on mount, so a name that changed
-       (the theme toggle's sun and moon, copy turning into a check) kept its
-       first glyph. -->
-  {#key entry.huge}
-    <HugeiconsIcon icon={entry.huge} class={cn('shrink-0', className)} {strokeWidth} {...rest} />
-  {/key}
+  <!-- HugeIcon follows `icon` reactively, so a name that changes (the theme
+       toggle's sun and moon, copy turning into a check) redraws in place. -->
+  <HugeIcon icon={entry.huge} class={cn('shrink-0', className)} {strokeWidth} {...rest} />
 {:else if Lucide}
   <Lucide class={cn('shrink-0', className)} {...rest} />
 {/if}
