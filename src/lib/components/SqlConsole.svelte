@@ -1722,7 +1722,6 @@
             <DropdownMenu.Content align="end" class="min-w-52">
               {#each EXPORT_FORMATS as fmt (fmt.id)}
                 <DropdownMenu.Item onclick={() => void exportAs(fmt.id)}>
-                  <Download class="size-3.5 shrink-0 text-muted-foreground" />
                   <span data-slot="menu-label">{fmt.label}</span>
                   <span class="ml-auto text-ui-2xs text-muted-foreground">{fmt.hint}</span>
                 </DropdownMenu.Item>

@@ -1820,7 +1820,8 @@
                      the word Export above them had not. -->
                 {#each EXPORT_FORMATS as fmt (fmt.id)}
                   <DropdownMenu.Item disabled={total === 0} onSelect={() => onexport(fmt.id)}>
-                    {fmt.label}
+                    <span data-slot="menu-label">{fmt.label}</span>
+                    {#if fmt.hint}<span class="ml-auto ps-4 text-ui-2xs text-muted-foreground">{fmt.hint}</span>{/if}
                   </DropdownMenu.Item>
                 {/each}
               </DropdownMenu.Group>
