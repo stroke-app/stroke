@@ -1,5 +1,6 @@
 <script>
   import Kbd from './Kbd.svelte'
+  import { toastConnectionRemoved } from "$lib/connection-undo.js";
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
   import { engineId } from '$lib/connection-provider.js'
@@ -27,7 +28,6 @@
   import { smoothScroll } from "$lib/smooth-scroll.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
-  import ConfirmDialog from "./ConfirmDialog.svelte";
   import { setConnectionMeta } from "$lib/stores/connections.js";
   import PanelRight from "@lucide/svelte/icons/panel-right";
   import PanelLeft from "@lucide/svelte/icons/panel-left";
@@ -825,9 +825,6 @@
   // few thousand tables affordable.
   let menuTable = $state('')
 
-  /** A saved connection waiting on "Delete connection?". @type {any} */
-  let pendingConnRemove = $state(null)
-  let confirmConnRemoveOpen = $state(false)
 
   // ── Selection state ───────────────────────────────────────────────────────
   /** @type {Set<string>} */
@@ -3784,9 +3781,9 @@
                   Disconnect
                 </ContextMenu.Item>
               {:else}
-                <ContextMenu.Item variant="destructive" onSelect={() => { pendingConnRemove = c; confirmConnRemoveOpen = true }}>
+                <ContextMenu.Item variant="destructive" onSelect={() => { onremoveconnection(c.id); toastConnectionRemoved(c) }}>
                   <Icon name="trash-2" />
-                  Delete…
+                  Delete
                 </ContextMenu.Item>
               {/if}
             {/if}
@@ -3841,18 +3838,3 @@
   {#if at >= 0}{String(text).slice(0, at)}<mark class="search-hit">{String(text).slice(at, at + lf.length)}</mark>{String(text).slice(at + lf.length)}{:else}{text}{/if}
 {/snippet}
 
-<ConfirmDialog
-  bind:open={confirmConnRemoveOpen}
-  icon="trash-2"
-  title="Delete connection?"
-  description={`"${pendingConnRemove?.name || pendingConnRemove?.database || pendingConnRemove?.host || pendingConnRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
-  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
-  confirmLabel="Delete"
-  confirmIcon="trash-2"
-  variant="destructive"
-  onconfirm={() => {
-    if (pendingConnRemove) onremoveconnection(pendingConnRemove.id);
-    pendingConnRemove = null;
-  }}
-  oncancel={() => (pendingConnRemove = null)}
-/>

@@ -11526,7 +11526,7 @@ let rowSearch = $state('')
         onswitchconnection={(c) => { if (aiMode) exitAiMode(); void handleSwitchDatabase(c) }}
         onaddconnection={() => { showConnectionModal = true }}
         onnewconnection={() => { connectionModalNew = true; showConnectionModal = true }}
-        onremoveconnection={(id) => { removeConnection(id); handleConnectionRemoved(id) }}
+        onremoveconnection={(id) => { removeConnection(id, { undoable: true }); handleConnectionRemoved(id) }}
         oneditconnection={(c) => { connectionModalEditId = c.id; showConnectionModal = true }}
         onsetconnectiongroup={(id, group) => { savedConnections = setConnectionGroup(id, group) }}
         onconnectionmeta={(list) => { savedConnections = list }}

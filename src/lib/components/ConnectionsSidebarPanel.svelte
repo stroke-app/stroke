@@ -5,12 +5,12 @@
   // delegated to the shell. Group assignment persists locally via the store and
   // also emits `onsetgroup` so the shell can refresh its own copy of the list.
   import Icon from "./Icon.svelte";
+  import { toastConnectionRemoved } from "$lib/connection-undo.js";
   import { cn } from "$lib/utils.js";
   import { Popover, PopoverTrigger, PopoverContent } from "$lib/components/ui/popover/index.js";
   import { Input } from "$lib/components/ui/input/index.js";
   import { setConnectionGroup, setConnectionMeta } from "$lib/stores/connections.js";
   import { workspaces, activeWorkspaceId, inWorkspace, workspaceOf, colorOf } from "$lib/stores/workspaces.js";
-  import ConfirmDialog from "./ConfirmDialog.svelte";
   import ColorSwatches from "./ColorSwatches.svelte";
 
   let {
@@ -47,8 +47,6 @@
 
   // Removing deletes the connection's history and saved work too, so it asks first.
   /** @type {import('$lib/stores/connections.js').SavedConnection | null} */
-  let pendingRemove = $state(null);
-  let confirmRemoveOpen = $state(false);
 
   // Optimistic overlay of pending group edits (id -> group|null). Keeps the list
   // updating instantly even before the parent refreshes the `connections` prop.
@@ -298,12 +296,12 @@
       {:else}
         <button
           type="button"
-          title="Remove connection"
-          aria-label="Remove connection"
+          title="Delete connection"
+          aria-label="Delete connection"
           onclick={(e) => {
             e.stopPropagation();
-            pendingRemove = c;
-            confirmRemoveOpen = true;
+            onremove(c.id);
+            toastConnectionRemoved(c);
           }}
           class="hidden size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground group-hover/conn:flex"
         >
@@ -382,18 +380,3 @@
   </div>
 </div>
 
-<ConfirmDialog
-  bind:open={confirmRemoveOpen}
-  icon="trash-2"
-  title="Delete connection?"
-  description={`"${pendingRemove?.name || pendingRemove?.database || pendingRemove?.host || pendingRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
-  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
-  confirmLabel="Delete"
-  confirmIcon="trash-2"
-  variant="destructive"
-  onconfirm={() => {
-    if (pendingRemove) onremove(pendingRemove.id);
-    pendingRemove = null;
-  }}
-  oncancel={() => (pendingRemove = null)}
-/>

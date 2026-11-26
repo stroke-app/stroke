@@ -3,6 +3,7 @@
    * Child listings that outlive the panel (switching sidebar tabs, toggling
    * the sidebar), keyed by connection + database so a reconnect draws at once.
    * @type {Map<string, { schemaData: Map<string, any>, cache: Map<string, import('$lib/sidebar-tree.js').ChildEntry> }>}
+  import { toastConnectionRemoved } from '$lib/connection-undo.js'
    */
   const places = new Map()
 
@@ -50,7 +51,6 @@
   import { appNativeScroll } from '$lib/stores/settings.js'
   import { workspaces, activeWorkspaceId, inWorkspace, colorOf } from '$lib/stores/workspaces.js'
   import { loadTreeExpanded, saveTreeExpanded, treeConnectionScope } from '$lib/stores/sidebar-tree.js'
-  import ConfirmDialog from './ConfirmDialog.svelte'
   import { smoothScroll } from '$lib/smooth-scroll.js'
   import {
     childId, ancestorIds, makeNode, filterTree, flattenTree, rowIndex,
@@ -335,15 +335,12 @@
       .sort((a, b) => Number(b.data.pinned) - Number(a.data.pinned)),
   )
 
-  // Removing deletes the connection's history and saved work, so it asks first.
-  /** @type {SavedConnection | null} */
-  let pendingRemove = $state(null)
-  let confirmRemoveOpen = $state(false)
+  // Deleting asks nothing: the row goes now and the toast offers Undo.
   /** @param {SavedConnection} c */
   function askRemove(c) {
     if (!c?.id) return
-    pendingRemove = c
-    confirmRemoveOpen = true
+    onremoveconnection(c.id)
+    toastConnectionRemoved(c)
   }
 
   /** @param {SavedConnection} c */
@@ -1670,18 +1667,3 @@
   {/if}
 </div>
 
-<ConfirmDialog
-  bind:open={confirmRemoveOpen}
-  icon="trash-2"
-  title="Delete connection?"
-  description={`"${pendingRemove?.name || pendingRemove?.database || pendingRemove?.host || pendingRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
-  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
-  confirmLabel="Delete"
-  confirmIcon="trash-2"
-  variant="destructive"
-  onconfirm={() => {
-    if (pendingRemove?.id) onremoveconnection(pendingRemove.id)
-    pendingRemove = null
-  }}
-  oncancel={() => (pendingRemove = null)}
-/>

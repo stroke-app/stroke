@@ -1,5 +1,6 @@
 <script>
   import { errorText } from '$lib/utils.js'
+  import { toastConnectionRemoved } from "$lib/connection-undo.js";
   import { tick, untrack, onDestroy } from "svelte";
   import Icon from "./Icon.svelte";
   import CloudflareLogin from "./CloudflareLogin.svelte";
@@ -104,7 +105,6 @@
   import { PROVIDERS, providerBuildConnection, providerWarm, providerToSaved, AUTH_FAILURE } from "$lib/providers.js";
   import { appBoringConnectionBar } from "$lib/stores/settings.js";
   import { providerOf, engineLabel, engineId } from "$lib/connection-provider.js";
-  import ConfirmDialog from "./ConfirmDialog.svelte";
   import { engineTint } from "$lib/engine-tint.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { ODBC_PRESETS, GENERIC_ODBC, odbcPreset, presetOfDriverId, pickDriver, presetConnectionString } from "$lib/odbc-presets.js";
@@ -2366,24 +2366,26 @@
     });
   });
 
-  // Deleting also clears the connection's history, saved queries, charts and
-  // chats (purgeConnectionData), so it is asked first rather than done on click.
-  /** @type {{ id: string, name: string, fromKeyboard: boolean } | null} */
-  let pendingDelete = $state(null);
-  let confirmDeleteOpen = $state(false);
-
+  // Deleting asks nothing: the row goes now and the toast offers Undo. The
+  // purge of its history, saved queries, charts and chats waits out the undo
+  // window (removeConnection's `undoable`).
   /** @param {string} id @param {boolean} [fromKeyboard] */
   function handleDelete(id, fromKeyboard = false) {
     const conn = saved.find((c) => c.id === id);
-    pendingDelete = { id, name: conn?.name || conn?.database || conn?.host || conn?.filePath || "this connection", fromKeyboard };
-    confirmDeleteOpen = true;
+    if (!conn) return;
+    pendingDelete = { id, fromKeyboard };
+    confirmDelete();
+    toastConnectionRemoved(conn, () => { saved = loadSavedConnections().sort(byLastConnected); });
   }
+
+  /** @type {{ id: string, fromKeyboard: boolean } | null} */
+  let pendingDelete = null;
 
   function confirmDelete() {
     if (!pendingDelete) return;
     const { id, fromKeyboard } = pendingDelete;
     pendingDelete = null;
-    saved = removeConnection(id).sort(byLastConnected);
+    saved = removeConnection(id, { undoable: true }).sort(byLastConnected);
     if (id === lastId) {
       lastId = null;
       setLastConnectionId(null);
@@ -6687,18 +6689,6 @@
   </DialogPrimitive.Portal>
 </DialogPrimitive.Root>
 
-<ConfirmDialog
-  bind:open={confirmDeleteOpen}
-  icon="trash-2"
-  title="Delete connection?"
-  description={`"${pendingDelete?.name ?? ''}" will be removed from your saved connections.`}
-  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
-  confirmLabel="Delete"
-  confirmIcon="trash-2"
-  variant="destructive"
-  onconfirm={confirmDelete}
-  oncancel={() => (pendingDelete = null)}
-/>
 
 <style>
   /* The modal is portalled to <body>, outside #app, so it never inherits the
