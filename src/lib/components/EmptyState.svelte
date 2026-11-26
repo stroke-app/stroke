@@ -37,7 +37,7 @@
       <Icon name={iconName} class="mb-4 size-8 shrink-0 text-muted-foreground" strokeWidth={1.25} aria-hidden="true" />
     {/if}
     <div class="flex flex-col gap-1">
-      <p class="text-ui-lg font-medium text-pretty text-foreground">
+      <p class="text-ui-xl font-normal tracking-tight text-pretty text-foreground">
         {#if heading}{@render heading()}{:else}{title}{/if}
       </p>
       {#if body || description}
