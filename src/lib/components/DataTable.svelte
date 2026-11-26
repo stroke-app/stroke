@@ -4722,14 +4722,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const next = {}
     /** @type {Set<string>} */
     const auto = new Set()
+    const fittedBefore = key ? _fitCache.get(key) : undefined
     for (const col of cols) {
       const dt = col.dataType ?? col.data_type ?? ""
       // Builds before 2.21 saved every column's width when one was dragged,
       // the untouched ones at their fixed type default (420 for text). A
       // stored width equal to that default was never chosen: fit it instead.
       const own = stored[col.name] != null && stored[col.name] !== clampColumnWidth(defaultColumnWidth(dt)) ? stored[col.name] : null
-      if (own == null) auto.add(col.name)
-      next[col.name] = clampColumnWidth(own ?? defaultColumnWidth(dt))
+      // Fitted earlier this session: the same width again, with no measuring.
+      const fitted = own == null ? fittedBefore?.[col.name] : undefined
+      if (own == null && fitted == null) auto.add(col.name)
+      next[col.name] = clampColumnWidth(own ?? fitted ?? defaultColumnWidth(dt))
     }
     columnWidths = next
     // Columns nobody has sized are fitted to their content once rows arrive.
@@ -4745,6 +4748,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   /** Columns still waiting to be fitted (no stored width). */
   let _autoFitCols = $state(/** @type {Set<string>} */ (new Set()))
+  /**
+   * Widths fitted this session, by `columnWidthsKey`. The grid is one component
+   * shared by every table tab, so returning to a table re-ran the fit: up to
+   * 200 rows measured per unsized column on each switch back, for the widths
+   * it had already found. Kept in memory only, like the fit itself; capped.
+   * @type {Map<string, Record<string, number>>}
+   */
+  const _fitCache = new Map()
+  const FIT_CACHE_MAX = 200
   /** @type {CanvasRenderingContext2D | null} */
   let _measureCtx = null
   /**
@@ -4839,7 +4851,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         if (w != null) fitted[col.name] = w
       })
       _autoFitCols = new Set()
-      if (Object.keys(fitted).length) columnWidths = { ...columnWidths, ...fitted }
+      if (Object.keys(fitted).length) {
+        columnWidths = { ...columnWidths, ...fitted }
+        const key = columnWidthsKey
+        if (key) {
+          const prev = _fitCache.get(key)
+          _fitCache.delete(key) // re-inserted last: the cap drops the oldest table
+          _fitCache.set(key, { ...(prev ?? {}), ...fitted })
+          if (_fitCache.size > FIT_CACHE_MAX) _fitCache.delete(/** @type {string} */ (_fitCache.keys().next().value))
+        }
+      }
     })
   })
 
