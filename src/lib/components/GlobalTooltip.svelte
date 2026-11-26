@@ -115,12 +115,23 @@
     shown = true
   }
 
+  /**
+   * Inside a trigger whose menu is showing (bits-ui marks it expanded): the
+   * trigger's own tip, or one on an icon inside it, would sit on the menu.
+   * Buttons and popup triggers only: an expanded tree row is not a menu.
+   */
+  function isOpenTrigger(/** @type {Element} */ el) {
+    return !!el.closest('button[aria-expanded="true"], [aria-haspopup][aria-expanded="true"]')
+  }
+
   function onPointerOver(/** @type {PointerEvent} */ e) {
     const target = /** @type {Element | null} */ (e.target)
     const el = target?.closest?.(TIP_SELECTOR)
     if (el === currentEl) return
     if (currentEl) hide()
     if (!el || el.hasAttribute('data-no-tip')) return
+    // Its menu or popover is open: the tip would sit on top of it.
+    if (isOpenTrigger(el)) return
     // `data-tip-overflow`: the tip only repeats a label, so show it only when
     // that label is cut off (its `.truncate` text overflows).
     if (el.hasAttribute('data-tip-overflow')) {
@@ -140,7 +151,7 @@
     clearTimeout(showTimer)
     const warm = performance.now() - cooledAt < WARM_MS
     showTimer = setTimeout(() => {
-      if (currentEl === el) show(el, value)
+      if (currentEl === el && !isOpenTrigger(el)) show(el, value)
     }, warm ? 0 : DELAY)
   }
 

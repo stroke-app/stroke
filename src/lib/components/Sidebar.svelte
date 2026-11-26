@@ -2355,6 +2355,7 @@
                       placeholder={$tx('sidebar.searchSchemas', 'Search schemas…')}
                       empty="No schema"
                       items={schemaMenuItems}
+                      current={activeSchema}
                       onselect={(it) => {
                         if (!it.value) return
                         // The last entry is the toggle, not a schema.

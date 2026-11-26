@@ -36,6 +36,7 @@
 <SearchableMenu
   bind:open
   {items}
+  current={value}
   placeholder={search}
   {empty}
   {contentClass}

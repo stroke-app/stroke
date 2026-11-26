@@ -525,6 +525,7 @@
           contentClass="w-72"
           placeholder={$tx('sb.searchConnections', 'Search connections…')}
           items={connItems}
+          current={activeConnectionId}
           onselect={(it) => { const c = savedConnections.find((x) => x.id === it.value); if (c && c.id !== activeConnectionId) onswitchconnection(c) }}
         >
           {#snippet trigger(props)}
@@ -1051,6 +1052,7 @@
       contentClass="w-64"
       placeholder={$tx('sb.searchModels', 'Search models…')}
       items={$aiProfiles.map((p) => ({ value: p.id, label: p.name, keywords: [p.model] }))}
+      current={$activeProfileId}
       onselect={(it) => setActiveProfile(it.value)}
     >
       {#snippet trigger(props)}
