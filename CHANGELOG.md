@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.8.5] - 2026-11-26
+
+### Changes
+- Disable the DMA-buf renderer at the start of main on Linux (#443)
+
+
 ## [3.8.4] - 2026-11-25
 
 ### Bug Fixes
