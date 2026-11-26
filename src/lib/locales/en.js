@@ -349,7 +349,7 @@ export default {
   "menubar.Copy staged changes as SQL": "Copy staged changes as SQL",
   "menubar.Discard staged changes": "Discard staged changes",
   "menubar.Toggle sidebar": "Toggle sidebar",
-  "menubar.Toggle chat": "Toggle chat",
+  "menubar.Toggle chat": "Toggle AI sidebar",
   "menubar.Zoom in": "Zoom in",
   "menubar.Zoom out": "Zoom out",
   "menubar.Reset zoom": "Reset zoom",
