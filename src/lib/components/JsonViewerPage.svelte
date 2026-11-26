@@ -223,7 +223,7 @@
   <!-- ── Input panel header ────────────────────────────────────────────── -->
   <div class="studio-chrome flex h-8 shrink-0 items-center gap-2 border-b border-border bg-panel px-3" data-studio-chrome>
     <Braces class="size-3.5 shrink-0 text-muted-foreground" />
-    <span class="font-mono text-ui-xs font-medium text-foreground/70">JSON Input</span>
+    <span class="text-ui-xs font-medium text-foreground/70">JSON input</span>
 
     {#if inputSummary === 'invalid JSON'}
       <span class="font-mono text-ui-2xs text-destructive">invalid JSON</span>
