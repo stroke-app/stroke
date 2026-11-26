@@ -885,6 +885,16 @@
     // A tab I renamed already says what the query is: that, not its first line.
     saveQueryName = savedQueryName ? `${savedQueryName} copy` : tabName || queryTitle(sql);
     saveDialogOpen = true;
+    // The name selected, ready to type over, but shown from its start: focus
+    // landed with the caret at the end, and a long name (a query's first line)
+    // showed only its tail.
+    setTimeout(() => {
+      const el = /** @type {HTMLInputElement | null} */ (document.getElementById('save-query-name'));
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(0, el.value.length, 'backward');
+      el.scrollLeft = 0;
+    }, 60);
   }
 
   /**

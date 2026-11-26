@@ -78,7 +78,7 @@ export function saveSqlDraft(connId, text) {
 
 const TABS_KEY = 'stroke:sql-tabs'
 
-/** @typedef {{ title: string, sql: string, savedQueryId: string | null, active: boolean }} StoredSqlTab */
+/** @typedef {{ title: string, sql: string, savedQueryId: string | null, active: boolean, renamed?: boolean }} StoredSqlTab */
 
 /** @returns {Record<string, unknown>} */
 function loadAllTabs() {
@@ -109,6 +109,7 @@ export function loadSqlTabs(connId) {
       sql: t.sql,
       savedQueryId: typeof t.savedQueryId === 'string' && t.savedQueryId ? t.savedQueryId : null,
       active: t.active === true,
+      ...(t.renamed === true ? { renamed: true } : {}),
     }))
 }
 
