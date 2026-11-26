@@ -21,9 +21,13 @@
 - The sidebar filter shrank to a few letters beside the schema picker.
 - Success, warning, error, info and accent text, and highlighted SQL, now read clearly in every theme.
 - At the smallest window size the SQL results pane kept its width and its toolbar stayed whole.
+- ? and Ctrl+? / ⌘? never opened the keyboard shortcuts.
+- Back and forward stopped at pages that put the caret in their editor on their own (the SQL editor, an empty JSON viewer).
+- Each snapshot on the Schema timeline shows its table count again.
 
 ### Changes
-- Deleting a saved connection asks nothing and offers Undo for 8 seconds instead.
+- Deleting a saved connection, dashboard, dashboard card, saved chart or schema snapshot asks nothing and offers Undo for 8 seconds instead.
+- Every dialog's main button is drawn in the accent colour.
 - The command menu, the Schema explorer and switching between tables are faster.
 - Grid checkboxes show on the row you point at, and on every row once you select one.
 - Empty pages share one design, with the first step as a button.
