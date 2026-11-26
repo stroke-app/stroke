@@ -1070,7 +1070,7 @@
         </colgroup>
         <thead>
           <tr>
-            {#each ['column', 'references', ''] as h}
+            {#each ['Column', 'References', ''] as h}
               <th class={TH}>{h}</th>
             {/each}
           </tr>
@@ -1101,7 +1101,7 @@
             </tr>
           {/each}
           {#if relationsColumns.length === 0}
-            <tr><td colspan="3" class="px-3 py-6 font-mono text-ui-xs text-muted-foreground">No foreign key relations on this table</td></tr>
+            <tr><td colspan="3" class="px-3 py-6 text-ui-xs text-muted-foreground">No foreign keys on this table</td></tr>
           {/if}
         </tbody>
       </table>
