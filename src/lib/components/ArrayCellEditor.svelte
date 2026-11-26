@@ -27,8 +27,9 @@
   // Local working copy - each row is { v: string|null }. Strings map to array
   // elements; `null` is a genuine SQL NULL element.
   let items = $state(/** @type {{ v: string | null }[]} */ ([]))
-  /** @type {HTMLInputElement[]} */
-  let inputEls = []
+  /** The field for element `i`, looked up when it needs focus (a `bind:this`
+   *  into a plain array warned on every render). @param {number} i */
+  const inputAt = (i) => /** @type {HTMLInputElement | null} */ (document.querySelector(`[data-array-el="${i}"]`))
 
   // Seed the working copy whenever the editor opens for a new cell.
   $effect(() => {
@@ -42,20 +43,16 @@
         v: el === null || el === undefined ? null : String(el),
       }))
       items = next
-      inputEls.length = next.length
     }
   })
 
   async function addItem() {
     items = [...items, { v: '' }]
     await tick()
-    inputEls[items.length - 1]?.focus()
+    inputAt(items.length - 1)?.focus()
   }
   function removeAt(i) {
     items = items.filter((_, j) => j !== i)
-    // Index-keyed binds shift down; drop the now-stale ref at the old tail so a
-    // later addItem() focuses the right (freshly rebound) input.
-    inputEls.length = items.length
   }
 
   // ── Drag to reorder ──────────────────────────────────────────────────────────
@@ -85,7 +82,6 @@
   }
   function clearAll() {
     items = []
-    inputEls.length = 0
   }
 
   function save() {
@@ -185,7 +181,7 @@
                   >NULL</button>
                 {:else}
                   <input
-                    bind:this={inputEls[i]}
+                    data-array-el={i}
                     bind:value={item.v}
                     placeholder="value"
                     spellcheck="false"
