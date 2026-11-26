@@ -1199,6 +1199,8 @@
   })
   /** How many rows the open list is drawing. Drives the ↵ chip and Enter. */
   const renderedRowCount = $derived(navKeys.length)
+  /** A search has left exactly one row: the field shows an Enter cap that opens it. */
+  const showOpenCap = $derived(renderedRowCount === 1 && !!debouncedFilter.trim() && sidebarTab !== "tree")
 
   // ── One tab stop for the list (ARIA APG roving tabindex) ──────────────────
   // Every row was its own tab stop, so crossing the sidebar with Tab took one
@@ -2279,7 +2281,10 @@
           {/if}
           <!-- A field you can see at rest (faint fill), with room between the
                magnifier and the text, so the caret never sits on the icon. -->
-          <div class="group/search relative min-w-0 flex-1">
+          <!-- A size container: beside the schema picker the field is ~100px,
+               and the `/` cap plus its padding left room for "Sear". Below 9rem
+               the cap goes and the hint moves to the tooltip. -->
+          <div class="group/search @container/search relative min-w-0 flex-1">
           <Icon name="search"
             class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground transition-colors duration-150 group-focus-within/search:text-foreground"
           />
@@ -2361,12 +2366,30 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="peer search-box no-field-frame w-full min-w-0 pl-[2.125rem] pr-8 text-ui-sm"
+            class={cn("peer search-box no-field-frame w-full min-w-0 pl-[2.125rem] text-ui-sm", showOpenCap ? "pr-14" : "pr-8 @max-[9rem]/search:pr-2")}
             aria-label="Filter {activeTabLabel.toLowerCase()}"
+            title={connectionName ? `Filter ${activeTabLabel.toLowerCase()} (/)` : undefined}
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter
           />
-          <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
+          <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden @max-[9rem]/search:!hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
+          <!-- Only while a search has narrowed the list to one row: a real target
+               that opens the match. It sits inside the field, beside the clear
+               button, so the field keeps its width. As a sibling in the row it
+               took ~60px from a field that already shares the row with the
+               schema picker, and the typed name was squeezed to a few letters.
+               `tabindex="-1"`: Tab from the filter goes to the list, which with
+               one match is this same row. The keyboard path is Enter. -->
+          {#if showOpenCap}
+            <button
+              type="button"
+              tabindex="-1"
+              class="hit-area absolute top-1/2 right-7 inline-flex h-5 -translate-y-1/2 items-center rounded px-1 text-ui-2xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+              title={soleResult ? `Open ${soleResult.label} (Enter)` : 'Open the only match (Enter)'}
+              aria-label={soleResult ? `Open ${soleResult.label}` : 'Open the only match'}
+              onclick={() => { const only = navKeys.length === 1 ? rowEl(navKeys[0]) : null; if (only) only.click(); else soleResult?.open() }}
+            ><Kbd combo="Enter" aria-hidden="true" /></button>
+          {/if}
           {#if localFilter}
             <button
               type="button"
@@ -2380,28 +2403,6 @@
             </button>
           {/if}
           </div>
-          <!-- Only while a search has narrowed the list to one row. A schema
-               that simply has one table showed it with an empty box, where it
-               read as a stray key rather than "open your match". -->
-          {#if renderedRowCount === 1 && debouncedFilter.trim() && sidebarTab !== 'tree'}
-            <!-- A real target, not a legend. When the filter has left one row,
-                 the fastest thing to do with it is open it, and a hint that only
-                 tells you which key to press makes the pointer take the long way
-                 round to a row it can already see.
-                 `tabindex="-1"` keeps it out of the tab order on purpose: Tab
-                 from the filter goes to the list, which with one match is this
-                 same row, so a stop here would be a second stop on one thing.
-                 The keyboard path is Enter in the field, which the field's own
-                 description offers. -->
-            <button
-              type="button"
-              tabindex="-1"
-              class="hit-area inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
-              title={soleResult ? `Open ${soleResult.label} (Enter)` : 'Open the only match (Enter)'}
-              aria-label={soleResult ? `Open ${soleResult.label}` : 'Open the only match'}
-              onclick={() => { const only = navKeys.length === 1 ? rowEl(navKeys[0]) : null; if (only) only.click(); else soleResult?.open() }}
-            >Open ↵</button>
-          {/if}
           <!-- Held apart: the description is static and read on focus, the status
                is rewritten as the list narrows. Merging them would re-announce
                the instruction on every keystroke. Both are rendered whether or
