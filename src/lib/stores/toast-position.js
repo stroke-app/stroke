@@ -10,13 +10,20 @@ const KEY = 'stroke:toast-position'
 /** @type {ToastPosition[]} */
 export const TOAST_POSITIONS = ['top-left', 'top-right', 'bottom-left', 'bottom-right']
 
+/**
+ * Bottom right unless picked: at the top a toast sat over the tab bar and
+ * the window controls, the two places most often reached for just after an
+ * action that raises one.
+ */
+const DEFAULT_POSITION = /** @type {ToastPosition} */ ('bottom-right')
+
 /** @returns {ToastPosition} */
 function load() {
   try {
     const v = /** @type {any} */ (localStorage.getItem(KEY))
-    return TOAST_POSITIONS.includes(v) ? v : 'top-right'
+    return TOAST_POSITIONS.includes(v) ? v : DEFAULT_POSITION
   } catch {
-    return 'top-right'
+    return DEFAULT_POSITION
   }
 }
 

@@ -103,7 +103,7 @@
 <ZoomIndicator />
 <Toaster
   position={$toastPosition}
-  offset={{ top: '42px', bottom: '32px', left: '12px', right: '12px' }}
+  offset={{ top: '42px', bottom: '40px', left: '16px', right: '16px' }}
   closeButton
 />
 <AppErrorBoundary>
