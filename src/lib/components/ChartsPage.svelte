@@ -265,7 +265,7 @@
   <!-- ── Toolbar: what this is, search, group, new group ──────────────── -->
   <div class="studio-chrome flex h-12 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-4" data-studio-chrome>
     <h1 class="text-ui-sm font-medium text-foreground">Saved charts</h1>
-    <span class="text-ui-xs tabular-nums text-muted-foreground">{totalCharts}</span>
+    {#if totalCharts > 0}<span class="text-ui-xs tabular-nums text-muted-foreground">{totalCharts}</span>{/if}
     <span class="flex-1"></span>
     {#if totalCharts > 0}
       <SearchField bind:value={query} placeholder="Search charts" class="w-52" />
