@@ -229,9 +229,8 @@
       <span class="font-mono text-ui-2xs text-destructive">invalid JSON</span>
     {:else if inputSummary}
       <span class="font-mono text-ui-2xs text-muted-foreground">{inputSummary}</span>
-    {:else}
-      <span class="font-mono text-ui-2xs text-muted-foreground">paste or type JSON here</span>
     {/if}
+    <!-- Empty: the editor itself says to paste or type; the header repeating it was the same line twice. -->
 
     <div class="ml-auto flex shrink-0 items-center gap-0.5">
       {#if parsedJson !== null}
