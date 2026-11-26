@@ -262,15 +262,43 @@
     }
   })
 
-  // Arrow keys (held down included) and hover both move `highlighted`. At most
-  // one repaint per frame: key repeat can outrun the display, and painting a
-  // theme the next frame replaces anyway is the lag you would see.
+  // Arrow keys (held down included) and hover both move `highlighted`, and so
+  // does typing, which re-ranks the rows. Only the first two preview: typing
+  // "nord" repainted the whole app in Studio Dark at "n", and each repaint
+  // held up the next letter. `navAt` is when an arrow key or the pointer last
+  // moved the highlight; a typed key clears it.
+  let navAt = 0
+  $effect(() => {
+    if (!open || page !== 'theme') return
+    /** @param {KeyboardEvent} e */
+    const onKey = (e) => {
+      if (/^(Arrow(Up|Down)|Page(Up|Down)|Home|End)$/.test(e.key)) navAt = performance.now()
+      else if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') navAt = 0
+    }
+    // Only a pointer that moved: rows re-ranking under a still one send a move too.
+    let px = NaN, py = NaN
+    /** @param {PointerEvent} e */
+    const onMove = (e) => {
+      if (e.clientX === px && e.clientY === py) return
+      px = e.clientX; py = e.clientY
+      navAt = performance.now()
+    }
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('pointermove', onMove, { capture: true, passive: true })
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('pointermove', onMove, true)
+    }
+  })
+  // At most one repaint per frame: key repeat can outrun the display, and
+  // painting a theme the next frame replaces anyway is the lag you would see.
   let previewFrame = 0
   $effect(() => {
     const value = highlighted
     if (page !== 'theme' || !themePreviewArmed) return
     const id = themeIdFromValue(value)
     if (!id) return
+    if (performance.now() - navAt > 400) return
     cancelAnimationFrame(previewFrame)
     previewFrame = requestAnimationFrame(() => {
       if (page !== 'theme' || !themePreviewArmed) return
@@ -705,9 +733,12 @@
   // smooth even with thousands of tables.
   let paletteSearch = $state('')
   const paletteFilter = cachedCommandFilter()
-  // The root page filters its own rows: bits-ui's search stays empty there, so
-  // it never rebuilds or re-sorts the list (see command-local-filter.svelte.js).
-  const localFilter = createLocalFilter(() => (page === 'root' ? paletteSearch.trim() : ''), paletteFilter)
+  // The root and theme pages filter their own rows: bits-ui's search stays
+  // empty there, so it never rebuilds or re-sorts the list (see
+  // command-local-filter.svelte.js). The theme page's first letter rebuilt 40
+  // rows of swatches, 160ms in a dev build.
+  const LOCAL_PAGES = new Set(['root', 'theme'])
+  const localFilter = createLocalFilter(() => (LOCAL_PAGES.has(page) ? paletteSearch.trim() : ''), paletteFilter)
   setContext(LOCAL_FILTER, localFilter)
   const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'actions', 'switchdb', 'database', 'launch', 'appearance']
   /** Root groups in page order, or best match first while searching. */
@@ -720,7 +751,7 @@
   // filtered, and with its search empty it no longer does.
   let _wasSearching = false
   $effect(() => {
-    if (page !== 'root') return
+    if (!LOCAL_PAGES.has(page)) return
     if (!localFilter.search) {
       // Cleared: back to the first row, as a fresh menu opens.
       if (!_wasSearching) return
@@ -733,7 +764,7 @@
       return
     }
     _wasSearching = true
-    const order = rootOrder
+    const order = page === 'root' ? rootOrder : themePageGroups.map((g) => g.label)
     const top = localFilter.top((g) => order.indexOf(g ?? ''))
     if (top && top !== untrack(() => highlighted)) highlighted = top
   })
@@ -906,7 +937,7 @@
     <div class="flex flex-col" onkeydown={handleKeydown}>
       <Command.Input
         bind:value={paletteSearch}
-        filterValue={page === 'root' ? '' : undefined}
+        filterValue={LOCAL_PAGES.has(page) ? '' : undefined}
         oninput={(/** @type {Event} */ e) => { paletteSearch = /** @type {HTMLInputElement} */ (e.currentTarget).value }}
         placeholder={
           page === 'root' ? $tx('cmd.ph.root', 'Search tables, schemas, commands…')
@@ -942,7 +973,7 @@
           ? 'h-[min(640px,74vh)] max-h-[min(640px,74vh)]'
           : 'show-scrollbar max-h-[min(420px,56vh)] pb-2 [mask-image:linear-gradient(to_bottom,black_calc(100%-16px),transparent)]'}
       >
-        {#if page !== 'ask'}
+        {#if page !== 'ask' && !LOCAL_PAGES.has(page)}
           <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</Command.Empty>
         {/if}
 
@@ -1565,6 +1596,9 @@
               {/each}
             </Command.Group>
           {/each}
+          {#if localFilter.search && localFilter.count === 0}
+            <p class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</p>
+          {/if}
         {/if}
 
       </Command.List>
