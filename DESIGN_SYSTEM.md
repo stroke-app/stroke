@@ -419,7 +419,8 @@ below it.
 ## 10b. Deleting: undo, not confirm
 
 A delete that can be put back goes at once and offers **Undo** in the toast:
-`toast.message('<Thing> deleted', { description: name, duration: 8000, action: { label: 'Undo', onClick } })`.
+`offerUndo('<Thing> deleted', name, restore)` from `src/lib/undo-toast.js`
+(8 seconds; a `restore` that returns `false` says it could not).
 The store's delete returns a restore function (see `deleteDashboard`,
 `deleteChart`, `deleteDiagram` in `src/lib/stores/`) that puts the item back at
 its index and returns `false` once the list on screen belongs to another
