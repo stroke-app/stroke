@@ -62,3 +62,5 @@
 - Closing a notebook with unsaved changes offers Undo.
 - Data diff picks its connection, database, schema and table from the app's select menu, and every table row's menu offers Open in schema diagram.
 - A new notebook opens with the caret in its cell, Recent table names use the full row width, and the peek card shows long table names whole.
+- Searching Settings or the keyboard shortcuts matches at the start of words, so "port" no longer lists every Import and Export, and "tab" no longer lists Switch database.
+- Both export menus list each format with a short description and without a repeated icon. Ctrl+Shift+E is named Toggle AI panel, which is what it opens.
