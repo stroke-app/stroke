@@ -7732,9 +7732,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       gx += GUTTER_EXPAND_W
     }
     if (showSelection) {
-      drawCheckbox(ctx, gx + (GUTTER_SELECT_W - 16) / 2, ry + (rh - 16) / 2, 16,
-        { checked: selected.has(idx) },
-        { border: c.cMuted, fill: c.cPrimary, mark: c.cPanel })
+      // Like the expand chevron beside it: a row's box shows on the row under
+      // the pointer or the keyboard, on checked rows, and on every row once
+      // anything is selected. An empty box on every row, all the time, was a
+      // column of identical marks the eye had to read past on each line. The
+      // header's select-all box stays, so the column still says what it is.
+      const checked = selected.has(idx)
+      if (checked || selected.size > 0 || hoveredRow === idx || focusedRow === idx) {
+        drawCheckbox(ctx, gx + (GUTTER_SELECT_W - 16) / 2, ry + (rh - 16) / 2, 16,
+          { checked },
+          { border: c.cMuted, fill: c.cPrimary, mark: c.cPanel })
+      }
       gx += GUTTER_SELECT_W
     }
     if (GUTTER_NUM_W > 0) {
