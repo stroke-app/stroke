@@ -481,6 +481,8 @@
   async function pingNow() {
     if (!connection) return
     const t0 = performance.now()
+    // Same as the heartbeat: a ping still out after 3 seconds clears the old reading.
+    const stale = setTimeout(() => { dbLatencyMs = null }, 3_000)
     try {
       await pingConnection()
       dbLatencyMs = Math.round(performance.now() - t0)
@@ -488,6 +490,8 @@
     } catch {
       if (!connectionLost) connectionLost = true
       void silentReconnect()
+    } finally {
+      clearTimeout(stale)
     }
   }
   /**
@@ -2786,7 +2790,11 @@ let rowSearch = $state('')
       try {
         // Timed: the status bar shows the round trip, so a slow link is visible.
         const t0 = performance.now()
-        await pingConnection()
+        // A ping that has not come back in 3 seconds clears the last reading,
+        // so the bar pulses "checking" instead of still saying 2ms while the
+        // database has stopped answering.
+        const stale = setTimeout(() => { dbLatencyMs = null }, 3_000)
+        try { await pingConnection() } finally { clearTimeout(stale) }
         dbLatencyMs = Math.round(performance.now() - t0)
         if (connectionLost) { connectionLost = false; error = '' }
       } catch {
