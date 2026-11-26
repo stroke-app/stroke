@@ -335,7 +335,7 @@ export default {
   "menubar.Tools": "Tools",
   "menubar.Help": "Help",
   "menubar.New tab": "New tab",
-  "menubar.New query editor": "New query editor",
+  "menubar.New query editor": "New SQL editor",
   "menubar.New window": "New window",
   "menubar.Connect\u2026": "Connect…",
   "menubar.Disconnect": "Disconnect",
