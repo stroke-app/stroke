@@ -313,7 +313,7 @@
         bind:this={listSearchEl}
         bind:value={listSearch}
         placeholder="Filter tables…"
-        class="search-box no-field-frame h-7 w-full pl-7 pr-2 font-mono text-ui-xs"
+        class="search-box no-field-frame h-7 w-full pl-7 pr-2 font-mono placeholder:font-sans text-ui-xs"
       />
     </div>
     {/if}
