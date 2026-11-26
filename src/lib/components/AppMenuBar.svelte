@@ -124,6 +124,7 @@
         {@render item("plug", "Disconnect", "disconnect", "connection.disconnect", !connected)}
         <Menubar.Separator class={sepCls} />
         {@render item("settings", "Settings…", "openSettings", "settings.open")}
+        <Menubar.Separator class={sepCls} />
         {@render item("x", "Close tab", "closeTab", "tab.close")}
         {@render item("x", "Close all tabs", "closeAllTabs", "tab.closeAll")}
       </Menubar.Content>
