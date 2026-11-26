@@ -523,11 +523,11 @@
             <div class={cn("group/field grid grid-cols-[minmax(8rem,13rem)_minmax(0,1fr)_3rem] items-start gap-x-4 rounded-md px-2.5 py-1 transition-colors [contain-intrinsic-size:auto_30px] [content-visibility:auto] hover:bg-muted/25", editing && "bg-muted/30")}>
               <!-- One line: name, key, and the type as a muted suffix. -->
               <dt class="flex min-w-0 items-baseline gap-1.5 py-1" title="{field.name} · {field.dataType || 'unknown'}{field.nullable ? '' : ' · not null'}">
-                <span class="min-w-0 truncate font-mono text-ui-xs text-foreground">{field.name}</span>
+                <span class="max-w-full shrink-0 truncate font-mono text-ui-xs text-foreground">{field.name}</span>
                 {#if field.isPk}
                   <Icon name="key-round" class="size-3 shrink-0 self-center text-warning" aria-label="Primary key" />
                 {/if}
-                <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground">{field.dataType}</span>
+                <span class="ml-auto min-w-0 truncate text-ui-2xs text-muted-foreground">{field.dataType}</span>
               </dt>
 
               <dd class="relative min-w-0">
