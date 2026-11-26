@@ -535,6 +535,9 @@
     { id: "erd", icon: "network", label: "Schema diagram", title: "Schema diagram: this table and its related tables" },
   ];
 
+  /** The Alt+1-5 view keys (`table.view.N`), printed beside their views in the menu. */
+  const VIEW_KEY = /** @type {Record<string, number>} */ ({ table: 1, json: 2, record: 3, text: 4, chart: 5 })
+
   /**
    * Map view is offered only when the table has something to map. Listing it
    * everywhere would make it the one view in the menu that opens onto nothing,
@@ -1728,9 +1731,11 @@
               onValueChange={(v) => (dataViewMode = /** @type {'table' | 'json' | 'record' | 'text' | 'chart' | 'erd'} */ (v))}
             >
               {#each dataViewModes as m (m.id)}
+                {@const viewKey = VIEW_KEY[m.id]}
                 <DropdownMenu.RadioItem value={m.id} disabled={columns.length === 0}>
                   <Icon name={m.icon} class="size-3.5 shrink-0" />
                   <span data-slot="menu-label">{m.label.replace(/ view$/, "")}</span>
+                  {#if viewKey}<DropdownMenu.Shortcut command={`table.view.${viewKey}`} />{/if}
                 </DropdownMenu.RadioItem>
               {/each}
             </DropdownMenu.RadioGroup>
