@@ -782,6 +782,21 @@
     return Math.round(Math.min(max, Math.max(280, w)));
   }
   const beside = $derived($appSqlEditor.resultsBeside && outputVisible);
+  /**
+   * The split's live width. The saved editor width was applied as is, so a
+   * narrower window (960px, the minimum) left the results ~150px and clipped
+   * their toolbar. The width drawn is clamped to the room there is now; the
+   * saved one is kept, so a wider window gets the old split back.
+   */
+  let splitWidth = $state(0);
+  $effect(() => {
+    const el = splitEl;
+    if (!el) return;
+    const ro = new ResizeObserver(() => { splitWidth = el.clientWidth; });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+  const shownEditorWidth = $derived(splitWidth > 0 ? Math.min(editorWidth, Math.max(280, splitWidth - 320)) : editorWidth);
   /** Where Saved lives: its own Queries tab in the shell, else the results pane. */
   const savedWhere = $derived(onopenqueries ? 'in the Queries tab under Saved' : 'under Saved in the results pane');
   /** @type {(() => Promise<void>) | null} */
@@ -1403,7 +1418,7 @@
       : outputVisible
         ? "relative shrink-0 overflow-hidden bg-panel"
         : "relative min-h-0 flex-1 overflow-hidden bg-panel"}
-    style={beside ? `width: ${editorWidth}px` : outputVisible ? `height: ${editorHeight}px` : undefined}
+    style={beside ? `width: ${shownEditorWidth}px` : outputVisible ? `height: ${editorHeight}px` : undefined}
   >
     <SqlEditor
       bind:this={sqlEditorRef}
@@ -1441,7 +1456,7 @@
     axis="x"
     edge="end"
     onresizestart={() => {
-      resizeStartWidth = editorWidth;
+      resizeStartWidth = shownEditorWidth;
     }}
     onresize={(dx) => {
       editorWidth = clampEditorWidth(resizeStartWidth + dx);
@@ -1904,18 +1919,21 @@
             </div>
           {:else}
             <!-- T3-style empty state: one light line, one quiet hint. -->
-            <div class="flex h-full flex-col items-center justify-center gap-1.5 text-center">
+            <div class="@container/runhint flex h-full flex-col items-center justify-center gap-1.5 px-4 text-center">
               <p class="text-ui-lg font-normal tracking-tight text-foreground/90">{$tx('sql.runAQuery', 'Run a query')}</p>
               <!-- Mod+Enter runs every statement; Mod+R is the one at the cursor.
                    This named Mod+Enter for the cursor's, which then ran all of them. -->
               <!-- Two columns, caps right-aligned against the text: centred one
                    per line, the two hints started at different x and read as
                    two unrelated notes. -->
-              <div class="mt-1 grid grid-cols-[auto_auto] items-center gap-x-2 gap-y-1.5 text-ui-xs text-muted-foreground">
-                <Kbd combo="Mod+R" class="justify-self-end" />
-                <span class="text-left">runs the statement at the cursor</span>
-                <Kbd combo="Mod+Enter" class="justify-self-end" />
-                <span class="text-left">runs them all</span>
+              <!-- Below ~18rem (results beside the editor in a narrow window)
+                   the two columns wrapped a word per line: each cap then sits
+                   centred above its text instead. -->
+              <div class="mt-1 grid grid-cols-1 justify-items-center gap-x-2 gap-y-1.5 text-ui-xs text-muted-foreground @[18rem]/runhint:grid-cols-[auto_auto] @[18rem]/runhint:items-center @[18rem]/runhint:justify-items-start">
+                <Kbd combo="Mod+R" class="@[18rem]/runhint:justify-self-end" />
+                <span class="text-center @[18rem]/runhint:text-left @[18rem]/runhint:whitespace-nowrap">runs the statement at the cursor</span>
+                <Kbd combo="Mod+Enter" class="mt-1.5 @[18rem]/runhint:mt-0 @[18rem]/runhint:justify-self-end" />
+                <span class="text-center @[18rem]/runhint:text-left @[18rem]/runhint:whitespace-nowrap">runs them all</span>
               </div>
             </div>
           {/if}
