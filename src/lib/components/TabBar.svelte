@@ -271,10 +271,13 @@
     data-tauri-drag-region
     class={cn(
       // scroll-px keeps a tab scrolled into view clear of the edge fade.
-      'app-scroll flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto scroll-px-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-      fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,transparent,black_2rem,black_calc(100%-2rem),transparent)]',
-      fadeLeft && !fadeRight && '[mask-image:linear-gradient(to_right,transparent,black_2rem)]',
-      !fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]',
+      'app-scroll flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto scroll-px-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+      // Clear for the first 0.75rem, then the ramp: a tab icon cut at the
+      // edge still showed through a fade that started at once, and next to
+      // the back and forward arrows it read as a third arrow.
+      fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,transparent_0.75rem,black_2.25rem,black_calc(100%-2.25rem),transparent_calc(100%-0.75rem))]',
+      fadeLeft && !fadeRight && '[mask-image:linear-gradient(to_right,transparent_0.75rem,black_2.25rem)]',
+      !fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,black_calc(100%-2.25rem),transparent_calc(100%-0.75rem))]',
     )}
     onscroll={updateFades}
     onwheel={onStripWheel}
