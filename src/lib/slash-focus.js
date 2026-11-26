@@ -62,7 +62,12 @@ export function slashTarget(root = document) {
 export function slashFocusTarget() {
   const ranked = slashTarget()
   if (ranked && (Number(ranked.dataset.slashFocus) || 0) > SIDEBAR_RANK) return ranked
-  const page = findSearchInput(document, (el) => (Number(el.dataset.slashFocus) || 0) <= SIDEBAR_RANK && el.hasAttribute('data-slash-focus'))
+  // The page's own fields only: the sidebar's other searches (its connection
+  // list) are not the page, and on a page with no search field one of them
+  // took `/` from the table filter.
+  const page = findSearchInput(document, (el) =>
+    ((Number(el.dataset.slashFocus) || 0) <= SIDEBAR_RANK && el.hasAttribute('data-slash-focus'))
+    || !!el.closest('[data-studio-region="sidebar"]'))
   return page ?? ranked
 }
 
