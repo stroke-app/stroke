@@ -1,5 +1,6 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import { askConfirm } from '$lib/stores/confirm.js'
   // DynamoDB tables: a table list, a grid of items loaded a page at a time by
   // Scan or Query (on the table or an index), and a side panel to edit, add or
   // delete one item as JSON. A PartiQL panel docks underneath for anything the
@@ -262,7 +263,7 @@
       const next = parseDraft()
       const prev = creating ? null : selectedItem
       const req = saveRequest(table, tableKey, next, prev)
-      if (req.op === 'TransactWriteItems' && !confirm('The key changed. This creates a new item and deletes the old one. Continue?')) return
+      if (req.op === 'TransactWriteItems' && !(await askConfirm({ title: 'Change the key?', description: 'The key changed. This creates a new item and deletes the old one.', confirmLabel: 'Change key' }))) return
       // Optimistic for an existing item with the same key: the list shows the
       // edit now and gets the original back if DynamoDB refuses. A new item,
       // or a key change, waits for the write.

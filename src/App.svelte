@@ -17,6 +17,7 @@
   import CrashNow from './lib/components/CrashNow.svelte'
   import { crashArmed } from './lib/games/easter-eggs.js'
   import GlobalTooltip from './lib/components/GlobalTooltip.svelte'
+  import ConfirmHost from './lib/components/ConfirmHost.svelte'
   import PerfOverlay from './lib/components/PerfOverlay.svelte'
   import { loadSettings, applySettings, installZoomShortcuts } from '$lib/stores/settings.js'
   import { installPlatformClass, installWindowStateListeners } from '$lib/platform.js'
@@ -128,5 +129,6 @@
   </AppLockGate>
 </AppErrorBoundary>
 <GlobalTooltip />
+<ConfirmHost />
 <!-- Frame-rate HUD, dev builds only. F8 toggles it and the choice sticks. -->
 {#if import.meta.env.DEV}<PerfOverlay />{/if}

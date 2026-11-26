@@ -1,5 +1,6 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import { askConfirm } from "$lib/stores/confirm.js";
   import { errorText } from '$lib/utils.js'
   import Share2 from '@lucide/svelte/icons/share-2'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
@@ -6468,10 +6469,13 @@
                 type="button"
                 class="mt-1 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/8 text-ui-xs text-destructive transition-colors hover:bg-destructive/15"
                 onclick={async () => {
-                  if (
-                    !confirm("Delete all conversations? This cannot be undone.")
-                  )
-                    return;
+                  const ok = await askConfirm({
+                    title: "Delete all conversations?",
+                    description: "Every saved conversation for this connection is deleted. This cannot be undone.",
+                    confirmLabel: "Delete all",
+                    destructive: true,
+                  });
+                  if (!ok) return;
                   const { clearConversations } = await import(
                     "$lib/stores/conversations.js"
                   );

@@ -1,5 +1,6 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import { askConfirm } from '$lib/stores/confirm.js'
   import SelectMenu from './SelectMenu.svelte'
   // One page for document and wide-column databases (MongoDB, CouchDB,
   // Cassandra, Firestore). The collection comes from the app sidebar. Layout
@@ -562,7 +563,7 @@ GET products/_search
       return
     }
     const prev = creating ? null : editing
-    if (prev && adapter.idOf(next, info?.meta) !== adapter.idOf(prev, info?.meta) && !confirm(adapter.keyChangeWarning)) return
+    if (prev && adapter.idOf(next, info?.meta) !== adapter.idOf(prev, info?.meta) && !(await askConfirm({ title: 'Change the key?', description: adapter.keyChangeWarning, confirmLabel: 'Change key' }))) return
     // Optimistic for an existing document: the list shows the edit now, the
     // stored version replaces it when the database answers, and a failure
     // puts the original back. A new one waits: its id comes from the database.
