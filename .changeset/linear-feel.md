@@ -1,0 +1,29 @@
+---
+"stroke": patch
+---
+
+### New Features
+
+#### Layout and motion
+- **Inset content panel** - The page sits in a rounded panel, with the sidebar, title bar and status bar around it on one background. Settings, Appearance, Inset content panel turns it off.
+- **Sliding sidebar** - Ctrl+B / ⌘B slides the sidebar out and back while the page moves into the space. Menus grow from the button that opened them and dialogs settle into place. On by default on macOS and Windows; Settings, Appearance, Animate panels.
+- **Back and forward** - Move through the tabs you visited with the ‹ › buttons at the start of the tab bar, or Ctrl+[ and Ctrl+] (⌘[ and ⌘]).
+- **New tab button** - A + after the last tab.
+
+#### Keyboard and search
+- **Shortcuts in tooltips** - Every tooltip shows its shortcut as keys, and the next tooltip along a toolbar appears at once.
+- **Looser command search** - Type letters with some left out: "stng" finds Settings. The pages you picked last sit at the top of an empty command menu.
+- **Table row keys** - On a focused sidebar table, Space peeks at its columns, P pins it, X selects it and Ctrl+C / ⌘C copies its name.
+- **Recent tables** - The new tab page lists the tables you opened last.
+
+### Bug Fixes
+- Clear all history in the AI chat deleted every conversation without asking. It asks first now, as do key changes in the document and DynamoDB editors.
+- The sidebar filter shrank to a few letters beside the schema picker.
+- Success, warning, error, info and accent text, and highlighted SQL, now read clearly in every theme.
+- At the smallest window size the SQL results pane kept its width and its toolbar stayed whole.
+
+### Changes
+- Deleting a saved connection asks nothing and offers Undo for 8 seconds instead.
+- The command menu, the Schema explorer and switching between tables are faster.
+- Grid checkboxes show on the row you point at, and on every row once you select one.
+- Empty pages share one design, with the first step as a button.
