@@ -5,7 +5,7 @@
   import { spannerIsPg } from '$lib/sql-ident.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
-  import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
+  import { panelMotionOff, slidePanel, openPanel, closePanel, beginPanelResize, endPanelResize } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
   import { traceInteraction, tracePoint, traceMark } from '$lib/perf.js'
   import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, convexAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost } from '$lib/doc-adapters.js'
@@ -4851,12 +4851,37 @@ let rowSearch = $state('')
     editingCell = null
   }
 
-  function toggleSidebar() {
+  /** @type {HTMLDivElement | null} */
+  let sidebarDockEl = $state(null)
+  let sidebarSliding = false
+  async function toggleSidebar() {
     if (!connection) return
     // In AI mode the window's one sidebar button shows and hides the chat list.
     if (aiMode) { aiFullRef?.toggleChats?.(); return }
-    sidebarOpen = !sidebarOpen
-    saveLayout({ navSidebarOpen: sidebarOpen })
+    // One slide at a time: a second press mid-slide would start from a width
+    // the first one is still animating.
+    if (sidebarSliding) return
+    const open = !sidebarOpen
+    saveLayout({ navSidebarOpen: open })
+    if (panelMotionOff() || !sidebarDockEl) { sidebarOpen = open; return }
+    // The dock's edge moves and the sidebar inside keeps its width and is
+    // clipped, so it never reflows; the page beside it is told a resize is
+    // under way, so the grid and the terminal refit once, at the end.
+    sidebarSliding = true
+    beginPanelResize('sidebar')
+    try {
+      if (open) {
+        sidebarOpen = true
+        await tick()
+        await openPanel(sidebarDockEl, 'width')
+      } else {
+        await closePanel(sidebarDockEl, 'width')
+        sidebarOpen = false
+      }
+    } finally {
+      endPanelResize()
+      sidebarSliding = false
+    }
   }
 
 
@@ -11478,6 +11503,7 @@ let rowSearch = $state('')
          "Go to page" palette, so there's no activity rail, the sidebar just
          hosts the tables list. Hidden on Ctrl+B and in AI mode. -->
     <div
+      bind:this={sidebarDockEl}
       class="flex min-h-0 shrink-0 flex-col"
       class:order-last={sidebarSide === 'right'}
       style={sidebarOpen && !aiMode ? '' : 'display:none'}
