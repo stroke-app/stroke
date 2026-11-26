@@ -9916,6 +9916,8 @@ let rowSearch = $state('')
   let sessionsTick = $state(0)
   /** Labs: the database being opened while the one on screen stays up ('' when none). */
   let switchingTo = $state('')
+  /** The saved connection being opened, for the sidebar row's spinner. */
+  let switchingToId = $state('')
   /** Databases in the order they were first opened: the tab bar groups by it, so tabs don't jump around on a switch. */
   let sessionOrder = $state(/** @type {string[]} */ ([]))
   const multiConnection = () => loadSettings().multiConnection === true
@@ -10174,6 +10176,22 @@ let rowSearch = $state('')
    * @param {{ focusTab?: string | null }} [opts] Labs: the tab to land on
    */
   async function handleSwitchDatabase(conn, opts = {}) {
+    // One connect at a time; say so, rather than ignore the click while a slow
+    // one (an unreachable host takes ~30 s to give up) is still going. The id
+    // also puts a spinner on that connection's row in the sidebar.
+    if (switchingToId) {
+      toast.message(`Still connecting to ${switchingTo || 'the last database'}`, { key: 'still-connecting' })
+      return
+    }
+    switchingToId = conn?.id ?? '-'
+    try { await _switchDatabase(conn, opts) } finally { switchingToId = '' }
+  }
+
+  /**
+   * @param {import('$lib/stores/connections.js').SavedConnection} conn
+   * @param {{ focusTab?: string | null }} [opts] Labs: the tab to land on
+   */
+  async function _switchDatabase(conn, opts = {}) {
     // Click to connected, for the perf log (off unless profiling).
     const traceConnect = traceInteraction(`connect ${conn?.type ?? ''}`)
     // A deliberate switch is the other half of "PIN to open or reconnect".
@@ -11682,6 +11700,7 @@ let rowSearch = $state('')
         {navSidebarPanel}
         connections={savedConnections}
         activeConnectionId={connection?.id ?? ''}
+        connectingId={switchingToId}
         onswitchconnection={(c) => { if (aiMode) exitAiMode(); void handleSwitchDatabase(c) }}
         onaddconnection={() => { showConnectionModal = true }}
         onnewconnection={() => { connectionModalNew = true; showConnectionModal = true }}

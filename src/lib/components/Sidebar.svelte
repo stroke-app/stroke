@@ -85,6 +85,8 @@
     connections = [],
     /** id of the currently live connection (Connections panel highlight). */
     activeConnectionId = "",
+    /** A saved connection being opened: its row shows a spinner. */
+    connectingId = "",
     /** AI chat opens as a tab (beta): list its chats here, above Connections. */
     aiInTab = false,
     /** The connection's chat key, and the test for its stored chats (lib/ai-chat-key.js). */
@@ -3894,7 +3896,11 @@
               <DbIcon id={engineId(c)} class="size-4 shrink-0" />
               <span class="min-w-0 flex-1 truncate">{c.name || c.database || c.host || c.filePath || 'Connection'}</span>
               {#if c.pinned}<Icon name="pin" class="size-3 shrink-0 opacity-60" />{/if}
-              <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(c.lastConnectedAt)}</span>
+              {#if c.id === connectingId && !current}
+                <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="Connecting" />
+              {:else}
+                <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(c.lastConnectedAt)}</span>
+              {/if}
             </button>
           {/each}
           </ContextMenu.Trigger>
