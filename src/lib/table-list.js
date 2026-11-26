@@ -11,7 +11,9 @@ export function formatCompactCount(count) {
   const abs = Math.abs(n)
   const sign = n < 0 ? '-' : ''
 
-  if (abs < 1000) return sign + abs.toLocaleString('en-US')
+  // Under 1000 an integer prints as itself. toLocaleString builds a number
+  // formatter per call, and the sidebar formats one count per row it draws.
+  if (abs < 1000) return sign + (Number.isInteger(abs) ? String(abs) : abs.toLocaleString('en-US'))
 
   /**
    * @param {number} value
