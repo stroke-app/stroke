@@ -40,6 +40,8 @@
 - Ctrl+Shift+6 showed Find & replace with the caret still in the grid.
 - The AI model picker opened on Stroke Free instead of the model in use.
 - A connection's hover card printed the engine's id (sqlite) instead of its name.
+- With the database unreachable, a table refresh waited over a minute with every control greyed out, and a SQL Stop sat on Stopping. The refresh button stops a slow load, a first load offers Stop after 6 seconds, and Stop ends a run whose cancel goes unanswered.
+- The Enums tab called every enum unused, and Find in database cut a long value before the match it found.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
