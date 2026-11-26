@@ -4575,6 +4575,10 @@ let rowSearch = $state('')
   })
 
   createHotkey('Escape', (e) => {
+    // A dialog opened from inside another (Add a theme, over Settings) closes
+    // itself; closing the one under it as well took both down at once.
+    if (e.defaultPrevented) return
+    if (document.querySelectorAll('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]').length > 1) return
     // Close dialogs in reverse z-index order (topmost first).
     // Each branch prevents lower-priority handlers from firing.
     if (commandOpen)           { e.preventDefault(); commandOpen = false;           return }
