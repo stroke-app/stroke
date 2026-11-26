@@ -1,6 +1,7 @@
 <script>
   import { Button } from '$lib/components/ui/button/index.js'
   import { virtualColumnsStore } from '$lib/stores/virtual-columns.js'
+  import { offerUndo } from '$lib/undo-toast.js'
   import { templateRefs, bindExpr, FN_SNIPPETS } from '$lib/virtual-column.js'
   import ResizeHandle from './ResizeHandle.svelte'
   import { getAppScale } from '$lib/app-zoom.js'
@@ -301,25 +302,15 @@
       <!-- ── Column list ──────────────────────────────────────────────────── -->
       <div class="flex-1 overflow-y-auto">
         {#if vcols.length === 0}
-          <div class="px-3 py-6">
-            <div class="flex items-start gap-2.5">
-              <span class="flex size-7 shrink-0 items-center justify-center rounded-md border border-border/30 bg-muted/20">
-                <FunctionSquare class="size-3.5 shrink-0 text-muted-foreground" />
-              </span>
-              <div class="min-w-0">
-                <p class="text-ui-sm font-medium text-foreground/60">No virtual columns yet</p>
-                <p class="mt-1 text-ui-2xs leading-relaxed text-muted-foreground">
-                  Build a column from the ones you already have - join a name, format a date, do the arithmetic once.
-                </p>
-              </div>
-            </div>
-            <button
-              type="button"
-              onclick={openAdd}
-              class="mt-4 flex w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border/50 py-2 text-ui-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:bg-primary/5 hover:text-primary"
-            >
-              <Plus class="size-3 shrink-0" /> Add virtual column
-            </button>
+          <div class="flex flex-col items-start gap-1 px-3 py-6">
+            <FunctionSquare class="mb-2 size-5 shrink-0 text-muted-foreground" strokeWidth={1.5} aria-hidden="true" />
+            <p class="text-ui-sm font-medium text-foreground">No virtual columns yet</p>
+            <p class="text-ui-xs leading-relaxed text-muted-foreground">
+              Build a column from the ones you already have: join a name, format a date, do the arithmetic once.
+            </p>
+            <Button size="sm" class="mt-3" onclick={openAdd}>
+              <Plus class="size-3.5 shrink-0" />Add virtual column
+            </Button>
           </div>
         {:else}
           <div class="py-1">
@@ -360,7 +351,7 @@
                   <button aria-label="Delete column" title="Delete column"
                     type="button"
                     class="flex size-6 items-center justify-center rounded-md text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-                    onclick={() => virtualColumnsStore.remove(tableKey, col.id)}
+                    onclick={() => offerUndo('Column deleted', col.name, virtualColumnsStore.remove(tableKey, col.id))}
                   ><Trash2 class="size-3 shrink-0" /></button>
                 </div>
               </div>

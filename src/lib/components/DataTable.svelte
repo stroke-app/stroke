@@ -16,6 +16,7 @@
   import { readClipboardText } from '$lib/clipboard.js'
   import { setVimSubMode } from '$lib/vim/vim.js'
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
+  import { offerUndo } from "$lib/undo-toast.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -10003,7 +10004,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         {/if}
         <ContextMenu.Separator />
         <ContextMenu.Item
-          onSelect={() => runMenuAction(() => { virtualColumnsStore.remove(_tableKey, vcid) })}
+          onSelect={() => runMenuAction(() => { offerUndo('Column deleted', vcdef?.name ?? '', virtualColumnsStore.remove(_tableKey, vcid)) })}
           class="text-destructive focus:text-destructive"
         >
           <Trash2 /> Delete column
