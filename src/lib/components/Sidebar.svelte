@@ -892,7 +892,11 @@
 
 
   function copySelectedNames() {
-    navigator.clipboard.writeText([...selectedItems].join('\n'))
+    const names = [...selectedItems]
+    void navigator.clipboard.writeText(names.join('\n')).then(
+      () => toast.success(`Copied ${names.length} table name${names.length === 1 ? '' : 's'}`, { duration: 1500 }),
+      () => toast.error("Couldn't copy to the clipboard"),
+    )
     clearSelection()
   }
 
@@ -2828,7 +2832,7 @@
                                 Switch to this database
                               </ContextMenu.Item>
                             {/if}
-                            <ContextMenu.Item onSelect={() => { navigator.clipboard.writeText(db.label) }}>
+                            <ContextMenu.Item onSelect={() => { void navigator.clipboard.writeText(db.label).then(() => toast.success('Copied database name', { description: db.label, duration: 1500 }), () => toast.error("Couldn't copy to the clipboard")) }}>
                               <Icon name="copy" />
                               Copy name
                             </ContextMenu.Item>
@@ -3092,7 +3096,7 @@
                             Deselect all
                           </ContextMenu.Item>
                         {:else}
-                        <ContextMenu.Item onSelect={() => { navigator.clipboard.writeText(tableName) }}>
+                        <ContextMenu.Item onSelect={() => copyTableName(tableName)}>
                           <Icon name="clipboard-copy" />
                           Copy name
                         </ContextMenu.Item>

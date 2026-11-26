@@ -1,5 +1,6 @@
 <script>
   import CollapsibleCode from './CollapsibleCode.svelte'
+  import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import Maximize2 from '@lucide/svelte/icons/maximize-2'
   import { Button } from '$lib/components/ui/button/index.js'
   import { withShortcut } from '$lib/stores/keybindings.js'
@@ -473,7 +474,10 @@
     abortController?.abort(); abortController = null; loading = false
   }
   function stop() { flushStreamingContent(); abortController?.abort(); agentChat.interrupt() }
-  async function copyText(text) { await navigator.clipboard.writeText(text).catch(() => {}) }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); toast.success('Copied', { duration: 1200 }) }
+    catch { toast.error("Couldn't copy to the clipboard") }
+  }
 
   /** @param {number} ts */
   function relTime(ts) {

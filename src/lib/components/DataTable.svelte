@@ -8657,7 +8657,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
           if (looksLikeUrl(val) && $appOpenUrlsOnClick) {
             void import('@tauri-apps/plugin-opener').then(m => m.openUrl(val)).catch(() => {})
           } else if (val) {
-            void navigator.clipboard.writeText(val).catch(() => {})
+            void navigator.clipboard.writeText(val).then(() => toast.success('Copied', { description: String(val).slice(0, 80), duration: 1200 }), () => {})
           }
           return
         }

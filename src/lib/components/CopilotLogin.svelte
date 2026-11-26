@@ -1,5 +1,6 @@
 <script>
   import { onMount, onDestroy } from 'svelte'
+  import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import GitBranch from '@lucide/svelte/icons/git-branch'
   import Check from '@lucide/svelte/icons/check'
   import Loader2 from '@lucide/svelte/icons/loader-2'
@@ -209,7 +210,7 @@
         <button
           type="button"
           class="shrink-0 rounded px-1.5 py-0.5 text-ui-xs text-muted-foreground hover:bg-accent/20 hover:text-foreground"
-          onclick={() => navigator.clipboard.writeText(userCode)}
+          onclick={() => { void navigator.clipboard.writeText(userCode).then(() => toast.success('Code copied', { duration: 1500 }), () => {}) }}
         >Copy</button>
       </div>
 
