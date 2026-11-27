@@ -209,6 +209,7 @@ export default {
   "cmd.ph.theme": "テーマを選択…",
   "group.AI": "AI",
   "group.Actions": "アクション",
+  "group.Tabs": "タブ",
   "group.Add": "追加",
   "group.Appearance": "外観",
   "group.Ask": "質問",

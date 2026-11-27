@@ -209,6 +209,7 @@ export default {
   "cmd.ph.theme": "Design wählen…",
   "group.AI": "KI",
   "group.Actions": "Aktionen",
+  "group.Tabs": "Tabs",
   "group.Add": "Hinzufügen",
   "group.Appearance": "Darstellung",
   "group.Ask": "Fragen",

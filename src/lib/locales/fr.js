@@ -209,6 +209,7 @@ export default {
   "cmd.ph.theme": "Choisir un thème…",
   "group.AI": "IA",
   "group.Actions": "Actions",
+  "group.Tabs": "Onglets",
   "group.Add": "Ajouter",
   "group.Appearance": "Apparence",
   "group.Ask": "Demander",
