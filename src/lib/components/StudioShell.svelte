@@ -11595,7 +11595,16 @@ let rowSearch = $state('')
   {activeSchema}
   {savedConnections}
   {activeConnectionId}
-  ontableselect={(name) => { if (aiMode) exitAiMode(); void handleTableSelect(name) }}
+  ontableselect={(name) => {
+    if (aiMode) exitAiMode()
+    // Into the grid, as Shift+Enter in the sidebar goes: the menu handed focus
+    // back to whatever had it before (a sidebar tab), so the arrows did
+    // nothing in the table just opened.
+    void handleTableSelect(name).then(() => afterPalette(() => {
+      const grid = document.querySelector('[data-studio-region="main"] [data-canvas-table]')
+      if (grid instanceof HTMLElement && !isTypingTarget(document.activeElement)) grid.focus()
+    }))
+  }}
   onschemachange={(schema) => { if (aiMode) exitAiMode(); handleSchemaChange(schema) }}
   onopensql={() => { if (aiMode) exitAiMode(); void focusSqlView() }}
   onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
