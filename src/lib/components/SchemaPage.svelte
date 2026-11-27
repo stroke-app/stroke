@@ -392,13 +392,13 @@
     </div>
 
     <div class="relative min-w-0 flex-1">
-      <Search class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <input
         type="search"
         placeholder="Filter…"
         bind:this={filterEl}
         bind:value={filter}
-        class="search-box no-field-frame h-7 w-full pl-7 pr-2.5 text-ui-xs"
+        class="search-box no-field-frame h-7 w-full pl-8 pr-2.5 text-ui-xs"
       />
     </div>
   </div>

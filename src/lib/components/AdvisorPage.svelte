@@ -279,12 +279,12 @@
               </button>
             {/if}
             <div class="relative">
-              <Icon name="search" class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Icon name="search" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <input
                 bind:value={query}
                 placeholder="Filter by table, check…"
                 aria-label="Filter findings"
-                class="search-box no-field-frame h-7 w-52 pl-7 pr-2 text-ui-xs"
+                class="search-box no-field-frame h-7 w-52 pl-8 pr-2 text-ui-xs"
               />
             </div>
           </div>

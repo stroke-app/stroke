@@ -214,7 +214,7 @@
   {#if total > 0 || filter}
   <div class={cn('flex shrink-0 items-center gap-2 border-b border-border/50', page ? 'h-10 px-3' : 'h-9 px-2')}>
     <div class="relative flex w-72 min-w-0 shrink items-center">
-      <Search class="pointer-events-none absolute left-2 size-3.5 shrink-0 text-muted-foreground" />
+      <Search class="pointer-events-none absolute left-2.5 size-3.5 shrink-0 text-muted-foreground" />
       <input
         type="search"
         bind:this={filterEl}
@@ -223,16 +223,16 @@
         onkeydown={onListKey}
         data-slash-focus="25"
         aria-keyshortcuts="/"
-        placeholder={view === 'history' ? 'Search history…' : view === 'saved' ? 'Search saved queries…' : 'Search saved charts…'}
+        placeholder={view === 'history' ? 'Search history' : view === 'saved' ? 'Search saved queries' : 'Search saved charts'}
         aria-label={view === 'history' ? 'Search history' : view === 'saved' ? 'Search saved queries' : 'Search saved charts'}
         aria-controls="query-list"
-        class="peer search-box no-field-frame h-7 w-full min-w-0 pl-7 pr-6 font-mono text-ui-xs placeholder:font-sans"
+        class="peer search-box no-field-frame w-full min-w-0 pl-8 pr-9 font-mono text-ui-xs placeholder:font-sans"
       />
-      <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
+      <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-1.5 -translate-y-1/2" aria-hidden="true" />
       {#if filter}
         <button
           type="button"
-          class="hit-area absolute right-1.5 inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+          class="hit-area absolute right-1.5 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
           aria-label="Clear the search"
           onclick={() => { filter = ''; cursor = 0; filterEl?.focus() }}
         ><X class="size-3 shrink-0" /></button>

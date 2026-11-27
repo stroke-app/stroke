@@ -317,14 +317,14 @@
   <!-- Filter, then New folder and New query. -->
   <div class="flex h-9 shrink-0 items-center gap-1 border-b border-sidebar-border px-2">
     <div class="relative min-w-0 flex-1">
-      <Icon name="search" class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Icon name="search" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <input
         type="text"
         bind:value={filter}
         onkeydown={(e) => { if (e.key === 'Escape' && filter) { e.preventDefault(); e.stopPropagation(); filter = '' } }}
         placeholder="Filter queries…"
         aria-label="Filter saved queries"
-        class="search-box no-field-frame w-full min-w-0 pl-7 pr-2 text-ui-sm"
+        class="search-box no-field-frame w-full min-w-0 pl-8 pr-2 text-ui-sm"
       />
     </div>
     <button

@@ -244,12 +244,13 @@
       <!-- Search -->
       <div class="shrink-0 border-b border-border/40 px-2 py-2">
         <div class="relative flex items-center">
-          <Search class="absolute left-2 size-3 text-muted-foreground" />
+          <Search class="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search diagrams…"
+            placeholder="Search diagrams"
+            aria-label="Search diagrams"
             bind:value={searchQ}
-            class="search-box no-field-frame h-7 w-full pl-6 pr-2 text-ui-xs"
+            class="search-box no-field-frame h-7 w-full pl-8 pr-2 text-ui-xs"
           />
         </div>
       </div>
