@@ -53,6 +53,7 @@
 - Find in database could sit on "Searching 184 of 185 tables" with no word on which table and no way out. It names the last tables it is reading and offers Stop, keeping what was found.
 - Security's roles header said 0 roles while they loaded.
 - The open tabs list could switch to a tab but not close one.
+- Two queries separated only by a blank line ran as one and failed with a syntax error; the error now offers Add ;, which splits them and runs the one at the caret. A trailing comment ending in all, as or in no longer hides the missing ; warning.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
