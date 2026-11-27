@@ -242,7 +242,7 @@
               onpointerenter={onhover ? () => onhover?.(it) : undefined}
               onpointermove={(e) => { if (!pointerReallyMoved(e)) e.preventDefault() }}
               class={cn(
-                "flex min-h-7 w-full min-w-0 cursor-default items-center gap-2 rounded-menu-item px-2 py-1 text-ui-xs outline-hidden select-none",
+                "group/smrow flex min-h-7 w-full min-w-0 cursor-default items-center gap-2 rounded-menu-item px-2 py-1 text-ui-xs outline-hidden select-none",
                 "text-foreground/85 hover:bg-accent hover:text-foreground data-selected:bg-accent data-selected:text-foreground",
                 "data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-40",
                 "[&_svg]:pointer-events-none [&_svg]:shrink-0",

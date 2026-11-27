@@ -514,6 +514,21 @@
         <span class={cn('min-w-0 flex-1 truncate', it.value === activeTabId && 'font-medium text-foreground')}>{it.label}</span>
         {#if it.tab.connLabel}<span class="ml-auto max-w-24 shrink-0 truncate text-ui-2xs text-muted-foreground">{it.tab.connLabel}</span>{/if}
         {#if it.value === activeTabId}<Icon name="check" class="size-3.5 shrink-0" />{/if}
+        <!-- Close from the list, on the row under the pointer or the keyboard:
+             with twenty tabs open the one to close is usually off the strip.
+             Kept 14px in from the edge: GTK's overlay scrollbar takes the
+             pointer over the list's last ~20px, and a button there could
+             not be clicked. -->
+        {#if !it.tab.pinned}
+          <button
+            type="button"
+            aria-label="Close {it.label}"
+            title="Close tab"
+            class="hit-area mr-4 inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover/smrow:opacity-100 group-data-selected/smrow:opacity-100 focus-visible:opacity-100"
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={(e) => { e.preventDefault(); e.stopPropagation(); onclose(it.value) }}
+          ><Icon name="x" class="size-3 shrink-0" /></button>
+        {/if}
       {/snippet}
     </SearchableMenu>
   {/if}
