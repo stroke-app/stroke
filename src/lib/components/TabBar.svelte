@@ -438,7 +438,7 @@
           {#if tab.kind === 'table'}
             <ContextMenu.Item onSelect={() => onresettable(tab.id)}>
               <Icon name="rotate-ccw" class="size-3.5 shrink-0" />
-              Reset Table View
+              Reset table view
             </ContextMenu.Item>
           {/if}
           <ContextMenu.Separator />
