@@ -119,6 +119,7 @@ export const SHORTCUT_GROUPS = [
     icon: 'navigation',
     shortcuts: [
       { combo: 'Mod+K', desc: 'Command menu', id: 'palette.open' },
+      { combo: 'A-Z', desc: 'On the New tab page: start a command menu search' },
       { combo: 'Mod+Shift+P', desc: 'Go to page', id: 'palette.pages' },
       { combo: 'Mod+Alt+1-9', desc: 'Switch to saved connection', id: 'connection.switchTo', items: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `Switch to saved connection ${n}`) },
       { combo: 'Mod+P', desc: 'Search tables', id: 'palette.tables' },
