@@ -67,8 +67,13 @@
     } else {
       // Refocus the search input after a non-closing select so cmdk's keyboard
       // selection cursor returns to the input and clears the item highlight.
+      // The keyboard highlight goes back to the row just toggled: it fell to
+      // the first row, so hiding three columns by keyboard meant arrowing back
+      // down after each one.
+      const keep = it?.value;
       requestAnimationFrame(() => {
         inputEl?.focus();
+        if (keep != null && shown.some((x) => x.value === keep && !x.disabled)) highlighted = keep;
         if (listEl && listEl.scrollTop !== prevTop) listEl.scrollTop = prevTop;
       });
     }
