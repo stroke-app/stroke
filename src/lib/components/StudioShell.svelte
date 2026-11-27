@@ -11550,6 +11550,13 @@ let rowSearch = $state('')
   bind:page={commandPage}
   onexporttable={activeTab?.kind === 'table' && activeTable && !aiMode && total > 0 ? (/** @type {string} */ f) => void handleExport(f) : null}
   exportTableName={activeTable ?? ''}
+  ontablestructure={activeTab?.kind === 'table' && activeTable && canShowStructure && !aiMode
+    ? () => {
+        if (tableViewMode === 'structure') { tableViewMode = 'data'; structureColumns = [] }
+        else { tableViewMode = 'structure'; if (!structureColumns.length) void loadStructure() }
+      }
+    : null}
+  tableStructureShown={tableViewMode === 'structure'}
   onexplainquery={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false && !aiMode ? () => sqlConsoleRef?.explainEditor?.() : null}
   onimporttable={activeTab?.kind === 'table' && activeTable && !aiMode && !tableReadonly ? () => (importDataOpen = true) : null}
   connected={!!connection}

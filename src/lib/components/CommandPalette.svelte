@@ -29,6 +29,12 @@
     onexporttable = null,
     /** The open table's name, for the export rows' labels. */
     exportTableName = '',
+    /** Switch the open table between its rows and its structure, or null when
+     *  the tab in front is not a table with a structure view.
+     *  @type {(() => void) | null} */
+    ontablestructure = null,
+    /** Whether that table is showing its structure now. */
+    tableStructureShown = false,
     /** Explain the open editor's query, or null when no editor tab is in front.
      *  @type {(() => void) | null} */
     onexplainquery = null,
@@ -1291,6 +1297,14 @@
                 <Command.Item value="explain query plan analyze cost why slow performance" keywords={['Explain query']} onSelect={() => run(onexplainquery)}>
                   <Icon name="scan-search" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Explain query</span>
+                </Command.Item>
+              {/if}
+              {#if ontablestructure}
+                <!-- The structure view was only in the table toolbar's overflow
+                     menu: "structure" here found nothing. -->
+                <Command.Item value="table structure columns types indexes foreign keys constraints edit columns alter schema ddl back to data rows" keywords={[tableStructureShown ? 'Back to data' : 'Table structure']} onSelect={() => run(ontablestructure)}>
+                  <Icon name={tableStructureShown ? 'table-2' : 'columns-3'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">{tableStructureShown ? `Back to the rows of ${exportTableName || 'the table'}` : `Structure of ${exportTableName || 'the table'}`}</span>
                 </Command.Item>
               {/if}
               <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)} keywords={['Refresh tables']}>

@@ -542,9 +542,9 @@
 
   <!-- Read-only notice, engines whose structure DDL we don't generate yet. -->
   {#if !canEdit}
-    <div class="flex shrink-0 items-center gap-2 border-b border-border/30 bg-muted/15 px-4 py-1.5 font-mono text-ui-2xs text-muted-foreground">
+    <div class="flex shrink-0 items-center gap-2 border-b border-border/30 bg-muted/15 px-4 py-1.5 text-ui-xs text-muted-foreground">
       <Lock class="size-3 shrink-0 text-muted-foreground" />
-      <span>Read-only structure on {engineLabel(connectionType)}, alter this table from the SQL editor.</span>
+      <span>Read-only on {engineLabel(connectionType)}. Change this table from the SQL editor.</span>
     </div>
   {/if}
 
@@ -647,7 +647,9 @@
                       }
                     }}
                   />
-                  <svg class="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+                  <!-- No arrow where nothing can be picked: read-only engines drew a
+                       dropdown on every type and default. -->
+                  {#if canEdit}<svg class="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>{/if}
                   {#if typeDropOpen[col.name]}
                     <div class="{DROP_PANEL} min-w-52">
                       {#each filteredTypesFor(col.name) as t (t)}
@@ -719,7 +721,9 @@
                       }
                     }}
                   />
-                  <svg class="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>
+                  <!-- No arrow where nothing can be picked: read-only engines drew a
+                       dropdown on every type and default. -->
+                  {#if canEdit}<svg class="pointer-events-none absolute right-2 top-1/2 size-3 -translate-y-1/2 text-muted-foreground" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 6l4 4 4-4"/></svg>{/if}
                   {#if defDropOpen[col.name]}
                     <div class="{DROP_PANEL} min-w-52">
                       <button type="button" class={DROP_ITEM} onmousedown={(e) => { e.preventDefault(); defDropOpen = {...defDropOpen,[col.name]:false}; stageDefault(col.name, null) }}>EMPTY, drop default</button>
