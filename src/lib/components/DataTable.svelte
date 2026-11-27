@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   import { isReadOnly, guardWrite } from '$lib/stores/read-only.js';
   import { isPanelResizing } from '$lib/panel-motion.js';
   import { tick, onDestroy, untrack } from "svelte";
@@ -9928,6 +9929,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                 {:else}
                   <Table2 class="size-8 text-muted-foreground" />
                   <p class="text-ui-sm text-muted-foreground">{emptyText}</p>
+                  <!-- An empty table's next step is its first row: the toolbar's
+                       Add sat far from the middle of the screen this points at. -->
+                  {#if hasTableContext && !readonly}
+                    <Button type="button" variant="outline" size="sm" class="pointer-events-auto mt-1 gap-2" onclick={() => openInsertDraft()}>
+                      Add row <Kbd command="table.addRow" />
+                    </Button>
+                  {/if}
                 {/if}
               </div>
             </div>
