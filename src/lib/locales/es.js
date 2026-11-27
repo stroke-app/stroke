@@ -322,7 +322,7 @@ export default {
   "sql.runAQuery": "Ejecuta una consulta",
   "sql.name": "Nombre",
   "sql.queryName": "Nombre de la consulta",
-  "sb.searchConnections": "Buscar conexiones…",
+  "sb.searchConnections": "Buscar conexiones",
   "sb.manageConnections": "Gestionar conexiones…",
   "sb.live": "En vivo",
   "sb.notConnected": "Sin conexión",

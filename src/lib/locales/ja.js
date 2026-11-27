@@ -322,7 +322,7 @@ export default {
   "sql.runAQuery": "クエリを実行",
   "sql.name": "名前",
   "sql.queryName": "クエリ名",
-  "sb.searchConnections": "接続を検索…",
+  "sb.searchConnections": "接続を検索",
   "sb.manageConnections": "接続を管理…",
   "sb.live": "ライブ",
   "sb.notConnected": "未接続",

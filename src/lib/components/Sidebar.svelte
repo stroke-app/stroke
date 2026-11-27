@@ -3860,7 +3860,7 @@
               bind:this={connsSearchEl}
               bind:value={connsQuery}
               type="text"
-              placeholder={$tx('sb.searchConnections', 'Search connections…')}
+              placeholder={$tx('sb.searchConnections', 'Search connections')}
               aria-label="Search connections"
               class="search-box no-field-frame w-full min-w-0 pl-8 pr-8 text-ui-sm"
               onkeydown={(e) => {
