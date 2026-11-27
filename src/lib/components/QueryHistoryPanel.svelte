@@ -210,6 +210,8 @@
 
 <div class="group/list flex min-h-0 flex-1 flex-col bg-panel">
   <!-- Search, how many, and Clear for the history. -->
+  <!-- Nothing to search or clear in an empty list: the row waits for the first item. -->
+  {#if total > 0 || filter}
   <div class={cn('flex shrink-0 items-center gap-2 border-b border-border/50', page ? 'h-10 px-3' : 'h-9 px-2')}>
     <div class="relative flex w-72 min-w-0 shrink items-center">
       <Search class="pointer-events-none absolute left-2 size-3.5 shrink-0 text-muted-foreground" />
@@ -252,6 +254,7 @@
       >Clear</button>
     {/if}
   </div>
+  {/if}
 
   {#if rows.length}
     <!-- One listbox: the arrows move, Enter loads, Delete removes. Clicking a
