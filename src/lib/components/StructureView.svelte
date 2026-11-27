@@ -784,7 +784,7 @@
               </tr>
             {/each}
           {:else if visibleColumns.length === 0 && columnSearch}
-            <tr><td colspan="7" class="px-4 py-6 font-mono text-ui-xs text-muted-foreground">No columns match "{columnSearch}"</td></tr>
+            <tr><td colspan="7" class="px-4 py-6 font-sans text-ui-xs text-muted-foreground">No columns match "{columnSearch}"</td></tr>
           {:else if columns.length === 0 && !loading}
             <tr><td colspan="7" class="px-4 py-6 text-ui-sm {error ? 'text-destructive' : 'text-muted-foreground'}">{error ? `Could not read this table's structure: ${error}` : 'No columns found for this table.'}</td></tr>
           {/if}
@@ -998,9 +998,9 @@
           {/each}
 
           {#if visibleIndexes.length === 0 && columnSearch && tableIndexes.length > 0}
-            <tr><td colspan="7" class="px-3 py-4 font-mono text-ui-xs text-muted-foreground">No indexes match "{columnSearch}"</td></tr>
+            <tr><td colspan="7" class="px-3 py-4 font-sans text-ui-xs text-muted-foreground">No indexes match "{columnSearch}"</td></tr>
           {:else if tableIndexes.length === 0 && !newIndex}
-            <tr><td colspan="7" class="px-3 py-4 font-mono text-ui-xs text-muted-foreground">No secondary indexes</td></tr>
+            <tr><td colspan="7" class="px-3 py-4 font-sans text-ui-xs text-muted-foreground">No secondary indexes</td></tr>
           {/if}
 
           <!-- New index row -->
@@ -1118,13 +1118,13 @@
     <div class="font-mono">
       <div class="flex items-center gap-2 border-b border-border/30 bg-muted/[0.08] px-3 py-2">
         <GitBranch class="size-3 shrink-0 text-muted-foreground" />
-        <span class="text-ui-xs font-medium text-muted-foreground">
+        <span class="font-sans text-ui-xs font-medium text-muted-foreground">
           Triggers
           {#if columnSearch && visibleTriggers.length !== tableTriggers.length}
             <span class="ml-1 font-normal text-muted-foreground">({visibleTriggers.length}/{tableTriggers.length})</span>
           {/if}
         </span>
-        <button type="button" class="ml-auto inline-flex h-6 items-center gap-1 rounded-md px-2.5 text-ui-3xs text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground" onclick={() => (createTriggerOpen = true)}>
+        <button type="button" class="ml-auto inline-flex h-7 items-center gap-1.5 rounded-md px-2.5 font-sans text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={() => (createTriggerOpen = true)}>
           <Plus class="size-3 shrink-0" />Add trigger
         </button>
       </div>
@@ -1138,7 +1138,7 @@
           <col style="min-width:64px;width:72px" />
           <col style="min-width:36px;width:36px;max-width:36px" />
         </colgroup>
-        <thead>
+        <thead class="font-sans">
           <tr>
             {#each ['Trigger','Timing','Events','Function','Status',''] as h}
               <th class="{TH} last:border-r-0">{h}</th>
@@ -1191,9 +1191,9 @@
           {/each}
 
           {#if visibleTriggers.length === 0 && columnSearch && tableTriggers.length > 0}
-            <tr><td colspan="6" class="px-3 py-4 font-mono text-ui-xs text-muted-foreground">No triggers match "{columnSearch}"</td></tr>
+            <tr><td colspan="6" class="px-3 py-4 font-sans text-ui-xs text-muted-foreground">No triggers match "{columnSearch}"</td></tr>
           {:else if tableTriggers.length === 0}
-            <tr><td colspan="6" class="px-3 py-4 font-mono text-ui-xs text-muted-foreground">No triggers on this table</td></tr>
+            <tr><td colspan="6" class="px-3 py-4 font-sans text-ui-xs text-muted-foreground">No triggers on this table</td></tr>
           {/if}
         </tbody>
       </table>
