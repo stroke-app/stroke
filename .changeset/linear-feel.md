@@ -72,3 +72,4 @@
 - Empty Dashboard, Policies and Charts pages show one way to add the first item instead of two.
 - Show / hide columns keeps the keyboard on the row just toggled.
 - The schema diagram remembers its layout: a schema laid out before opens at once after a restart instead of spending seconds on Laying out the diagram. Any change to its tables or settings lays it out again.
+- Labels that were still in Title Case read in sentence case like the rest: query editor tabs, the Security tabs, Account & sync, Instance insights table headers, Local servers and the MCP server window.
