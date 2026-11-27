@@ -641,7 +641,10 @@
          button used to draw its own `border-b-2` and nothing drew the line
          between them, so the active tab's underline floated in a gap with no
          rule to belong to - six stubs rather than a tab strip. -->
-    <div class="flex shrink-0 items-end gap-0 border-b border-border/40 px-5">
+    <!-- The structure view's tabs: the active one on a filled pill. Weight and
+         colour alone left "Changed" with no count looking like every other
+         tab. -->
+    <div class="flex shrink-0 items-center gap-0.5 border-b border-border/40 px-5 py-1.5" role="tablist" aria-label="Show rows">
 
       {#each [
         { key: 'all',       label: 'All',       count: diffRows.length,                          badge: 'bg-muted/30 text-muted-foreground',           active: 'text-foreground' },
@@ -652,18 +655,15 @@
         { key: 'unchanged', label: 'Unchanged', count: stats.unchanged,                          badge: 'bg-muted/30 text-muted-foreground',           active: 'text-foreground' },
       ] as f}
         <button
+          type="button"
+          role="tab"
+          aria-selected={activeFilter === f.key}
           onclick={() => { activeFilter = f.key }}
           class={cn(
-            // No underline marker. The active tab is carried by weight plus
-            // colour, which is still two cues rather than colour alone: the
-            // label goes medium AND takes its status colour, while every other
-            // tab stays regular-weight muted. The count badge behind it picks up
-            // the status tint too, so the selection reads at a glance without a
-            // rule under it.
-            'flex items-center gap-1.5 px-3 pb-2.5 pt-2 text-ui-xs transition-colors',
+            'flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors',
             activeFilter === f.key
-              ? cn('font-medium', f.active)
-              : 'text-muted-foreground hover:text-foreground'
+              ? cn('bg-sidebar-accent font-medium', f.active)
+              : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
           )}
         >
           {f.label}
@@ -681,7 +681,7 @@
            app-wide field rule framed the <input> alone, leaving the magnifier
            stranded outside a pill it clearly belonged to.
            `ps-4`, not `pl-4` - this strip mirrors under RTL. -->
-      <div class="ms-auto flex items-center gap-2 pb-2.5 ps-4">
+      <div class="ms-auto flex items-center gap-2 ps-4">
         <div class="search-shell flex h-7 items-center gap-1.5 px-2">
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input type="text" bind:value={searchQuery} placeholder="Search rows…"
@@ -698,7 +698,7 @@
              result of the search, so hiding it the moment you search is backwards -
              and a control that changes width as you type moves everything after it. -->
         <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">
-          {displayRows.length}{displayRows.length !== diffRows.length ? `/${diffRows.length}` : ''}
+          {displayRows.length !== diffRows.length ? `${displayRows.length} of ${diffRows.length}` : displayRows.length}
         </span>
       </div>
     </div>
