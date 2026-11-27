@@ -10,6 +10,10 @@
 		children,
 		value = "",
 		keywords = [],
+		/** Below this score the row stays out: rows shown only while searching
+		 *  (tab, table and view commands) skip the loose letters-with-gaps
+		 *  matches, or every letter typed mounted them all. */
+		minScore = 0,
 		...restProps
 	} = $props();
 
@@ -22,7 +26,8 @@
 	// row scores itself and draws nothing when it does not match. (Keeping it
 	// mounted but hidden and disabled measured no faster.) Elsewhere bits-ui
 	// filters as usual.
-	const score = $derived(local?.search ? local.score(value, local.search, keywords) : 1);
+	const rawScore = $derived(local?.search ? local.score(value, local.search, keywords) : 1);
+	const score = $derived(rawScore >= minScore ? rawScore : 0);
 	// Only while that page is searching: the group order, the best row and the
 	// empty state read these scores then, and every row reporting (and
 	// forgetting) on each render of a page that filters elsewhere cost more

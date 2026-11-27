@@ -1309,36 +1309,36 @@
                  or nothing. -->
             {#if tableCommands && paletteSearch.trim()}
             <Command.Group value="table" heading={$tx('group.Table', 'Table')}>
-                <Command.Item value="filter rows where condition narrow" keywords={['Filter rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.filter))}>
+                <Command.Item minScore={0.3} value="filter rows where condition narrow" keywords={['Filter rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.filter))}>
                   <Icon name="filter" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Filter rows</span>
                   <Command.Shortcut command="table.filterMenu" />
                 </Command.Item>
-                <Command.Item value="sort rows order by ascending descending" keywords={['Sort rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.sort))}>
+                <Command.Item minScore={0.3} value="sort rows order by ascending descending" keywords={['Sort rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.sort))}>
                   <Icon name="arrow-up-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Sort rows</span>
                   <Command.Shortcut command="table.sortMenu" />
                 </Command.Item>
-                <Command.Item value="show hide columns visible column picker" keywords={['Show or hide columns']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.columns))}>
+                <Command.Item minScore={0.3} value="show hide columns visible column picker" keywords={['Show or hide columns']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.columns))}>
                   <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Show or hide columns</span>
                   <Command.Shortcut command="table.columnsMenu" />
                 </Command.Item>
               {#if tableCommands.addRow}
-                <Command.Item value="add row insert new record" keywords={['Add row']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.addRow))}>
+                <Command.Item minScore={0.3} value="add row insert new record" keywords={['Add row']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.addRow))}>
                   <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Add row</span>
                   <Command.Shortcut command="table.addRow" />
                 </Command.Item>
               {/if}
               {#if tableCommands.findReplace}
-                <Command.Item value="find and replace in column search substitute" keywords={['Find and replace']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.findReplace))}>
+                <Command.Item minScore={0.3} value="find and replace in column search substitute" keywords={['Find and replace']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.findReplace))}>
                   <Icon name="replace" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Find and replace</span>
                   <Command.Shortcut command="table.findReplace" />
                 </Command.Item>
               {/if}
-                <Command.Item value="refresh rows reload data table" keywords={['Refresh rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.refresh))}>
+                <Command.Item minScore={0.3} value="refresh rows reload data table" keywords={['Refresh rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.refresh))}>
                   <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Refresh rows</span>
                 </Command.Item>
@@ -1348,19 +1348,19 @@
           {#snippet group_view()}
             {#if viewCommands && paletteSearch.trim()}
             <Command.Group value="view" heading={$tx('group.View', 'View')}>
-                <Command.Item value="zoom in bigger larger text scale" keywords={['Zoom in']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomIn))}>
+                <Command.Item minScore={0.3} value="zoom in bigger larger text scale" keywords={['Zoom in']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomIn))}>
                   <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Zoom in</span>
                 </Command.Item>
-                <Command.Item value="zoom out smaller text scale" keywords={['Zoom out']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomOut))}>
+                <Command.Item minScore={0.3} value="zoom out smaller text scale" keywords={['Zoom out']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomOut))}>
                   <Icon name="minus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Zoom out</span>
                 </Command.Item>
-                <Command.Item value="actual size reset zoom 100%" keywords={['Actual size']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomReset))}>
+                <Command.Item minScore={0.3} value="actual size reset zoom 100%" keywords={['Actual size']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomReset))}>
                   <Icon name="square" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Actual size</span>
                 </Command.Item>
-                <Command.Item value="full screen fullscreen window maximize" keywords={['Full screen']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.fullscreen))}>
+                <Command.Item minScore={0.3} value="full screen fullscreen window maximize" keywords={['Full screen']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.fullscreen))}>
                   <Icon name="maximize-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Full screen</span>
                 </Command.Item>
@@ -1374,27 +1374,27 @@
             {#if tabActions && paletteSearch.trim()}
             <Command.Group value="tabs" heading={$tx('group.Tabs', 'Tabs')}>
               {#if tabActions.reopen}
-                <Command.Item value="reopen closed tab undo close restore last tab" keywords={['Reopen closed tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.reopen))}>
+                <Command.Item minScore={0.3} value="reopen closed tab undo close restore last tab" keywords={['Reopen closed tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.reopen))}>
                   <Icon name="rotate-ccw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Reopen closed tab</span>
                   <Command.Shortcut command="tab.reopen" />
                 </Command.Item>
               {/if}
               {#if tabActions.close}
-                <Command.Item value="close tab current this" keywords={['Close tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.close))}>
+                <Command.Item minScore={0.3} value="close tab current this" keywords={['Close tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.close))}>
                   <Icon name="x" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Close tab</span>
                   <Command.Shortcut command="tab.close" />
                 </Command.Item>
               {/if}
               {#if tabActions.closeOthers}
-                <Command.Item value="close other tabs all but this keep only" keywords={['Close other tabs']} onSelect={() => run(/** @type {() => void} */ (tabActions?.closeOthers))}>
+                <Command.Item minScore={0.3} value="close other tabs all but this keep only" keywords={['Close other tabs']} onSelect={() => run(/** @type {() => void} */ (tabActions?.closeOthers))}>
                   <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Close other tabs</span>
                 </Command.Item>
               {/if}
               {#if tabActions.togglePin}
-                <Command.Item value="pin unpin tab keep stick" keywords={[tabActions.pinned ? 'Unpin tab' : 'Pin tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.togglePin))}>
+                <Command.Item minScore={0.3} value="pin unpin tab keep stick" keywords={[tabActions.pinned ? 'Unpin tab' : 'Pin tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.togglePin))}>
                   <Icon name={tabActions.pinned ? 'pin-off' : 'pin'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">{tabActions.pinned ? 'Unpin tab' : 'Pin tab'}</span>
                 </Command.Item>
