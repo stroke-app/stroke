@@ -614,6 +614,7 @@
                   <input
                     type="text"
                     value={typeDraft[col.name] ?? displayType}
+                    aria-label="Type of {col.name}"
                     readonly={!canEdit}
                     class="{INP} pr-6 text-ellipsis {stagedValues['type:' + col.name] ? 'text-warning' : ''} {canEdit ? '' : 'cursor-default'}"
                     onfocus={() => {
@@ -691,6 +692,7 @@
                     type="text"
                     value={defaultDraft[col.name] ?? displayDefault}
                     placeholder={displayNullable ? 'NULL' : 'No default'}
+                    aria-label="Default of {col.name}"
                     readonly={!canEdit}
                     class="{INP} pr-6 placeholder:text-muted-foreground {stagedValues['default:' + col.name] !== undefined ? 'text-warning' : displayDefault ? '' : 'text-muted-foreground'} {canEdit ? '' : 'cursor-default'}"
                     onfocus={(e) => {
@@ -762,7 +764,7 @@
 
               <!-- comment -->
               <td class={TD}>
-                <input type="text" value={col.comment ?? ''} placeholder="—" readonly={!canEdit}
+                <input type="text" value={col.comment ?? ''} placeholder="—" aria-label="Comment on {col.name}" readonly={!canEdit}
                   class="{INP} italic text-muted-foreground placeholder:not-italic placeholder:text-muted-foreground focus:not-italic focus:text-foreground {canEdit ? '' : 'cursor-default'}"
                   onblur={(e) => { const v = /** @type {HTMLInputElement} */ (e.target).value; if (v !== (col.comment ?? '')) void alterComment(col.name, v) }}
                   onkeydown={(e) => onFieldKey(e, () => { const v = /** @type {HTMLInputElement} */ (e.currentTarget).value; if (v !== (col.comment ?? '')) void alterComment(col.name, v) })}
