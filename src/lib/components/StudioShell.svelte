@@ -11563,6 +11563,14 @@ let rowSearch = $state('')
       }
     : null}
   tableStructureShown={tableViewMode === 'structure'}
+  tabActions={connection && !aiMode ? {
+    reopen: closedTabStack.length ? reopenLastClosedTab : null,
+    close: activeTabId && tabs.length > 0 ? () => void closeTab(activeTabId) : null,
+    closeOthers: activeTabId && tabs.filter((t) => t.id !== activeTabId && !t.pinned).length ? () => void closeOtherTabs(activeTabId) : null,
+    togglePin: activeTabId ? () => toggleTabPin(activeTabId) : null,
+    pinned: !!tabs.find((t) => t.id === activeTabId)?.pinned,
+    newTable: !isKV ? openNewTable : null,
+  } : null}
   onexplainquery={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false && !aiMode ? () => sqlConsoleRef?.explainEditor?.() : null}
   onimporttable={activeTab?.kind === 'table' && activeTable && !aiMode && !tableReadonly ? () => (importDataOpen = true) : null}
   connected={!!connection}

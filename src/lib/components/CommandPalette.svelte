@@ -35,6 +35,10 @@
     ontablestructure = null,
     /** Whether that table is showing its structure now. */
     tableStructureShown = false,
+    /** Tab commands that only had a shortcut or the tab's right-click menu:
+     *  each is null when it does not apply.
+     *  @type {{ reopen: (() => void) | null, close: (() => void) | null, closeOthers: (() => void) | null, togglePin: (() => void) | null, pinned: boolean, newTable: (() => void) | null } | null} */
+    tabActions = null,
     /** Explain the open editor's query, or null when no editor tab is in front.
      *  @type {(() => void) | null} */
     onexplainquery = null,
@@ -750,7 +754,7 @@
   const LOCAL_PAGES = new Set(['root', 'theme', 'pages', 'docker'])
   const localFilter = createLocalFilter(() => (LOCAL_PAGES.has(page) ? paletteSearch.trim() : ''), paletteFilter)
   setContext(LOCAL_FILTER, localFilter)
-  const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'actions', 'switchdb', 'database', 'launch', 'appearance']
+  const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'actions', 'tabs', 'switchdb', 'database', 'launch', 'appearance']
   /** Root groups in page order, or best match first while searching. */
   const rootOrder = $derived.by(() => {
     if (!localFilter.search) return ROOT_GROUPS
@@ -1289,6 +1293,41 @@
             {/if}
             {/if}
           {/snippet}
+          {#snippet group_tabs()}
+            <!-- Only while searching, as Export: "close", "reopen" or "pin"
+                 found nothing here, and four more rows in the root list
+                 would push the views down. -->
+            {#if tabActions && paletteSearch.trim()}
+            <Command.Group value="tabs" heading={$tx('group.Tabs', 'Tabs')}>
+              {#if tabActions.reopen}
+                <Command.Item value="reopen closed tab undo close restore last tab" keywords={['Reopen closed tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.reopen))}>
+                  <Icon name="rotate-ccw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Reopen closed tab</span>
+                  <Command.Shortcut command="tab.reopen" />
+                </Command.Item>
+              {/if}
+              {#if tabActions.close}
+                <Command.Item value="close tab current this" keywords={['Close tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.close))}>
+                  <Icon name="x" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Close tab</span>
+                  <Command.Shortcut command="tab.close" />
+                </Command.Item>
+              {/if}
+              {#if tabActions.closeOthers}
+                <Command.Item value="close other tabs all but this keep only" keywords={['Close other tabs']} onSelect={() => run(/** @type {() => void} */ (tabActions?.closeOthers))}>
+                  <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Close other tabs</span>
+                </Command.Item>
+              {/if}
+              {#if tabActions.togglePin}
+                <Command.Item value="pin unpin tab keep stick" keywords={[tabActions.pinned ? 'Unpin tab' : 'Pin tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.togglePin))}>
+                  <Icon name={tabActions.pinned ? 'pin-off' : 'pin'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">{tabActions.pinned ? 'Unpin tab' : 'Pin tab'}</span>
+                </Command.Item>
+              {/if}
+            </Command.Group>
+            {/if}
+          {/snippet}
           {#snippet group_actions()}
             {#if connected && listAll}
             <Command.Group value="actions" heading={$tx('group.Actions', 'Actions')}>
@@ -1305,6 +1344,13 @@
                 <Command.Item value="table structure columns types indexes foreign keys constraints edit columns alter schema ddl back to data rows" keywords={[tableStructureShown ? 'Back to data' : 'Table structure']} onSelect={() => run(ontablestructure)}>
                   <Icon name={tableStructureShown ? 'table-2' : 'columns-3'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">{tableStructureShown ? `Back to the rows of ${exportTableName || 'the table'}` : `Structure of ${exportTableName || 'the table'}`}</span>
+                </Command.Item>
+              {/if}
+              {#if tabActions?.newTable}
+                <!-- Only the sidebar's + made a table. -->
+                <Command.Item value="new table create table add schema design columns" keywords={['New table']} onSelect={() => run(/** @type {() => void} */ (tabActions?.newTable))}>
+                  <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">New table…</span>
                 </Command.Item>
               {/if}
               <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)} keywords={['Refresh tables']}>
@@ -1490,6 +1536,7 @@
             {:else if id === 'recentq'}{@render group_recentq()}
             {:else if id === 'export'}{@render group_export()}
             {:else if id === 'actions'}{@render group_actions()}
+            {:else if id === 'tabs'}{@render group_tabs()}
             {:else if id === 'switchdb'}{@render group_switchdb()}
             {:else if id === 'database'}{@render group_database()}
             {:else if id === 'launch'}{@render group_launch()}
