@@ -906,16 +906,19 @@
         // its full 13rem, so the pager clipped off the right edge. A search
         // field is the most shrinkable thing here; it gives way first, down to
         // a floor where the icon and a word of text still fit.
-        "@container/search relative flex h-7 shrink items-center transition-[width] duration-200",
+        // No width animation, and no change on focus alone: the field grew on
+        // focus and shrank on blur, so a click on the filter or sort icon blurred
+        // it first, the icons slid left under the pointer, and the click missed.
+        "@container/search relative flex h-7 shrink items-center",
         // A real floor, larger while in use. The toolbar only hides optional
         // controls when the row overflows, and a field that could shrink to
         // 7.5rem meant it never did: the search took the squeeze instead and the
         // Aa/ab/.* toggles and ✕ left room for about one character.
-        showSearchOpts ? "min-w-[18rem]" : searchExpanded ? "min-w-[14rem]" : "min-w-[10rem]",
+        showSearchOpts ? "min-w-[18rem]" : "min-w-[10rem]",
         // Wider at both sizes: the trailing corner now holds three toggles and a
         // clear ✕ while you type, and 13rem left the query itself two words of
         // room. Still `shrink`, so a narrow pane takes it back first.
-        searchExpanded ? "w-80" : "w-64",
+        showSearchOpts ? "w-80" : "w-72",
       )}
       role="search"
       onfocusin={() => (searchFocused = true)}

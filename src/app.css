@@ -289,18 +289,21 @@ html[data-icon-style="bold"]  svg.lucide { stroke-width: 2.5px; }
 .field-surface:not([aria-invalid="true"]):not(.no-focus-ring):focus-visible,
 .cell-quiet:focus-visible,
 [data-slot="select-trigger"].field-surface:not([aria-invalid="true"]):focus-visible {
-  /* One crisp 1px accent edge, the way native fields show focus: no halo
-     outside it (a halo beside a hover-gray border read as two outlines) and
-     no layout shift. --ring measures 4.63:1 against --background. */
+  /* A firm 2px accent edge (the border plus a 1px inner ring) and a faint
+     glow: the 1px edge alone was hard to find on a busy screen. No layout
+     shift. --ring measures 4.63:1 against --background. */
   outline: none;
-  border-color: var(--field-focus-edge);
-  box-shadow: none;
+  border-color: var(--ring);
+  box-shadow: var(--field-focus-ring);
+  transition: none;
 }
 /* Bare text fields wear the same frame (the rule below), so the same focus. */
 input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]):not([type="color"]):not([type="submit"]):not([type="button"]):not(.no-focus-ring):not(.no-field-frame):focus-visible,
 textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
   outline: none;
-  border-color: var(--field-focus-edge);
+  border-color: var(--ring);
+  box-shadow: var(--field-focus-ring);
+  transition: none;
 }
 /* The focused field's edge. On a Retina Mac the 1px line is two device pixels
    with smooth corners. On a 1x screen, which most Linux and Windows monitors
@@ -308,7 +311,12 @@ textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
    as a white outline with fuzzy corners. There it is blended toward the
    resting border, which keeps it about 5:1 on Mono and above 3:1 on light
    themes. */
-:root { --field-focus-edge: var(--ring); }
+:root {
+  --field-focus-edge: var(--ring);
+  /* The focused field's ring: 1px inside the border makes the edge 2px, and a
+     soft 3px glow outside sets it off the page. */
+  --field-focus-ring: inset 0 0 0 1px var(--ring), 0 0 0 3px color-mix(in oklab, var(--ring) 22%, transparent);
+}
 @media (max-resolution: 1.5dppx) {
   :root { --field-focus-edge: color-mix(in oklab, var(--ring) 65%, var(--field-border)); }
 }
@@ -1436,9 +1444,10 @@ html[data-motion="reduced"] .animate-spin {
   .search-box:hover:not(:disabled):not(:focus) { border-color: color-mix(in oklch, var(--foreground) 32%, transparent); }
   /* Focus is one crisp accent edge, hovered or not: no halo outside it. */
   .search-box:focus {
-    border-color: var(--field-focus-edge);
+    border-color: var(--ring);
     background-color: color-mix(in oklab, var(--muted) 45%, transparent);
-    box-shadow: none;
+    box-shadow: var(--field-focus-ring);
+    transition: none;
   }
   .search-box:disabled { cursor: not-allowed; opacity: 0.4; }
   .search-box::-webkit-search-cancel-button { display: none; }
@@ -1453,9 +1462,10 @@ html[data-motion="reduced"] .animate-spin {
   }
   .search-shell:hover:not(:focus-within) { border-color: color-mix(in oklch, var(--foreground) 32%, transparent); }
   .search-shell:focus-within {
-    border-color: var(--field-focus-edge);
+    border-color: var(--ring);
     background-color: color-mix(in oklab, var(--muted) 45%, transparent);
-    box-shadow: none;
+    box-shadow: var(--field-focus-ring);
+    transition: none;
   }
   .search-shell input { background: transparent; color: inherit; }
   .search-shell input::placeholder { color: var(--muted-foreground); }
@@ -1605,6 +1615,9 @@ html[data-os='linux']:not([data-maximized='true']):not([data-fullscreen='true'])
 /* The new-tab hero reads in the system face, as T3 and native Mac apps do,
    whatever the app font: a mono headline made it read like a terminal. */
 .welcome-hero, .welcome-hero :where(h1, h2, p, span, div, button, a, label) { font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif; }
+/* Linux has no system face of its own (it came out as DejaVu or Liberation):
+   the app font there. */
+html[data-os="linux"] .welcome-hero, html[data-os="linux"] .welcome-hero :where(h1, h2, p, span, div, button, a, label) { font-family: var(--font-sans); }
 
 /* Structure grid: dropdown arrows only on the row you are on, not on every
    cell of every row - the value is the content, the arrow is the affordance. */
