@@ -1544,6 +1544,29 @@
     return false
   }
 
+  /**
+   * The error console's "Add ; and run": two statements with no `;` between
+   * them ran as one and failed. Insert the `;` the linter places (the one it
+   * offers as a quick fix) in the statement that failed, and hand back the
+   * statement under the caret, which is the one meant to run.
+   * @returns {string | false} that statement, or false when there was nothing to add
+   */
+  export function addMissingSemicolon() {
+    const view = editorRef?.getView()
+    if (!view) return false
+    for (const e of view.state.field(runMarksField).errors) {
+      const text = view.state.doc.sliceString(e.stmtFrom, e.stmtTo)
+      const fixes = lintSql(text)
+        .filter((d) => d.message.startsWith("Missing ';' - this starts a new statement") && d.fix)
+        .map((d) => ({ from: e.stmtFrom + /** @type {any} */ (d.fix).from, to: e.stmtFrom + /** @type {any} */ (d.fix).to, insert: /** @type {any} */ (d.fix).insert }))
+      if (!fixes.length) continue
+      view.dispatch({ changes: fixes, userEvent: 'input.complete' })
+      view.focus()
+      return (statementAtCaret(view.state)?.text) || false
+    }
+    return false
+  }
+
   /** Focus the editor (called when the SQL tab becomes active). */
   /** Fold every statement to its first line (the editor menu's Fold all). */
   export function foldAll() { editorRef?.foldEverything?.() }

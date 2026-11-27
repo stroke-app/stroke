@@ -196,7 +196,7 @@
     _wasLoading = now
   })
 
-  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => string | false, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
+  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => string | false, addMissingSemicolon: () => string | false, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
   let sqlEditorRef = $state(null)
 
   /** Mod+R from outside the editor: the selection, else the statement at the cursor. */
@@ -834,6 +834,12 @@
       await navigator.clipboard.writeText(replacement)
       toast.info(`Copied ${replacement}`, { description: 'The statement changed since it ran, so it was not edited.' })
     } catch { /* clipboard unavailable - no-op */ }
+  }
+
+  /** "Add ; and run": split the statements that ran as one, run the one at the caret if it only reads. */
+  function addSemicolonAndRun() {
+    const stmt = sqlEditorRef?.addMissingSemicolon?.()
+    if (stmt && isPlainRead(stmt) && !loading) handleRun(stmt)
   }
 
   function fixWithAi() {
@@ -1827,6 +1833,7 @@
                 oncopy={copyError}
                 onfixwithai={onfixwithai ? fixWithAi : undefined}
                 onsuggest={applySuggestion}
+                onaddsemicolon={addSemicolonAndRun}
               >
                 {#if /statement timeout|canceling statement due to/i.test(shownError)}
                   <p class="text-ui-xs leading-relaxed text-muted-foreground">
