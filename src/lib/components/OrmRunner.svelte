@@ -306,6 +306,13 @@
     navigator.platform.toUpperCase().includes("MAC");
   const mod = isMac ? "⌘" : "Ctrl";
 
+  /** Put the caret in the code (the tab coming to the front). On the first
+   *  open the editor's view is still being made, so wait a few frames for it. */
+  export function focusEditor(frames = 30) {
+    if (editor?.getView?.()) { editor.focus(); return; }
+    if (frames > 0) requestAnimationFrame(() => focusEditor(frames - 1));
+  }
+
   onMount(() => {
     if (!code.trim()) code = defaultCode();
     return () => {

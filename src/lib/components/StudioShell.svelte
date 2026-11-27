@@ -1508,6 +1508,8 @@
   let ormSchemaEverOpened = $state(false)
   /** @type {{ focusEditor: () => void, openQuery?: (content: string) => void } | null} */
   let sqlConsoleRef = $state(null)
+  /** @type {any} */
+  let ormRunnerRef = $state(null)
 
   // ── Search options (match case / whole word / regex) ──────────────────────
   /** @type {import('$lib/search-options.js').SearchOptions} */
@@ -1809,6 +1811,19 @@
     raf = requestAnimationFrame(() => {
       timer = setTimeout(() => {
         whenRefReady(() => sqlConsoleRef, (r) => { if (activeTab?.kind === 'sql') r.focusEditor?.() })
+      }, 0)
+    })
+    return () => { cancelAnimationFrame(raf); clearTimeout(timer) }
+  })
+
+  // The ORM runner the same way: it opened with the caret nowhere, so the
+  // first keys typed went to the page.
+  $effect(() => {
+    if (activeTab?.kind !== 'orm') return
+    let raf = 0, timer = 0
+    raf = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        whenRefReady(() => ormRunnerRef, (r) => { if (activeTab?.kind === 'orm') r.focusEditor?.() })
       }, 0)
     })
     return () => { cancelAnimationFrame(raf); clearTimeout(timer) }
@@ -12661,6 +12676,7 @@ let rowSearch = $state('')
           <svelte:boundary failed={tabError}>
           {#await import('./OrmRunner.svelte')}<TabLoading />{:then { default: OrmRunner }}
           <OrmRunner
+            bind:this={ormRunnerRef}
             bind:code={ormCode}
             bind:mode={ormMode}
             columns={ormColumns}
