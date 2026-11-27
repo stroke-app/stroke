@@ -4281,7 +4281,7 @@ let rowSearch = $state('')
   $effect(() => {
     /** @param {KeyboardEvent} e */
     const onKey = (e) => {
-      if (activeTab?.kind !== 'welcome' || commandOpen || e.defaultPrevented) return
+      if (activeTab?.kind !== 'welcome' || commandOpen || e.defaultPrevented || e.isComposing) return
       if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || '/? '.includes(e.key)) return
       const el = document.activeElement
       if (isTypingTarget(el) || (el && el !== document.body && !el.closest('[data-studio-region="main"]'))) return
