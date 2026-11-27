@@ -2135,7 +2135,7 @@
   /** @type {() => void | Promise<void>} */
   let applyEdits = $state(() => {})
   /** @type {() => void} */
-  let resetEdits = $state(() => {})
+  let resetEdits = $state(/** @type {(opts?: { undoable?: boolean }) => void} */ (() => {}))
   /** Copy the grid's staged changes as SQL (bound from DataTable). */
   let copyEditsSql = $state(() => {})
   /** Bound from DataTable - stages the selected rows for deletion (red diff). */
@@ -4293,7 +4293,7 @@ let rowSearch = $state('')
     findInDatabase: () => openSearchTab(),
     applyEdits: () => void applyEdits(),
     copyEditsSql: () => void copyEditsSql(),
-    resetEdits: () => resetEdits(),
+    resetEdits: () => resetEdits({ undoable: true }),
 
     toggleSidebar,
     toggleChat: () => { if (aiMode) exitAiMode(); toggleAiSidebar() },
@@ -4383,7 +4383,7 @@ let rowSearch = $state('')
       // because someone reached for that is not a trade worth making.
       if (isTypingTarget(document.activeElement)) return
       e.preventDefault()
-      resetEdits()
+      resetEdits({ undoable: true })
     })
   }
 
@@ -13222,7 +13222,7 @@ let rowSearch = $state('')
   {pendingEditCount}
   applying={savingCell || deletingRows || insertingRow}
   onapplyedits={() => void applyEdits()}
-  onresetedits={() => resetEdits()}
+  onresetedits={() => resetEdits({ undoable: true })}
   oncopyeditssql={() => void copyEditsSql()}
   showTableNav={activeTab?.kind === 'table'}
   onscrolltabletop={() => scrollTableTop()}

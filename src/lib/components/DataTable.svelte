@@ -267,7 +267,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     applyEdits = $bindable(/** @type {() => void | Promise<void>} */ (() => {})),
     /** Copy the staged changes as SQL instead of running them. */
     copyEditsSql = $bindable(/** @type {() => void | Promise<void>} */ (() => {})),
-    resetEdits = $bindable(/** @type {() => void} */ (() => {})),
+    /** Discard every staged change; `{ undoable: true }` (the user's Reset) offers Undo. */
+    resetEdits = $bindable(/** @type {(opts?: { undoable?: boolean }) => void} */ (() => {})),
     /** Assigned by this component; the parent (StatusBar) calls these to jump the
      *  table to the top / bottom. */
     scrollToTop = $bindable(/** @type {() => void} */ (() => {})),
@@ -2401,9 +2402,25 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       await applyPendingEdits();
     };
     copyEditsSql = copyPendingChangeSql;
-    resetEdits = () => {
+    resetEdits = (opts) => {
       if (newRowDrafts) cancelNewRow();
+      // Reset threw away every staged edit at once with nothing to get them
+      // back. They go back on Undo while the same rows are on screen: staged
+      // edits point at row positions, so after a refetch they cannot.
+      const edits = new Map(pendingEdits);
+      const deletes = new Set(pendingDeletes);
+      const n = edits.size + deletes.size;
+      const rowsAt = rows;
       resetPendingEdits();
+      if (n > 0 && opts?.undoable) {
+        offerUndo(`Discarded ${n} ${n === 1 ? 'change' : 'changes'}`, tableName || '', () => {
+          if (rows !== rowsAt || pendingEdits.size || pendingDeletes.size) return false;
+          pendingEdits = edits;
+          pendingDeletes = deletes;
+          savePendingChanges(_persistKey, pendingEdits, pendingDeletes);
+          scheduleDraw();
+        });
+      }
     };
   });
   // An open insert draft counts. It is a change you have made and not applied,
