@@ -2547,7 +2547,7 @@
                not they have anything to say, because a polite region inserted at
                the moment its text appears is announced unreliably. -->
           <span id="sidebar-filter-hint" class="sr-only"
-            >Filters the {activeTabLabel.toLowerCase()} list. Tab or press the down arrow to move into the results, then Tab or the arrow keys to move through them. Press Enter to open a row, or Shift and Enter to open it and move into the data grid.</span>
+            >Filters the {activeTabLabel.toLowerCase()} list. Tab or press the down arrow to move into the results, then use the arrow keys to move through them; Tab again leaves the list. Press Enter to open a row, or Shift and Enter to open it and move into the data grid.</span>
           <span class="sr-only" role="status" aria-live="polite" aria-atomic="true">{filterStatus}</span>
         </div>
         {/if}
@@ -2704,32 +2704,17 @@
             // were only in the right-click menu, so the keyboard could open a
             // table and nothing else.
             if (handleRowActionKey(e)) return
-            // Tab walks the list, one row per press, because that is what the
-            // key does everywhere else in this panel and pressing it twice from
-            // the filter box otherwise skipped the whole list to land in the
-            // grid. Tab off the LAST row still leaves for the content region -
-            // a list you cannot tab out of is a focus trap - and Shift+Tab off
-            // the first returns to the filter the list was narrowed from.
-            // Shift+Enter (above) is the deliberate way into the grid.
+            // The list is one Tab stop, as a listbox is (ARIA APG): the arrows
+            // move through the rows, Tab leaves for the content region and
+            // Shift+Tab goes back to the filter the list was narrowed from.
+            // Tab used to walk every row, so leaving a schema of 185 tables
+            // took 185 presses. Shift+Enter (above) is the way into the grid
+            // with the table opened.
             // `e.code` as well as `e.key`: on WebKitGTK, Shift+Tab reaches the
-            // page as GTK's ISO_Left_Tab keysym rather than "Tab", so a key-name
-            // check skipped this branch and the browser's own Shift+Tab moved
-            // focus to the previous tab stop - the filter - instead of the
-            // previous row. The physical key is Tab on every engine.
+            // page as GTK's ISO_Left_Tab keysym rather than "Tab".
             if (e.key === 'Tab' || e.code === 'Tab') {
               const onRow = e.target instanceof Element && e.target.closest('[data-sidebar-row]')
               if (!onRow) return
-              const keys = navKeys
-              // The ROW, not document.activeElement: the row's checkbox span is
-              // tabindex="-1", so a click near the icon focuses the span, which
-              // is in no row list - every Shift+Tab from there fell through to
-              // the filter instead of going to the previous table.
-              const i = keys.indexOf(/** @type {HTMLElement} */ (onRow).dataset.sidebarRow ?? '')
-              const next = i === -1 ? null : keys[i + (e.shiftKey ? -1 : 1)]
-              if (next) {
-                e.preventDefault(); kbdNav = true; focusRow(next)
-                return
-              }
               if (e.shiftKey) {
                 if (!filterEl) return
                 e.preventDefault(); kbdNav = true; filterEl.focus(); filterEl.select()
