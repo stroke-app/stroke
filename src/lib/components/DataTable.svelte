@@ -10303,33 +10303,29 @@ import FilterX from "@lucide/svelte/icons/filter-x";
             <Copy />
             Copy as
           </ContextMenu.SubTrigger>
+          <!-- Format names only, as in the export menus: the same copy icon on
+               every row said what Copy as already does. -->
           <ContextMenu.SubContent class="min-w-44">
             <ContextMenu.Label>Cell</ContextMenu.Label>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyCellHex(contextRowIdx, contextColIdx))}>
-              <Copy />
               Hex
             </ContextMenu.Item>
             <ContextMenu.Separator />
             <ContextMenu.Label>Row</ContextMenu.Label>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'json'))}>
-              <Braces />
               JSON
             </ContextMenu.Item>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'csv'))}>
-              <Copy />
               CSV
             </ContextMenu.Item>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'plain'))}>
-              <Copy />
               Plain text
             </ContextMenu.Item>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'markdown'))}>
-              <Copy />
               Markdown table
             </ContextMenu.Item>
             {#if hasTableContext}
               <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'insert'))}>
-                <Copy />
                 INSERT statement
               </ContextMenu.Item>
             {/if}
