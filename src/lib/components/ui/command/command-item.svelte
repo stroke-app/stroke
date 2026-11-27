@@ -2,7 +2,7 @@
 	import { Command as CommandPrimitive } from "bits-ui";
 	import { getContext } from "svelte";
 	import { cn } from "$lib/utils.js";
-	import { LOCAL_FILTER, LOCAL_GROUP } from "$lib/command-local-filter.svelte.js";
+	import { LOCAL_FILTER, LOCAL_GROUP, pointerReallyMoved } from "$lib/command-local-filter.svelte.js";
 
 	let {
 		ref = $bindable(null),
@@ -54,6 +54,15 @@
 		className,
 	)}
 	{...restProps}
+	onpointermove={(e) => {
+		// bits-ui highlights the row under the pointer on every pointermove,
+		// and WebKit sends one when rows move under a still cursor: typing
+		// "light" in the theme list re-ranked the rows and the highlight jumped
+		// to whatever row slid under the resting pointer. Ours runs first, and a
+		// prevented event stops bits-ui's (svelte-toolbelt composeHandlers).
+		if (!pointerReallyMoved(e)) e.preventDefault();
+		restProps.onpointermove?.(e);
+	}}
 >
 	{@render children?.()}
 </CommandPrimitive.Item>

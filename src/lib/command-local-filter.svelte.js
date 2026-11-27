@@ -69,3 +69,18 @@ export function createLocalFilter(getSearch, score) {
     },
   }
 }
+
+/** Where the pointer was at the last pointermove a command row saw. */
+let lastX = NaN
+let lastY = NaN
+/**
+ * True when this pointermove is the pointer moving, not rows moving under a
+ * pointer that stayed put (WebKit reports those as pointermove too).
+ * @param {PointerEvent} e
+ */
+export function pointerReallyMoved(e) {
+  const moved = e.clientX !== lastX || e.clientY !== lastY
+  lastX = e.clientX
+  lastY = e.clientY
+  return moved
+}
