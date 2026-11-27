@@ -336,18 +336,42 @@ fn persist_to(path: &Path, store: &dyn CredStore, map: &Map) -> Result<(), Strin
     Ok(())
 }
 
-fn load_durable(app: &tauri::AppHandle) -> Map {
-    load_from(&legacy_path(app), &Keychain)
+/// The durable vault, retried briefly when the keychain refuses: right after
+/// login, or after an update relaunches the app, the Secret Service can answer
+/// with an error for a moment while it unlocks.
+fn load_durable(app: &tauri::AppHandle) -> Result<Map, String> {
+    let path = legacy_path(app);
+    let mut last = String::new();
+    for attempt in 0..4 {
+        match read_durable(&path, &Keychain) {
+            Ok(map) => return Ok(map),
+            Err(e) => {
+                last = e;
+                if attempt < 3 {
+                    std::thread::sleep(std::time::Duration::from_millis(250 * (attempt + 1)));
+                }
+            }
+        }
+    }
+    log::warn!("secrets: keychain unreadable after retries: {last}");
+    Err(last)
+}
+
+/// The vault, or `Err` when the keychain could not be read. A failed read is
+/// not cached: it used to be stored as an empty vault for the rest of the run,
+/// which read as "signed out" and put up the sign-in screen after an update.
+pub(crate) fn try_read_all(app: &tauri::AppHandle) -> Result<Map, String> {
+    let mut guard = cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(map) = guard.as_ref() {
+        return Ok(map.clone());
+    }
+    let map = load_durable(app)?;
+    *guard = Some(map.clone());
+    Ok(map)
 }
 
 pub(crate) fn read_all(app: &tauri::AppHandle) -> Map {
-    let mut guard = cache().lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(map) = guard.as_ref() {
-        return map.clone();
-    }
-    let map = load_durable(app);
-    *guard = Some(map.clone());
-    map
+    try_read_all(app).unwrap_or_default()
 }
 
 // Changes not yet written because the durable store could not be read. They
@@ -434,6 +458,11 @@ pub(crate) async fn read_all_async(app: &tauri::AppHandle) -> Map {
     // A join error here means the closure panicked; an empty vault is the same
     // answer callers already handle for "nothing stored yet".
     off_thread(move || read_all(&app)).await.unwrap_or_default()
+}
+
+pub(crate) async fn try_read_all_async(app: &tauri::AppHandle) -> Result<Map, String> {
+    let app = app.clone();
+    off_thread(move || try_read_all(&app)).await.unwrap_or_else(|_| Err("vault read panicked".into()))
 }
 
 pub(crate) async fn read_fresh_async(app: &tauri::AppHandle) -> Map {

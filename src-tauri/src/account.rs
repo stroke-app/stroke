@@ -678,6 +678,16 @@ async fn this_device_id() -> String {
 
 // ── Token in the vault ────────────────────────────────────────────────────────
 
+/// The token, `Ok(None)` when none is stored, `Err` when the keychain could
+/// not be read (which is not the same as signed out).
+async fn load_token_checked(app: &tauri::AppHandle) -> Result<Option<String>, String> {
+    Ok(crate::secrets::try_read_all_async(app)
+        .await?
+        .get(TOKEN_KEY)
+        .cloned()
+        .filter(|t| !t.is_empty()))
+}
+
 pub(crate) async fn load_token(app: &tauri::AppHandle) -> Option<String> {
     crate::secrets::read_all_async(app)
         .await
@@ -958,13 +968,19 @@ pub fn account_cancel_sign_in() {
 #[tauri::command]
 pub async fn account_status(app: tauri::AppHandle, refresh: Option<bool>) -> Result<AccountStatus, String> {
     let dir = data_dir(&app)?;
-    let token = load_token(&app).await;
-    Ok(match token {
-        Some(t) if refresh.unwrap_or(false) => self::refresh(&app, &dir, &t).await,
-        Some(_) => build_status(&dir, true),
-        // A failed keychain read also lands here, so the cache is left alone:
-        // sign-out and a 401 are what delete it.
-        None => build_status(&dir, false),
+    Ok(match load_token_checked(&app).await {
+        Ok(Some(t)) if refresh.unwrap_or(false) => self::refresh(&app, &dir, &t).await,
+        Ok(Some(_)) => build_status(&dir, true),
+        Ok(None) => build_status(&dir, false),
+        // The keychain did not answer (locked, or the Secret Service still
+        // starting after an update relaunched the app). That is not a sign-out:
+        // with a signed account cache on disk, stay signed in on it (every read
+        // re-verifies its signature, so this grants nothing the account does
+        // not have). The next call reads the keychain again.
+        Err(e) => {
+            log::warn!("account: token unreadable, using the cached account: {e}");
+            build_status(&dir, cached_me(&dir).is_some())
+        }
     })
 }
 
