@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   import FieldSelect from './FieldSelect.svelte';
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
@@ -659,11 +660,11 @@
           {/if}
         </dl>
         <p class="mt-4 flex select-none flex-wrap items-center justify-center gap-x-3 gap-y-1 text-ui-xs text-muted-foreground">
-          <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">←</kbd> <kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">→</kbd> records</span>
+          <span class="inline-flex items-center gap-1.5"><Kbd combo="ArrowLeft" /><Kbd combo="ArrowRight" /> records</span>
           {#if onsave && !readonly}
             <span>Click a value to edit</span>
-            <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">Enter</kbd> saves</span>
-            <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">Esc</kbd> reverts</span>
+            <span class="inline-flex items-center gap-1.5"><Kbd combo="Enter" /> saves</span>
+            <span class="inline-flex items-center gap-1.5"><Kbd combo="Escape" /> reverts</span>
           {/if}
         </p>
       </div>
