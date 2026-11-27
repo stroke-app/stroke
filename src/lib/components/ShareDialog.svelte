@@ -226,9 +226,8 @@
 <Dialog.Root bind:open onOpenChange={(v) => { if (!v) close() }}>
   <Dialog.Content class="w-[min(32rem,calc(100vw-2rem))] gap-0 overflow-hidden p-0">
     <Dialog.Header class="flex-row items-center gap-3 px-5 pt-5 pb-4 pe-12 text-start">
-      <span class={cn('flex size-9 shrink-0 items-center justify-center rounded-lg', link ? 'bg-success/12 text-success' : 'bg-muted/60 text-foreground')}>
-        <Icon name={link ? 'check' : kind.icon} class="size-4 shrink-0" />
-      </span>
+      <!-- The glyph alone (DESIGN_SYSTEM.md §11); it turns into a green check once the link exists. -->
+      <Icon name={link ? 'check' : kind.icon} class={cn('size-5 shrink-0', link ? 'text-success' : 'text-muted-foreground')} />
       <div class="flex min-w-0 flex-col gap-0.5">
         <Dialog.Title class="truncate text-ui-sm font-semibold">{link ? 'Link ready' : `Share ${kind.label}`}</Dialog.Title>
         <Dialog.Description class="flex items-center gap-1 text-ui-2xs text-muted-foreground">
@@ -349,11 +348,11 @@
           <div class={row}>
             <div class="min-w-0 flex-1">
               <p class={lbl}>Expires</p>
-              <p class={hint}>{lockedNote || (expiry ? `The link stops working after ${expiryLabel.toLowerCase()}.` : 'The link keeps working until you revoke it.')}</p>
+              <p class={hint}>{lockedNote || (expiry ? `Stops working after ${expiryLabel.toLowerCase().replace(/ /g, '\u00a0')}.` : 'Works until you revoke it.')}</p>
             </div>
             <SelectMenu
               ariaLabel="Expires"
-              triggerClass="h-8 w-52"
+              triggerClass="h-8 w-56 shrink-0"
               contentClass="w-[var(--bits-popover-anchor-width)] min-w-[9rem]"
               align="end"
               value={expiry === null ? 'never' : String(expiry)}
@@ -376,7 +375,7 @@
             </div>
             <SelectMenu
               ariaLabel="Views"
-              triggerClass="h-8 w-52"
+              triggerClass="h-8 w-56 shrink-0"
               contentClass="w-[var(--bits-popover-anchor-width)] min-w-[12rem]"
               align="end"
               value={access}
