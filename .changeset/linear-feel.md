@@ -88,3 +88,4 @@
 - The relation tree's table list and a role's grants load behind skeletons instead of a spinner.
 - Reset (or Alt+Backspace) on staged table edits offers Undo for 8 seconds instead of losing them for good.
 - The command menu finds Close tab, Close other tabs, Reopen closed tab, Pin tab, New table, the open table's Filter, Sort, Columns, Add row, Find and replace and Refresh, and Zoom and Full screen. The open tabs list closes tabs as well as switching to them.
+- Typing on the New tab page opens the command menu with the typed letters already in its search.
