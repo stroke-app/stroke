@@ -2849,7 +2849,7 @@
                           <ContextMenu.Content class="min-w-52">
                             {#if !isCurrent}
                               <ContextMenu.Item onSelect={() => { focusListAfterSwitch(); onswitchdatabase(db) }}>
-                                <Icon name="arrow-right" />
+                                <Icon name="arrow-left-right" />
                                 Switch to this database
                               </ContextMenu.Item>
                             {/if}
@@ -3944,7 +3944,7 @@
               {@const current = c.id === activeConnectionId}
               {#if !current}
                 <ContextMenu.Item onSelect={() => { connHover = null; onswitchconnection(c) }}>
-                  <Icon name="arrow-right" />
+                  <Icon name="plug" />
                   Connect
                 </ContextMenu.Item>
               {/if}
