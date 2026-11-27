@@ -412,7 +412,7 @@
     <div class="ml-2 flex shrink-0 items-center gap-0.5">
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={toolBtn}><FolderOpen class="size-3.5 shrink-0" />Open<ChevronDown class="size-3 shrink-0 opacity-60" /></DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="w-72">
+        <DropdownMenu.Content align="end" class="min-w-72">
           <DropdownMenu.Item onSelect={() => void openFile()}>
             <FolderOpen class="size-3.5 shrink-0 text-muted-foreground" />Open a file…
             <span class="ml-auto text-ui-3xs text-muted-foreground">.sqlnb .ipynb .md .sql</span>
@@ -437,7 +437,7 @@
 
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={toolBtn}><Download class="size-3.5 shrink-0" />Export<ChevronDown class="size-3 shrink-0 opacity-60" /></DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="w-60">
+        <DropdownMenu.Content align="end" class="min-w-60">
           <DropdownMenu.Item onSelect={() => void exportAs('html')}>HTML report<span class="ml-auto text-ui-3xs text-muted-foreground">with results</span></DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => void exportAs('md')}>Markdown<span class="ml-auto text-ui-3xs text-muted-foreground">with results</span></DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => void exportAs('ipynb')}>Jupyter notebook<span class="ml-auto text-ui-3xs text-muted-foreground">%%sql</span></DropdownMenu.Item>
@@ -447,7 +447,7 @@
 
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={toolBtn} title={`Save (${comboTitle('Mod+S')})`}><Save class="size-3.5 shrink-0" />Save<ChevronDown class="size-3 shrink-0 opacity-60" /></DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="w-56">
+        <DropdownMenu.Content align="end" class="min-w-56">
           <DropdownMenu.Item onSelect={() => void save()}>Save<span class="ml-auto text-ui-3xs text-muted-foreground">{comboTitle('Mod+S')}</span></DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => void saveAs()}>Save as…<span class="ml-auto text-ui-3xs text-muted-foreground">{comboTitle('Mod+Shift+S')}</span></DropdownMenu.Item>
           <DropdownMenu.Separator />

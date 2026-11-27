@@ -2311,7 +2311,7 @@
               >
                 <Icon name="plus" class="size-3.5 shrink-0" />
               </DropdownMenu.Trigger>
-              <DropdownMenu.Content align="end" class="w-44 p-1 text-ui-sm">
+              <DropdownMenu.Content align="end" class="min-w-44 p-1 text-ui-sm">
                 <DropdownMenu.Item
                   onSelect={onnewtable}
                   disabled={$readOnlyMode}

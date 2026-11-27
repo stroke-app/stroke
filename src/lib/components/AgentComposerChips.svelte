@@ -53,7 +53,7 @@
       <span>{effortLabel}</span>
       <ChevronDown class="size-3 shrink-0 opacity-40" />
     </DropdownMenu.Trigger>
-    <DropdownMenu.Content side="top" align="start" class="w-64 p-1">
+    <DropdownMenu.Content side="top" align="start" class="min-w-64 p-1">
       <DropdownMenu.RadioGroup
         value={$agentPrefs.effort}
         onValueChange={(v) => agentPrefs.update((p) => ({ ...p, effort: /** @type {any} */ (v) }))}
@@ -82,7 +82,7 @@
     <span>{access.label}</span>
     <ChevronDown class="size-3 shrink-0 opacity-40" />
   </DropdownMenu.Trigger>
-  <DropdownMenu.Content side="top" align={part === 'access' ? 'end' : 'start'} class="w-80 p-1">
+  <DropdownMenu.Content side="top" align={part === 'access' ? 'end' : 'start'} class="min-w-80 p-1">
     {#if $readOnlyMode}
       <p class="flex items-start gap-2 rounded-md bg-muted/40 px-2.5 py-2 text-ui-3xs text-muted-foreground">
         <Lock class="mt-0.5 size-3 shrink-0" />
