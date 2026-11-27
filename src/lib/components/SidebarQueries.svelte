@@ -1,5 +1,5 @@
 <script>
-  import { comboTitle } from '$lib/shortcuts.js'
+  import Kbd from './Kbd.svelte'
   /**
    * The sidebar's Queries tab: the connection's saved queries as a tree, with
    * folders. The same store as Saved in the SQL console's results pane, so the
@@ -170,6 +170,7 @@
     await onrefresh()
     toast.message('Saved query deleted', {
       description: q.name,
+      duration: 8000,
       action: { label: 'Undo', onClick: () => void restoreSavedQuery(entry).then(() => onrefresh()) },
     })
   }
@@ -212,6 +213,7 @@
       description: plan.toRoot.length
         ? `${plan.toRoot.length} ${plan.toRoot.length === 1 ? 'query' : 'queries'} moved out of it.`
         : plan.remove.length ? `${plan.remove.length} ${plan.remove.length === 1 ? 'query' : 'queries'} deleted with it.` : undefined,
+      duration: 8000,
       action: {
         label: 'Undo',
         onClick: () => void (async () => {
@@ -315,14 +317,14 @@
   <!-- Filter, then New folder and New query. -->
   <div class="flex h-9 shrink-0 items-center gap-1 border-b border-sidebar-border px-2">
     <div class="relative min-w-0 flex-1">
-      <Icon name="search" class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+      <Icon name="search" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
       <input
         type="text"
         bind:value={filter}
         onkeydown={(e) => { if (e.key === 'Escape' && filter) { e.preventDefault(); e.stopPropagation(); filter = '' } }}
-        placeholder="Filter queries…"
-        aria-label="Filter saved queries"
-        class="search-box no-field-frame w-full min-w-0 pl-7 pr-2 text-ui-sm"
+        placeholder="Search"
+        aria-label="Search saved queries"
+        class="search-box no-field-frame w-full min-w-0 pl-8 pr-2 text-ui-sm"
       />
     </div>
     <button
@@ -347,7 +349,7 @@
     <div class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <Icon name="file-code" class="size-5 shrink-0 text-muted-foreground" />
       <p class="text-ui-sm text-foreground">No saved queries</p>
-      <p class="text-ui-xs text-muted-foreground">{comboTitle('Mod+S')} in a query editor saves its query here.</p>
+      <p class="text-ui-xs text-muted-foreground"><Kbd combo="Mod+S" /> in a query editor saves its query here.</p>
       <Button variant="outline" size="sm" class="mt-1" disabled={!connectionId} onclick={() => onnew(null)}>
         <Icon name="plus" class="size-3.5 shrink-0" />New query
       </Button>

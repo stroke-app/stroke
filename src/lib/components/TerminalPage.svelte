@@ -1533,7 +1533,7 @@
       // xterm repaints on its own next frame; ask for every row in that same frame.
       if (term) term.refresh(0, term.rows - 1)
     })
-    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style'] })
+    themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme', 'class', 'style', 'data-layout'] })
     // The editor font is a web font: measure the cells again once it is in.
     // Only if it was not in when xterm measured at open; then that measure was
     // of the fallback. (Each re-measure toggles the font option twice, and each
@@ -1720,7 +1720,7 @@
         </button>
       {/if}
       {#if onclose}
-        <span class="mx-0.5 h-4 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
         <button
           type="button"
           class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -1877,10 +1877,8 @@
       <div class="absolute inset-0 flex items-center justify-center bg-panel p-6">
         <div class="flex w-full max-w-md flex-col items-center gap-3 text-center">
           {#if phase === 'missing'}
-            <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-              <PackageSearch class="size-5 shrink-0 text-muted-foreground" />
-            </div>
-            <p class="text-ui-lg font-semibold text-foreground">{client?.name} is not installed</p>
+            <PackageSearch class="size-8 shrink-0 text-muted-foreground" strokeWidth={1.25} aria-hidden="true" />
+            <p class="text-ui-xl font-normal tracking-tight text-foreground">{client?.name} is not installed</p>
             <p class="text-ui-sm text-muted-foreground">
               This tab runs the real {client?.name}, so every command works the way it does in a terminal. Install it, then check again, or use the built-in prompt for now.
             </p>
@@ -1914,20 +1912,16 @@
               Check again
             </Button>
           {:else if phase === 'failed'}
-            <div class="flex size-10 items-center justify-center rounded-lg border border-destructive/30 bg-destructive/10">
-              <CircleAlert class="size-5 shrink-0 text-destructive" />
-            </div>
-            <p class="text-ui-lg font-semibold text-foreground">Could not start {client?.name || 'the terminal'}</p>
+            <CircleAlert class="size-8 shrink-0 text-destructive" strokeWidth={1.25} aria-hidden="true" />
+            <p class="text-ui-xl font-normal tracking-tight text-foreground">Could not start {client?.name || 'the terminal'}</p>
             <p class="w-full rounded-lg border border-border bg-muted/30 px-3 py-2 text-left font-mono text-ui-xs break-words text-muted-foreground select-text">{failure}</p>
             <Button variant="outline" size="sm" onclick={() => void start()}>
               <RotateCw class="size-3.5 shrink-0" />
               Try again
             </Button>
           {:else}
-            <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-              <Ban class="size-5 shrink-0 text-muted-foreground" />
-            </div>
-            <p class="text-ui-lg font-semibold text-foreground">No shell for this connection</p>
+            <Ban class="size-8 shrink-0 text-muted-foreground" strokeWidth={1.25} aria-hidden="true" />
+            <p class="text-ui-xl font-normal tracking-tight text-foreground">No shell for this connection</p>
             <p class="text-ui-sm text-muted-foreground">{client?.hint}</p>
           {/if}
         </div>

@@ -81,13 +81,20 @@
   const filteredGroups = $derived.by(() => {
     const q = query.toLowerCase().trim();
     if (!q) return groups;
+    // Each word typed has to start a word of the description: "tab" listed
+    // Switch database, from the middle of "database". Several words may come
+    // in any order ("tab close"). Key names still match anywhere ("ctrl w").
+    const tokens = q.split(/\s+/).filter(Boolean);
+    /** @param {string} desc */
+    const descMatches = (desc) => {
+      const words = desc.toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+      return tokens.every((t) => words.some((w) => w.startsWith(t)) || (/[^\p{L}\p{N}]/u.test(t) && desc.toLowerCase().includes(t)));
+    };
     return groups
       .map((g) => ({
         ...g,
         shortcuts: g.shortcuts.filter(
-          (s) =>
-            s.desc.toLowerCase().includes(q) ||
-            comboText(s.combo).includes(q),
+          (s) => descMatches(s.desc) || comboText(s.combo).includes(q),
         ),
       }))
       .filter((g) => g.shortcuts.length > 0);
@@ -176,9 +183,7 @@
     <div class="min-h-0 flex-1 overflow-y-auto">
       {#if displayGroups.length === 0}
         <div class="flex flex-col items-center gap-3 py-20 text-center">
-          <div class="flex size-10 items-center justify-center rounded-full border border-border/30 bg-muted/30">
-            <Search class="size-4 shrink-0 text-muted-foreground" />
-          </div>
+          <Search class="size-6 shrink-0 text-muted-foreground" aria-hidden="true" />
           <p class="text-ui-sm text-muted-foreground">No shortcuts match <span class="text-foreground/60">"{query}"</span></p>
         </div>
       {:else}

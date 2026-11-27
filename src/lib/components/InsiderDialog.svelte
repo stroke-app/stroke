@@ -40,9 +40,7 @@
     <Dialog.Header class="shrink-0 border-b border-border px-5 py-4">
       <div class="flex items-center justify-between gap-3">
         <div class="flex items-center gap-3">
-          <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted">
-            <Lightbulb class="size-3.5 shrink-0 text-muted-foreground" />
-          </div>
+          <Lightbulb class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
           <div class="flex flex-col gap-0.5">
             <Dialog.Title class="text-ui-sm font-semibold">SQL Insider</Dialog.Title>
             <Dialog.Description class="text-ui-xs text-muted-foreground">

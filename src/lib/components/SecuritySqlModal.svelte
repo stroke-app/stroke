@@ -1,5 +1,5 @@
 <script>
-  import { comboTitle } from '$lib/shortcuts.js'
+  import Kbd from './Kbd.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import { onMount } from 'svelte'
   import { completionStatus } from '@codemirror/autocomplete'
@@ -57,7 +57,7 @@
   >
     <!-- Header -->
     <div class="flex shrink-0 items-center justify-between border-b border-border/50 px-4 py-2.5">
-      <span class="font-mono text-ui-sm font-medium text-foreground">{title}</span>
+      <span class="text-ui-sm font-medium text-foreground">{title}</span>
       <button aria-label="Close" title="Close"
         type="button"
         class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
@@ -75,20 +75,14 @@
 
     <!-- Footer -->
     <div class="flex shrink-0 items-center justify-between border-t border-border/50 px-4 py-2.5">
-      <p class="font-mono text-ui-2xs text-muted-foreground">
-        <kbd>{comboTitle('Mod+Enter')}</kbd> to run
-        &nbsp;·&nbsp;
-        <kbd>Esc</kbd> to close
+      <p class="flex items-center gap-3 text-ui-xs text-muted-foreground">
+        <span class="inline-flex items-center gap-1.5"><Kbd combo="Mod+Enter" /> runs</span>
+        <span class="inline-flex items-center gap-1.5"><Kbd combo="Escape" /> closes</span>
       </p>
       <div class="flex items-center gap-2">
-        <button
-          type="button"
-          class= "field-surface inline-flex h-7 items-center px-3 font-mono text-ui-xs text-muted-foreground transition-colors hover:bg-muted"
-          onclick={onclose}
-          disabled={running}
-        >Cancel</button>
+        <Button variant="ghost" size="sm" onclick={onclose} disabled={running}>Cancel</Button>
         <Button
-          class="font-mono" size="sm"
+          size="sm"
           onclick={onrun}
           disabled={running || !sql.trim()}
 >

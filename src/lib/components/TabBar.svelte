@@ -1,12 +1,13 @@
 <script>
   import { titleBarDoubleClick } from '$lib/titlebar-double-click.js'
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import Icon from './Icon.svelte'
   import { cn } from '$lib/utils.js'
   import { t } from '$lib/i18n.js'
   import { tabDisplayTitle } from '$lib/studio-tabs.js'
+  import { withShortcut } from '$lib/stores/keybindings.js'
   import * as ContextMenu from '$lib/components/ui/context-menu/index.js'
-  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
+  import SearchableMenu from './SearchableMenu.svelte'
 
   let isTauri = $state(false)
 
@@ -42,6 +43,13 @@
     /** Reset a table tab's view state - search, filters, sort, hidden columns, view mode. */
     onresettable = /** @param {string} _id */ (_id) => {},
     onreopenclosed = () => {},
+    /** Back and forward through the tabs visited, browser-style. Absent: no buttons. */
+    onback = /** @type {(() => void) | null} */ (null),
+    onforward = /** @type {(() => void) | null} */ (null),
+    canback = false,
+    canforward = false,
+    /** Open a new tab, from the + after the last one. Absent: no button. */
+    onnewtab = /** @type {(() => void) | null} */ (null),
     /** Open a fresh query editor - the `+` at the end of the strip. */
     onnewsql = () => {},
     /** Whether the closed-tab stack has anything to reopen. */
@@ -51,7 +59,47 @@
     ondragtabstart = /** @param {string} _id */ (_id) => {},
     ondragtabmove = /** @type {(clientX: number, clientY: number) => void} */ (() => {}),
     ondragtabend = () => {},
+    /** Rename a query editor tab. Absent: no Rename. @type {((id: string, title: string) => void) | null} */
+    onrename = null,
+    /** Bring the sidebar back. Passed only while it is hidden. @type {(() => void) | null} */
+    onshowsidebar = null,
   } = $props()
+
+  // ── Rename a query editor tab in place ─────────────────────────────────────
+  // Every editor tab read "Query Editor", "Query Editor 2"...; a name says
+  // which buffer is which. Double-click the tab or use its menu; Enter or
+  // leaving the field keeps it, Escape puts the old name back.
+  let renamingId = $state(/** @type {string | null} */ (null))
+  let renameValue = $state('')
+  /** @param {any} tab */
+  const canRename = (tab) => !!onrename && tab.kind === 'sql'
+  /** @param {any} tab */
+  function startRename(tab) {
+    if (!canRename(tab)) return
+    renameValue = tabDisplayTitle(tab)
+    renamingId = tab.id
+  }
+  /** @param {boolean} [refocus] back to the tab, after Enter or Escape */
+  function commitRename(refocus = false, keep = true) {
+    const id = renamingId
+    const title = renameValue.trim()
+    renamingId = null
+    // Unchanged: nothing to rename (the field starts on the shown title).
+    const was = id ? tabs.find((t) => t.id === id) : null
+    if (id && title && keep && (!was || title !== tabDisplayTitle(was))) onrename?.(id, title)
+    if (refocus && id) {
+      void tick().then(() => /** @type {HTMLElement | null} */ (document.querySelector(`[data-tab-id="${CSS.escape(id)}"] [role="tab"]`))?.focus())
+    }
+  }
+  /** @param {HTMLInputElement} el */
+  function focusSelect(el) {
+    // Again a moment later: the selection made on mount was collapsed to the
+    // end by the tab re-rendering after the click, so typing appended to the
+    // old name.
+    el.focus()
+    el.select()
+    setTimeout(() => { if (document.activeElement === el) el.select() }, 80)
+  }
 
   /** Titles that tabs from different databases share (two "orders" tables):
    *  those tabs name their database after the title. */
@@ -103,6 +151,7 @@
 
   // Which edges have hidden tabs: those edges fade out instead of cutting a
   // title in half, and only while there is actually more to scroll to.
+  const navBtn = 'inline-flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-40'
   let fadeLeft = $state(false)
   let fadeRight = $state(false)
   function updateFades() {
@@ -206,6 +255,25 @@
   aria-label={$t('tabs.openEditors')}
   ondblclick={handleDragAreaDblClick}
 >
+  {#if onshowsidebar}
+    <!-- With the sidebar hidden, the way back sits where it was, not only in
+         the status bar's far corner. -->
+    <button type="button" class={cn(navBtn, 'shrink-0')} onclick={onshowsidebar} title={withShortcut('Show sidebar', 'view.sidebar')} aria-label="Show sidebar">
+      <Icon name="panel-left-open" class="size-4 shrink-0" />
+    </button>
+  {/if}
+  {#if onback && onforward}
+    <!-- Back and forward through the tabs visited (Linear's ‹ ›). Buttons as
+         well as keys: Mod+[ and Mod+] stand aside inside a code editor. -->
+    <div class="mr-1 flex shrink-0 items-center gap-0.5">
+      <button type="button" class={navBtn} disabled={!canback} onclick={onback} title={withShortcut('Back', 'tab.back')} aria-label="Back">
+        <Icon name="chevron-left" class="size-4 shrink-0" />
+      </button>
+      <button type="button" class={navBtn} disabled={!canforward} onclick={onforward} title={withShortcut('Forward', 'tab.forward')} aria-label="Forward">
+        <Icon name="chevron-right" class="size-4 shrink-0" />
+      </button>
+    </div>
+  {/if}
   <!-- The strip's empty stretch drags the window too (macOS, Windows, Linux):
        only an element that carries the attribute itself starts a drag, and
        this one filled the bar to the right of the last tab. -->
@@ -214,10 +282,13 @@
     data-tauri-drag-region
     class={cn(
       // scroll-px keeps a tab scrolled into view clear of the edge fade.
-      'app-scroll flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto scroll-px-8 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
-      fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,transparent,black_2rem,black_calc(100%-2rem),transparent)]',
-      fadeLeft && !fadeRight && '[mask-image:linear-gradient(to_right,transparent,black_2rem)]',
-      !fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,black_calc(100%-2rem),transparent)]',
+      'app-scroll flex h-full min-w-0 flex-1 items-center gap-0.5 overflow-x-auto scroll-px-10 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden',
+      // Clear for the first 0.75rem, then the ramp: a tab icon cut at the
+      // edge still showed through a fade that started at once, and next to
+      // the back and forward arrows it read as a third arrow.
+      fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,transparent_0.75rem,black_2.25rem,black_calc(100%-2.25rem),transparent_calc(100%-0.75rem))]',
+      fadeLeft && !fadeRight && '[mask-image:linear-gradient(to_right,transparent_0.75rem,black_2.25rem)]',
+      !fadeLeft && fadeRight && '[mask-image:linear-gradient(to_right,black_calc(100%-2.25rem),transparent_calc(100%-0.75rem))]',
     )}
     onscroll={updateFades}
     onwheel={onStripWheel}
@@ -259,6 +330,21 @@
           )}
         >
           <!-- Tab button, font-medium on ALL states to prevent layout shift on activation -->
+          {#if renamingId === tab.id}
+            <input
+              use:focusSelect
+              bind:value={renameValue}
+              aria-label="Tab name"
+              class="no-field-frame my-0.5 ml-1 h-5 min-w-0 flex-1 rounded-sm bg-background px-1.5 text-ui-xs text-foreground outline-none ring-1 ring-ring"
+              onkeydown={(e) => {
+                e.stopPropagation()
+                if (e.key === 'Enter') { e.preventDefault(); commitRename(true) }
+                else if (e.key === 'Escape') { e.preventDefault(); commitRename(true, false) }
+              }}
+              onblur={() => commitRename()}
+              onpointerdown={(e) => e.stopPropagation()}
+            />
+          {:else}
           <button
             type="button"
             role="tab"
@@ -274,10 +360,12 @@
               active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground',
             )}
             onclick={() => { if (_suppressTabClick) { _suppressTabClick = false; return } onselect(tab.id) }}
+            ondblclick={() => startRename(tab)}
           >
             <Icon name={tabIconName} class={cn('size-3.5 shrink-0', active ? 'text-foreground' : 'text-muted-foreground')} />
             <span class="truncate leading-normal">{tabDisplayTitle(tab)}{#if tab.connLabel && clashing.has(tabDisplayTitle(tab))}<span class="text-muted-foreground">{` · ${tab.connLabel}`}</span>{/if}</span>
           </button>
+          {/if}
 
           {#if tab.pinned}
             <!-- Pinned: pin badge replaces close, click to unpin -->
@@ -314,6 +402,12 @@
 
         </div>
     {/each}
+    {#if onnewtab}
+      <!-- Right after the last tab, where the eye already is (Linear's +). -->
+      <button type="button" class={cn(navBtn, 'ml-0.5 shrink-0')} onclick={onnewtab} title={withShortcut('New tab', 'tab.new')} aria-label="New tab">
+        <Icon name="plus" class="size-4 shrink-0" />
+      </button>
+    {/if}
       </ContextMenu.Trigger>
         <ContextMenu.Content class="min-w-52">
           {#if menuTab}
@@ -325,58 +419,64 @@
           <ContextMenu.Item onSelect={() => onpintoggle(tab.id)}>
             {#if tab.pinned}
               <Icon name="pin-off" class="size-3.5 shrink-0" />
-              Unpin Tab
+              Unpin tab
             {:else}
               <Icon name="pin" class="size-3.5 shrink-0" />
-              Pin Tab
+              Pin tab
             {/if}
           </ContextMenu.Item>
           {#if tab.kind === 'table' || tab.kind === 'sql'}
             <ContextMenu.Item onSelect={() => onduplicate(tab.id)}>
               <Icon name="copy" class="size-3.5 shrink-0" />
-              Duplicate Tab
+              Duplicate tab
+            </ContextMenu.Item>
+          {/if}
+          {#if canRename(tab)}
+            <ContextMenu.Item onSelect={() => setTimeout(() => startRename(tab), 0)}>
+              <Icon name="pencil" class="size-3.5 shrink-0" />
+              Rename tab
             </ContextMenu.Item>
           {/if}
           {#if tab.kind === 'table'}
             <ContextMenu.Item onSelect={() => onresettable(tab.id)}>
               <Icon name="rotate-ccw" class="size-3.5 shrink-0" />
-              Reset Table View
+              Reset table view
             </ContextMenu.Item>
           {/if}
           <ContextMenu.Separator />
           <ContextMenu.Item onSelect={() => onclose(tab.id)}>
             <Icon name="x" class="size-3.5 shrink-0" />
-            Close Tab
+            Close tab
             <ContextMenu.Shortcut command="tab.close" />
           </ContextMenu.Item>
           <ContextMenu.Item disabled={!hasOtherClosable} onSelect={() => oncloseothers(tab.id)}>
             <Icon name="circle-slash" class="size-3.5 shrink-0" />
-            Close Other Tabs
+            Close other tabs
           </ContextMenu.Item>
           <ContextMenu.Item
             disabled={leftClosable.length === 0}
             onSelect={() => onclosemany(leftClosable.map((t) => t.id), tab.id)}
           >
             <Icon name="arrow-left-to-line" class="size-3.5 shrink-0" />
-            Close Tabs to Left
+            Close tabs to the left
           </ContextMenu.Item>
           <ContextMenu.Item
             disabled={rightClosable.length === 0}
             onSelect={() => onclosemany(rightClosable.map((t) => t.id), tab.id)}
           >
             <Icon name="arrow-right-to-line" class="size-3.5 shrink-0" />
-            Close Tabs to Right
+            Close tabs to the right
           </ContextMenu.Item>
           <ContextMenu.Separator />
           <ContextMenu.Item disabled={!canreopenclosed} onSelect={onreopenclosed}>
             <Icon name="history" class="size-3.5 shrink-0" />
-            Reopen last tab
+            Reopen closed tab
             <ContextMenu.Shortcut command="tab.reopen" />
           </ContextMenu.Item>
           <ContextMenu.Separator />
           <ContextMenu.Item onSelect={oncloseall}>
             <Icon name="x" class="size-3.5 shrink-0" />
-            Close All Tabs
+            Close all tabs
             <ContextMenu.Shortcut command="tab.closeAll" />
           </ContextMenu.Item>
           {/if}
@@ -387,25 +487,50 @@
        fade showed nothing at all, so the strip looked complete. While any are
        hidden, this lists every open tab. -->
   {#if fadeLeft || fadeRight}
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger
-        class="ml-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground"
-        title="All open tabs"
-        aria-label="All open tabs ({tabs.length})"
-      >
-        <Icon name="chevron-down" class="size-3.5 shrink-0" />
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Content align="end" class="app-scroll max-h-[min(70vh,28rem)] w-80 max-w-[calc(100vw-2rem)] overflow-y-auto">
-        {#each tabs as tab (tab.id)}
-          <DropdownMenu.Item onSelect={() => onselect(tab.id)}>
-            <Icon name={tabIcon(tab)} class="size-3.5 shrink-0 text-muted-foreground" />
-            <span data-slot="menu-label" class={cn('min-w-0 flex-1 truncate', tab.id === activeTabId && 'font-medium text-foreground')}>{tabDisplayTitle(tab)}</span>
-            {#if tab.connLabel}<span class="ml-auto max-w-24 shrink-0 truncate text-ui-2xs text-muted-foreground">{tab.connLabel}</span>{/if}
-            {#if tab.id === activeTabId}<Icon name="check" class="size-3.5 shrink-0" />{/if}
-          </DropdownMenu.Item>
-        {/each}
-      </DropdownMenu.Content>
-    </DropdownMenu.Root>
+    <!-- Searchable, and open on the tab in front: with twenty-odd tabs the
+         current one was at the bottom of a plain list, out of sight. -->
+    <SearchableMenu
+      align="end"
+      contentClass="w-80 max-w-[calc(100vw-2rem)]"
+      placeholder="Search open tabs…"
+      empty="No tab matches"
+      items={tabs.map((tab) => ({ value: tab.id, label: tabDisplayTitle(tab), keywords: tab.connLabel ? [tab.connLabel] : [], tab }))}
+      current={activeTabId ?? undefined}
+      onselect={(it) => onselect(it.value)}
+    >
+      {#snippet trigger(props)}
+        <button
+          {...props}
+          type="button"
+          class="ml-0.5 inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-sidebar-accent/50 hover:text-foreground"
+          title="All open tabs"
+          aria-label="All open tabs ({tabs.length})"
+        >
+          <Icon name="chevron-down" class="size-3.5 shrink-0" />
+        </button>
+      {/snippet}
+      {#snippet item(it)}
+        <Icon name={tabIcon(it.tab)} class="size-3.5 shrink-0 text-muted-foreground" />
+        <span class={cn('min-w-0 flex-1 truncate', it.value === activeTabId && 'font-medium text-foreground')}>{it.label}</span>
+        {#if it.tab.connLabel}<span class="ml-auto max-w-24 shrink-0 truncate text-ui-2xs text-muted-foreground">{it.tab.connLabel}</span>{/if}
+        {#if it.value === activeTabId}<Icon name="check" class="size-3.5 shrink-0" />{/if}
+        <!-- Close from the list, on the row under the pointer or the keyboard:
+             with twenty tabs open the one to close is usually off the strip.
+             Kept 14px in from the edge: GTK's overlay scrollbar takes the
+             pointer over the list's last ~20px, and a button there could
+             not be clicked. -->
+        {#if !it.tab.pinned}
+          <button
+            type="button"
+            aria-label="Close {it.label}"
+            title="Close tab"
+            class="hit-area mr-4 inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity hover:bg-muted hover:text-foreground group-hover/smrow:opacity-100 group-data-selected/smrow:opacity-100 focus-visible:opacity-100"
+            onpointerdown={(e) => e.stopPropagation()}
+            onclick={(e) => { e.preventDefault(); e.stopPropagation(); onclose(it.value) }}
+          ><Icon name="x" class="size-3 shrink-0" /></button>
+        {/if}
+      {/snippet}
+    </SearchableMenu>
   {/if}
   <!-- A grab handle that is always there, even with the strip full of tabs. -->
   <div class="h-full w-10 shrink-0" data-tauri-drag-region aria-hidden="true"></div>

@@ -1,5 +1,6 @@
 <script>
   import { tx } from '$lib/i18n.js'
+  import Icon from './Icon.svelte'
   // The new-tab page: which database this is, the search that starts
   // everything (Cmd/Ctrl+K), and a short list of where to go next. Split out of
   // StudioShell; it takes what it shows and calls back for what it opens.
@@ -37,7 +38,22 @@
     onsearch = () => {},
     onextensions = () => {},
     onconnect = () => {},
+    /** The tables opened last on this connection, newest first. @type {{ schema: string, table: string, tableKind?: string, openedAt: number }[]} */
+    recent = [],
+    /** @type {(r: { schema: string, table: string }) => void} */
+    onopenrecent = () => {},
   } = $props()
+
+  /** "5m", "2h", "3d": the sidebar's own spelling. @param {number} ts */
+  function ago(ts) {
+    if (!ts) return ''
+    const s = Math.max(0, (Date.now() - ts) / 1000)
+    if (s < 3600) return `${Math.max(1, Math.round(s / 60))}m`
+    if (s < 86400) return `${Math.round(s / 3600)}h`
+    if (s < 86400 * 14) return `${Math.round(s / 86400)}d`
+    return `${Math.round(s / (86400 * 7))}w`
+  }
+  const recentShown = $derived(isKV ? [] : recent.slice(0, 5))
 
   /**
    * The shell the terminal dock starts for this engine (db/terminal.rs
@@ -67,7 +83,8 @@
   // and mono webfonts have no U+21E7, so "Ctrl⇧E" fell back mid-word.
   const isMac = IS_MAC
   const mod = isMac ? '⌘' : 'Ctrl'
-  const shiftKey = isMac ? '⇧' : 'Shift'
+  // The keycap glyph on every platform, as the shortcut reference and menus draw it.
+  const shiftKey = '⇧'
 
   /** `Postgres · prod-db.c1uwsk8m01gi.ap-south-1.rds.amazonaws.com` → `Postgres · prod-db`: the host's first label says enough. @param {string} w */
   function shortWhere(w) {
@@ -83,16 +100,17 @@
      version with a description and printed chord was most of the page,
      and in the monospace font its descriptions truncated anyway. The
      description and the shortcut are in the tooltip. -->
-{#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[], tone?: 'info' | 'success' | 'primary' | 'warning' }} */ opts = {})}
+{#snippet row(/** @type {any} */ Icon, /** @type {string} */ label, /** @type {string} */ desc, /** @type {() => void} */ onclick, /** @type {{ pro?: boolean, keys?: string[] }} */ opts = {})}
   {@const locked = !!opts.pro && !$hasPro}
-  {@const toneCls = { info: 'text-info', success: 'text-success', primary: 'text-primary', warning: 'text-warning' }[opts.tone ?? 'info']}
   {@const chordText = opts.keys ? ` (${opts.keys.join(isMac ? '' : '+')})` : ''}
-  <!-- A simple action: coloured icon and label; what it does and its
-       chord are in the tooltip, the chord also shows on hover. -->
+  <!-- A simple action: grey icon and label; what it does and its chord
+       are in the tooltip, the chord also shows on hover. The icons were six
+       colours that meant nothing, so the eye had six places to land and no
+       reason to pick one. Grey until hovered, colour stays for state. -->
   <button
     type="button"
     {onclick}
-    title={locked ? `${label} - ${desc} - Pro` : `${label} - ${desc}${chordText}`}
+    title={locked ? `${desc}. Needs Pro.` : `${desc}${chordText}`}
     class={cn(
       // flex-wrap in a one-line-high, clipped box: a chord that does not
       // fit beside the label wraps out of sight instead of squeezing
@@ -101,7 +119,7 @@
       locked && "cursor-not-allowed",
     )}
   >
-    <Icon class={cn('size-4 shrink-0', toneCls)} />
+    <Icon class="size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground group-focus-visible:text-foreground" />
     <span class="flex h-9 min-w-0 items-center truncate text-ui-sm">{label}</span>
     {#if locked}<Lock class="size-3 shrink-0 text-warning" aria-label="Pro feature" />{/if}
     <!-- In the layout only while it shows: hidden but laid out, the chord
@@ -140,9 +158,9 @@
     <!-- Identity: which database this tab is on, as a header row that
          shares the block's left edge with everything below it. -->
     <div class="flex min-w-0 items-center gap-3">
-      <span class="flex size-10 shrink-0 items-center justify-center rounded-lg border border-border/60 bg-card">
-        <DbIcon id={engineId(connection)} class="size-5 shrink-0" />
-      </span>
+      <!-- The engine's glyph alone: a bordered tile around it was the one
+           boxed icon on the page, and the box said nothing the glyph did not. -->
+      <DbIcon id={engineId(connection)} class="ml-2.5 size-6 shrink-0" />
       <div class="flex min-w-0 flex-col gap-0.5">
         <h1 class="truncate text-ui-xl font-semibold tracking-[-0.01em] text-foreground">{welcomeTitle}</h1>
         <p class="truncate text-ui-xs text-muted-foreground" title={welcomeWhere}>{shortWhere(welcomeWhere)}</p>
@@ -151,7 +169,7 @@
     <!-- The one main control: everything starts in ⌘K. -->
     <button
       type="button"
-      class="flex h-11 w-full cursor-pointer items-center gap-3 rounded-lg bg-muted/40 px-3.5 text-left text-ui-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+      class="flex h-11 w-full cursor-pointer items-center gap-2.5 rounded-lg bg-muted/40 px-2.5 text-left text-ui-sm text-muted-foreground transition-colors duration-150 hover:bg-muted/70 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
       onclick={() => onpalette('root')}
     >
       <Search class="size-4 shrink-0" />
@@ -163,28 +181,50 @@
   <!-- Six actions, two rows of three (one column when the pane is narrow). -->
   <div class="grid w-full grid-cols-1 gap-1 @md/welcome:grid-cols-3">
     {#if isDoc}
-      {@render row(Database, $tx('tile.Browse', "Browse"), $tx('tile.Browse.desc', "Open collections and edit documents"), ondocs, { tone: 'info' })}
-      {@render row(Terminal, $tx('tile.Query', "Query"), $tx('tile.Query.desc', "Run queries in the SQL editor"), onsql, { keys: [mod, shiftKey, "S"], tone: 'success' })}
+      {@render row(Database, $tx('tile.Browse', "Browse"), $tx('tile.Browse.desc', "Open collections and edit documents"), ondocs, {})}
+      {@render row(Terminal, $tx('tile.Query', "Query"), $tx('tile.Query.desc', "Run queries in the SQL editor"), onsql, { keys: [mod, shiftKey, "S"] })}
     {:else if isDynamo}
-      {@render row(Database, $tx('tile.Tables', "Tables"), $tx('tile.Tables.desc', "Scan, query and edit items"), ondynamo, { tone: 'info' })}
-      {@render row(Terminal, $tx('tile.PartiQL', "PartiQL"), $tx('tile.PartiQL.desc', "Query in the SQL editor"), onsql, { keys: [mod, shiftKey, "S"], tone: 'success' })}
+      {@render row(Database, $tx('tile.Tables', "Tables"), $tx('tile.Tables.desc', "Scan, query and edit items"), ondynamo, {})}
+      {@render row(Terminal, $tx('tile.PartiQL', "PartiQL"), $tx('tile.PartiQL.desc', "Query in the SQL editor"), onsql, { keys: [mod, shiftKey, "S"] })}
     {:else if isRedis}
-      {@render row(KeyRound, $tx('tile.Keyspace', "Keyspace"), $tx('tile.Keyspace.desc', "Browse keys and values"), onredis, { tone: 'info' })}
+      {@render row(KeyRound, $tx('tile.Keyspace', "Keyspace"), $tx('tile.Keyspace.desc', "Browse keys and values"), onredis, {})}
     {:else}
-      {@render row(Terminal, $tx('tile.SQL', "SQL"), $tx('tile.SQL.desc', "Write and run a query"), onsql, { keys: [mod, shiftKey, "S"], tone: 'info' })}
+      {@render row(Terminal, $tx('tile.SQL', "SQL"), $tx('tile.SQL.desc', "Write and run a query"), onsql, { keys: [mod, shiftKey, "S"] })}
     {/if}
     {#if connection && !isDynamo && !isDoc}
-      {@render row(SquareTerminal, $tx('tile.Terminal', "Terminal"), terminalClient ? $tx('tile.Terminal.client', "{client}, docked below", { client: terminalClient }) : $tx('tile.Terminal.builtin', "Built-in SQL prompt, docked below"), onterminal, { keys: [IS_MAC ? "⌘" : "Ctrl", "J"], tone: 'success' })}
+      {@render row(SquareTerminal, $tx('tile.Terminal', "Terminal"), terminalClient ? $tx('tile.Terminal.client', "{client}, docked below", { client: terminalClient }) : $tx('tile.Terminal.builtin', "Built-in SQL prompt, docked below"), onterminal, { keys: [IS_MAC ? "⌘" : "Ctrl", "J"] })}
     {/if}
-    {@render row(Sparkles, $tx('tile.AI', "AI"), $tx('tile.AI.desc', "Ask about this database"), onai, { pro: true, keys: [mod, "I"], tone: 'primary' })}
+    {@render row(Sparkles, $tx('tile.AI', "AI"), $tx('tile.AI.desc', "Ask about this database"), onai, { pro: true, keys: [mod, "I"] })}
     {#if connection && !isKV}
-      {@render row(Search, $tx('tile.Search', "Search"), $tx('tile.Search.desc', "Find in database: search every table at once"), onsearch, { keys: [mod, shiftKey, "G"], tone: 'warning' })}
+      {@render row(Search, $tx('tile.Search', "Search"), $tx('tile.Search.desc', "Find in database: search every table at once"), onsearch, { keys: [mod, shiftKey, "G"] })}
     {/if}
-    {@render row(Blocks, $tx('tile.Extensions', "Extensions"), $tx('tile.Extensions.desc', "Add and manage extensions"), onextensions, { pro: true, keys: [mod, shiftKey, "X"], tone: 'info' })}
-    {@render row(Database, $tx('tile.Connect', "Connect"), $tx('tile.Connect.desc', "Switch or add a connection"), onconnect, { keys: [mod, shiftKey, "C"], tone: 'success' })}
+    {@render row(Blocks, $tx('tile.Extensions', "Extensions"), $tx('tile.Extensions.desc', "Add and manage extensions"), onextensions, { pro: true, keys: [mod, shiftKey, "X"] })}
+    {@render row(Database, $tx('tile.Connect', "Connect"), $tx('tile.Connect.desc', "Switch or add a connection"), onconnect, { keys: [mod, shiftKey, "C"] })}
   </div>
 
-  <button type="button" class="inline-flex h-7 items-center gap-1.5 self-start rounded-md px-1 text-ui-xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => onpalette('pages')}>
+  {#if recentShown.length}
+    <!-- Pick up where you left off: the likeliest next step is a table you
+         just had open, one click away instead of a search. -->
+    <section class="flex flex-col gap-1" aria-label="Recent tables">
+      <h2 class="px-2.5 text-ui-xs font-medium text-muted-foreground">{$tx('tile.recent', 'Recent')}</h2>
+      <div class="flex flex-col">
+        {#each recentShown as r (`${r.schema}.${r.table}`)}
+          <button
+            type="button"
+            class="group flex h-8 min-w-0 items-center gap-2.5 rounded-md px-2.5 text-left text-ui-sm text-muted-foreground outline-none hover:bg-accent/50 hover:text-foreground focus-visible:outline-2 focus-visible:outline-ring"
+            onclick={() => onopenrecent(r)}
+          >
+            <Icon name={r.tableKind === 'view' || r.tableKind === 'materialized_view' ? 'eye' : 'table-2'} class="size-4 shrink-0 text-muted-foreground group-hover:text-foreground" />
+            <span class="min-w-0 truncate text-foreground">{r.table}</span>
+            <span class="min-w-0 shrink truncate text-ui-xs text-muted-foreground">{r.schema}</span>
+            <span class="ml-auto shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(r.openedAt)}</span>
+          </button>
+        {/each}
+      </div>
+    </section>
+  {/if}
+
+  <button type="button" class="inline-flex h-7 items-center gap-1.5 self-start rounded-md px-2.5 text-ui-xs text-muted-foreground transition-colors hover:text-foreground" onclick={() => onpalette('pages')}>
     {$tx('tile.allPages', 'Browse all pages')} {@render chord([mod, shiftKey, 'P'])}
   </button>
   </div>

@@ -5,7 +5,7 @@
   import { spannerIsPg } from '$lib/sql-ident.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
-  import { panelMotionOff, slidePanel } from '$lib/panel-motion.js'
+  import { panelMotionOff, slidePanel, openPanel, closePanel, beginPanelResize, endPanelResize } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
   import { traceInteraction, tracePoint, traceMark } from '$lib/perf.js'
   import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, convexAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost } from '$lib/doc-adapters.js'
@@ -23,7 +23,7 @@
   import FileCode2 from '@lucide/svelte/icons/file-code-2'
   import Terminal from '@lucide/svelte/icons/terminal'
   import LayoutTemplate from '@lucide/svelte/icons/layout-template'
-  import { cn, errorText } from '$lib/utils.js'
+  import { cn, errorText, connectFailureText } from '$lib/utils.js'
   import Command from '@lucide/svelte/icons/command'
   import Keyboard from '@lucide/svelte/icons/keyboard'
   import Code2 from '@lucide/svelte/icons/code-2'
@@ -43,6 +43,7 @@
   import { IS_MAC } from '$lib/shortcuts.js'
   import { isTypingTarget } from '$lib/focus-search.js'
   import { slashFocusTarget } from '$lib/slash-focus.js'
+  import { offerUndo } from '$lib/undo-toast.js'
   import QuitHint from './QuitHint.svelte'
   import { appRelationColumns, appFkAutoExpandJson, cycleTheme, restorePreviousTheme, isCurrentThemeDark, loadSettings, appPaginationMode, appVimMode, appAutoSaveQueries, appStreamResults, appSqlUndo, appSqlEditor, appAiInTab, increaseZoom, decreaseZoom, resetZoom, updateSettings } from '$lib/stores/settings.js'
   import { requireUnlock } from '$lib/stores/app-lock.js'
@@ -479,6 +480,8 @@
   async function pingNow() {
     if (!connection) return
     const t0 = performance.now()
+    // Same as the heartbeat: a ping still out after 3 seconds clears the old reading.
+    const stale = setTimeout(() => { dbLatencyMs = null }, 3_000)
     try {
       await pingConnection()
       dbLatencyMs = Math.round(performance.now() - t0)
@@ -486,6 +489,8 @@
     } catch {
       if (!connectionLost) connectionLost = true
       void silentReconnect()
+    } finally {
+      clearTimeout(stale)
     }
   }
   /**
@@ -689,6 +694,7 @@
   let connectionModalEngine = $state('')
   /** A saved connection the dialog opens into its form (sidebar Edit…). */
   let connectionModalEditId = $state('')
+  let connectionModalNew = $state(false)
   /** A connection handed over by a stroke:// link or the command line (launch.rs). */
   let connectionModalUri = $state('')
   let connectionModalName = $state('')
@@ -1502,6 +1508,8 @@
   let ormSchemaEverOpened = $state(false)
   /** @type {{ focusEditor: () => void, openQuery?: (content: string) => void } | null} */
   let sqlConsoleRef = $state(null)
+  /** @type {any} */
+  let ormRunnerRef = $state(null)
 
   // ── Search options (match case / whole word / regex) ──────────────────────
   /** @type {import('$lib/search-options.js').SearchOptions} */
@@ -1606,11 +1614,32 @@
     void loadRows()
   }
 
-  /** @param {string} id */
+  /** No confirm: it goes at once and the toast offers Undo. @param {string} id */
   function deleteSavedView(id) {
+    const index = savedTableViews.findIndex((v) => v.id === id)
+    if (index < 0) return
+    const view = savedTableViews[index]
+    const scope = { conn: persistConnectionId, schema: activeSchema, table: activeTable }
     savedTableViews = savedTableViews.filter((v) => v.id !== id)
     if (activeTableViewId === id) activeTableViewId = null
     if (activeTable) saveTableViews(persistConnectionId, activeSchema, activeTable, savedTableViews)
+    if (!scope.table) return
+    toast.message('Saved view deleted', {
+      description: view.name,
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          const here = persistConnectionId === scope.conn && activeSchema === scope.schema && activeTable === scope.table
+          // Moved on to another table since: put it back in that table's list.
+          const list = here ? savedTableViews : loadTableViews(scope.conn, scope.schema, scope.table)
+          if (list.some((v) => v.id === id)) return
+          const next = [...list.slice(0, index), view, ...list.slice(index)]
+          if (here) savedTableViews = next
+          saveTableViews(scope.conn, scope.schema, scope.table, next)
+        },
+      },
+    })
   }
 
   /**
@@ -1771,9 +1800,33 @@
 
   // Auto-focus the SQL editor whenever the SQL tab becomes active. Uses whenRefReady
   // so focus still lands on the first open while the lazy SqlConsole chunk mounts.
+  // After the tab's first paint, not inside the flush that shows it: on WebKit
+  // CodeMirror cannot trust `preventScroll`, so its focus() reads scrollTop on
+  // every ancestor, and the first read forced a layout of the tab that had only
+  // just been un-hidden. That held the switch to the editor ~45ms (dev) before
+  // anything painted; after the paint the layout is done and the reads are free.
   $effect(() => {
     if (activeTab?.kind !== 'sql') return
-    whenRefReady(() => sqlConsoleRef, (r) => { if (activeTab?.kind === 'sql') r.focusEditor?.() })
+    let raf = 0, timer = 0
+    raf = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        whenRefReady(() => sqlConsoleRef, (r) => { if (activeTab?.kind === 'sql') r.focusEditor?.() })
+      }, 0)
+    })
+    return () => { cancelAnimationFrame(raf); clearTimeout(timer) }
+  })
+
+  // The ORM runner the same way: it opened with the caret nowhere, so the
+  // first keys typed went to the page.
+  $effect(() => {
+    if (activeTab?.kind !== 'orm') return
+    let raf = 0, timer = 0
+    raf = requestAnimationFrame(() => {
+      timer = setTimeout(() => {
+        whenRefReady(() => ormRunnerRef, (r) => { if (activeTab?.kind === 'orm') r.focusEditor?.() })
+      }, 0)
+    })
+    return () => { cancelAnimationFrame(raf); clearTimeout(timer) }
   })
 
   $effect(() => {
@@ -2097,7 +2150,7 @@
   /** @type {() => void | Promise<void>} */
   let applyEdits = $state(() => {})
   /** @type {() => void} */
-  let resetEdits = $state(() => {})
+  let resetEdits = $state(/** @type {(opts?: { undoable?: boolean }) => void} */ (() => {}))
   /** Copy the grid's staged changes as SQL (bound from DataTable). */
   let copyEditsSql = $state(() => {})
   /** Bound from DataTable - stages the selected rows for deletion (red diff). */
@@ -2408,6 +2461,9 @@
   let _windowLoaded = new Set()
   /** @type {Set<number>} */
   let _windowFetching = new Set()
+  /** Windows in flight to the database, not read from the mirror. Only these
+   *  are slow enough for fillVisibleGap to race. @type {Set<number>} */
+  let _windowRemote = new Set()
   /** Windows wanted but not yet started, nearest-to-viewport first. @type {number[]} */
   let _windowQueue = []
   let _windowInFlight = 0
@@ -2509,6 +2565,25 @@ let rowSearch = $state('')
   /** Cancel handle of the run in flight per tab (`Stop` targets just that query). @type {Map<string, string>} */
   const _sqlQueryIdByTab = new Map()
   let _sqlRunSeq = 0
+  /**
+   * Runs that Stop can let go of on this side. Stop asks the database to
+   * cancel, but when the database is the thing that stopped answering (the
+   * network dropped mid-query) the cancel goes unanswered too, and the run
+   * spun on "Stopping" for minutes. A run is raced against this, and Stop
+   * settles it if the server has not after a few seconds.
+   * @type {Map<string, (err: Error) => void>}
+   */
+  const _sqlAbandon = new Map()
+  /** @template T @param {string} queryId @param {Promise<T>} work @returns {Promise<T>} */
+  function abandonable(queryId, work) {
+    const gaveUp = new Promise((_, reject) => _sqlAbandon.set(queryId, reject))
+    return /** @type {Promise<T>} */ (Promise.race([work, gaveUp])).finally(() => _sqlAbandon.delete(queryId))
+  }
+  /** Stop pressed on a run: give the server 3 seconds to cancel it, then let it go. @param {string | null | undefined} queryId */
+  function abandonSqlRunSoon(queryId) {
+    if (!queryId) return
+    setTimeout(() => _sqlAbandon.get(queryId)?.(new Error('Query cancelled. The database did not answer, so it may still finish there.')), 3000)
+  }
   /** Cancel handle for the tab on screen, handed to SqlConsole's Stop button. */
   const activeSqlQueryId = $derived.by(() => {
     void _busyTick
@@ -2729,7 +2804,11 @@ let rowSearch = $state('')
       try {
         // Timed: the status bar shows the round trip, so a slow link is visible.
         const t0 = performance.now()
-        await pingConnection()
+        // A ping that has not come back in 3 seconds clears the last reading,
+        // so the bar pulses "checking" instead of still saying 2ms while the
+        // database has stopped answering.
+        const stale = setTimeout(() => { dbLatencyMs = null }, 3_000)
+        try { await pingConnection() } finally { clearTimeout(stale) }
         dbLatencyMs = Math.round(performance.now() - t0)
         if (connectionLost) { connectionLost = false; error = '' }
       } catch {
@@ -3673,12 +3752,13 @@ let rowSearch = $state('')
     // sidebar's filter used to take the key on this page.
     if (activeTab?.kind === 'erd') { e.preventDefault(); void erdTabPage?.focusSearch?.(); return }
     if (activeTab?.kind !== 'table' || !activeTable) {
-      // A page with no search of its own finds in the sidebar. The sidebar's
-      // listener meant to do that, but this hotkey marks the key handled first,
-      // so it never ran. The schema page and the SQL tab keep theirs.
+      // The page's own search, found as `/` finds it; a page with none finds
+      // in the sidebar. The sidebar filter took the key on every page with a
+      // search box but no handler here (activity log, extensions, shortcuts).
+      // The schema page and the SQL tab keep theirs.
       if (activeTab?.kind === 'schema' || activeTab?.kind === 'sql') return
-      const filter = document.querySelector('[data-sidebar-filter]')
-      if (filter instanceof HTMLInputElement && filter.offsetParent) { e.preventDefault(); filter.focus(); filter.select() }
+      const target = slashFocusTarget()
+      if (target instanceof HTMLInputElement) { e.preventDefault(); target.focus(); target.select() }
       return
     }
     e.preventDefault()
@@ -3767,14 +3847,19 @@ let rowSearch = $state('')
   // Matching the modifier per platform rather than accepting either one matters
   // on macOS: Ctrl+B is the emacs "move backward" binding that text fields there
   // still honour, and swallowing it would break caret movement in every input.
+  /** A dialog is up (the command menu, Settings, a confirm): tab keys leave the tabs behind it alone. */
+  function dialogOpen() {
+    return commandOpen || showSettingsModal || showShortcutsModal || !!document.querySelector('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]')
+  }
   function onWindowKeydownCapture(/** @type {KeyboardEvent} */ e) {
+    if (onTabHistoryKey(e)) return
     // Ctrl+Tab / Ctrl+Shift+Tab cycle tabs on every platform - see the note
     // above the ⌘B block for why this is Ctrl rather than Mod, and why it is
     // captured on window rather than registered as a hotkey. Shift only picks
     // the direction, so both directions are one binding and cannot drift apart.
     const tabStep = matchesCommand(e, 'tab.next') ? 1 : matchesCommand(e, 'tab.prev') ? -1 : 0
     if (tabStep) {
-      if (!connection || tabs.length < 2) return
+      if (!connection || tabs.length < 2 || dialogOpen()) return
       e.preventDefault()
       e.stopPropagation()
       cycleTab(tabStep)
@@ -3801,6 +3886,93 @@ let rowSearch = $state('')
     e.preventDefault()
     toggleStatusBar()
   })
+
+  // ── Tab history: back and forward, browser-style ─────────────────────────
+  // Every switch records the tab it left. Back returns to it, Forward undoes a
+  // Back; a new switch after going back drops the forward list, as a browser
+  // does. Closed tabs are skipped. The keys are Mod+[ and Mod+], which a code
+  // editor keeps for outdent and indent: with focus in one they stand aside.
+  /** @type {string[]} */
+  let _tabBack = $state([])
+  /** @type {string[]} */
+  let _tabFwd = $state([])
+  /** The tab a Back or Forward is moving to: arriving there is not a new visit. */
+  let _tabNavTarget = /** @type {string | null} */ (null)
+  let _tabPrev = /** @type {string | null} */ (null)
+  $effect(() => {
+    const id = activeTabId
+    untrack(() => {
+      if (id && _tabPrev && id !== _tabPrev) {
+        if (id === _tabNavTarget) _tabNavTarget = null
+        else {
+          _tabBack.push(_tabPrev)
+          if (_tabBack.length > 50) _tabBack.shift()
+          _tabFwd = []
+        }
+      }
+      _tabPrev = id
+      // Arriving on a tab starts it untouched, even if I worked in its editor before.
+      _engagedEditor = null
+      // Recent tables on the new tab page are the ones I looked at last, not the
+      // ones I opened first: going back to a table already open moves it up too.
+      const t = id ? tabs.find((x) => x.id === id) : null
+      if (t?.kind === 'table' && t.state?.table && persistConnectionId) {
+        const top = recentTabs[0]
+        if (!top || top.table !== t.state.table || top.schema !== t.state.schema || Date.now() - top.openedAt > 60_000) {
+          pushRecentTab(persistConnectionId, { schema: t.state.schema, table: t.state.table, tableKind: t.state.tableKind ?? 'table' })
+          refreshRecentTabs()
+        }
+      }
+    })
+  })
+  /** @param {-1 | 1} dir @returns {boolean} whether it moved */
+  function goTabHistory(dir) {
+    const from = dir < 0 ? _tabBack : _tabFwd
+    const to = dir < 0 ? _tabFwd : _tabBack
+    while (from.length) {
+      const id = /** @type {string} */ (from.pop())
+      if (id === activeTabId || !tabs.some((t) => t.id === id)) continue
+      if (activeTabId) to.push(activeTabId)
+      _tabNavTarget = id
+      void activateTab(id)
+      return true
+    }
+    return false
+  }
+  // A code editor keeps Mod+[ and Mod+] for outdent and indent, but only once
+  // I am working in it: a click or a keystroke there. A page that puts the
+  // caret in its editor on its own (the SQL editor, an empty JSON viewer)
+  // has not been touched yet, so Back and Forward still walk the tabs.
+  /** @type {Element | null} */
+  let _engagedEditor = null
+  /** @param {Event} e */
+  function noteEditorEngaged(e) {
+    _engagedEditor = e.target instanceof Element ? e.target.closest('.cm-editor') : null
+  }
+  /** @param {KeyboardEvent} e @returns {boolean} whether it handled the key */
+  function onTabHistoryKey(e) {
+    const dir = matchesCommand(e, 'tab.back') ? -1 : matchesCommand(e, 'tab.forward') ? 1 : 0
+    if (!dir) {
+      // Typing engages; a shortcut pressed with focus in the editor does not.
+      if (!e.ctrlKey && !e.metaKey && !['Shift', 'Control', 'Alt', 'Meta'].includes(e.key)) noteEditorEngaged(e)
+      return false
+    }
+    if (!connection || aiMode || showConnectionModal) return false
+    // Not behind an open dialog (the command menu, Settings): the tabs would
+    // change under it.
+    if (dialogOpen()) return false
+    const editor = e.target instanceof Element ? e.target.closest('.cm-editor') : null
+    if (editor && editor === _engagedEditor) return false
+    if (!goTabHistory(dir)) return false
+    e.preventDefault()
+    e.stopPropagation()
+    return true
+  }
+
+  /** A query editor tab's own name (TabBar). @param {string} id @param {string} title */
+  function renameTab(id, title) {
+    tabs = tabs.map((t) => (t.id === id ? { ...t, title, renamed: true } : t))
+  }
 
   // Reopen the most recently closed tab (browser-style).
   createCommandHotkey('tab.reopen', (e) => {
@@ -4100,6 +4272,34 @@ let rowSearch = $state('')
     })
   }
 
+  /** A letter typed on the New tab page, for the command menu to open with. */
+  let commandSeed = $state('')
+  // The New tab page is a launcher: typing on it starts a search, as its
+  // search bar says, instead of the letters going nowhere. Only with nothing
+  // focused that takes text, and not for the keys that mean something on
+  // their own here (/ focuses a search, ? lists the shortcuts, Space).
+  $effect(() => {
+    /** @param {KeyboardEvent} e */
+    const onKey = (e) => {
+      if (activeTab?.kind !== 'welcome' || commandOpen || e.defaultPrevented || e.isComposing) return
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || '/? '.includes(e.key)) return
+      const el = document.activeElement
+      if (isTypingTarget(el) || (el && el !== document.body && !el.closest('[data-studio-region="main"]'))) return
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return
+      e.preventDefault()
+      commandSeed = e.key
+      commandPage = 'root'
+      commandOpen = true
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
+  /** Run `fn` once the command menu has closed and returned focus. @param {() => void} fn */
+  function afterPalette(fn) {
+    requestAnimationFrame(() => requestAnimationFrame(fn))
+  }
+
   /** Flip the window in or out of full screen. Shared by F11 and the View menu. */
   async function toggleFullscreen() {
     try {
@@ -4136,7 +4336,7 @@ let rowSearch = $state('')
     findInDatabase: () => openSearchTab(),
     applyEdits: () => void applyEdits(),
     copyEditsSql: () => void copyEditsSql(),
-    resetEdits: () => resetEdits(),
+    resetEdits: () => resetEdits({ undoable: true }),
 
     toggleSidebar,
     toggleChat: () => { if (aiMode) exitAiMode(); toggleAiSidebar() },
@@ -4226,7 +4426,7 @@ let rowSearch = $state('')
       // because someone reached for that is not a trade worth making.
       if (isTypingTarget(document.activeElement)) return
       e.preventDefault()
-      resetEdits()
+      resetEdits({ undoable: true })
     })
   }
 
@@ -4306,13 +4506,13 @@ let rowSearch = $state('')
           { key: 't', label: 'Terminal', run: () => { if (aiMode) exitAiMode(); openTerminalTab() } },
           { key: 'e', label: 'Schema diagram', run: () => openErdTab() },
           { key: 'b', label: 'Show or hide sidebar', run: () => toggleSidebar() },
-          { key: 'l', label: 'Logs', run: () => openLogsTab() },
+          { key: 'l', label: 'Activity log', run: () => openLogsTab() },
           { key: 'w', label: 'Close tab', run: () => { if (activeTabId) void closeTab(activeTabId) } },
           { key: 'r', label: 'Reopen closed tab', run: () => reopenLastClosedTab() },
         ]
       : []),
     { key: 'c', label: 'Connections', run: () => { showConnectionModal = true } },
-    { key: 'k', label: 'Command palette', run: () => { commandOpen = true } },
+    { key: 'k', label: 'Command menu', run: () => { commandOpen = true } },
     { key: ',', label: 'Settings', run: () => { showSettingsModal = true } },
     { key: '/', label: 'All shortcuts', run: () => openShortcuts() },
   ])
@@ -4447,6 +4647,10 @@ let rowSearch = $state('')
   })
 
   createHotkey('Escape', (e) => {
+    // A dialog opened from inside another (Add a theme, over Settings) closes
+    // itself; closing the one under it as well took both down at once.
+    if (e.defaultPrevented) return
+    if (document.querySelectorAll('[role="dialog"][data-state="open"], [role="alertdialog"][data-state="open"]').length > 1) return
     // Close dialogs in reverse z-index order (topmost first).
     // Each branch prevents lower-priority handlers from firing.
     if (commandOpen)           { e.preventDefault(); commandOpen = false;           return }
@@ -4836,12 +5040,37 @@ let rowSearch = $state('')
     editingCell = null
   }
 
-  function toggleSidebar() {
+  /** @type {HTMLDivElement | null} */
+  let sidebarDockEl = $state(null)
+  let sidebarSliding = false
+  async function toggleSidebar() {
     if (!connection) return
     // In AI mode the window's one sidebar button shows and hides the chat list.
     if (aiMode) { aiFullRef?.toggleChats?.(); return }
-    sidebarOpen = !sidebarOpen
-    saveLayout({ navSidebarOpen: sidebarOpen })
+    // One slide at a time: a second press mid-slide would start from a width
+    // the first one is still animating.
+    if (sidebarSliding) return
+    const open = !sidebarOpen
+    saveLayout({ navSidebarOpen: open })
+    if (panelMotionOff() || !sidebarDockEl) { sidebarOpen = open; return }
+    // The dock's edge moves and the sidebar inside keeps its width and is
+    // clipped, so it never reflows; the page beside it is told a resize is
+    // under way, so the grid and the terminal refit once, at the end.
+    sidebarSliding = true
+    beginPanelResize('sidebar')
+    try {
+      if (open) {
+        sidebarOpen = true
+        await tick()
+        await openPanel(sidebarDockEl, 'width')
+      } else {
+        await closePanel(sidebarDockEl, 'width')
+        sidebarOpen = false
+      }
+    } finally {
+      endPanelResize()
+      sidebarSliding = false
+    }
   }
 
 
@@ -5094,7 +5323,8 @@ let rowSearch = $state('')
     const kept = loadSqlTabs(cid)
     if (!kept.length) return []
     const added = kept.map((k) => {
-      const tab = createSqlTab(k.sql, k.title)
+      const tab = /** @type {any} */ (createSqlTab(k.sql, k.title))
+      if (/** @type {any} */ (k).renamed) tab.renamed = true
       return k.savedQueryId ? { ...tab, savedQueryId: k.savedQueryId } : tab
     })
     tabs = [...tabs, ...added]
@@ -5768,6 +5998,7 @@ let rowSearch = $state('')
     const closing = tabs[idx]
     if (!(await confirmDiscardTabChanges(closing))) return
     rememberClosedTab(closing)
+    offerReopenIfUnsaved(closing)
     const nextTabs = tabs.filter((t) => t.id !== id)
     // Only tabs the bar shows count: a hidden one can't be the screen you land on.
     if (!nextTabs.some(isGroupable)) {
@@ -5824,15 +6055,39 @@ let rowSearch = $state('')
   }
 
   /** Ctrl/⌘+Shift+T - reopen the most recently closed tab. */
+  /**
+   * A notebook with unsaved changes closes at once, as every tab does, and says
+   * how to get it back: Ctrl+Shift+T did, but nothing said so. Call right after
+   * rememberClosedTab, whose entry the Undo reopens.
+   * @param {any} closing
+   */
+  function offerReopenIfUnsaved(closing) {
+    if (closing?.kind !== 'notebook' || !closing.state?.dirty) return
+    const entry = closedTabStack[closedTabStack.length - 1]
+    const name = closing.state?.notebook?.title || closing.title || 'Untitled notebook'
+    offerUndo(`Closed ${name}`, closing.state?.filePath ? 'Its latest changes are not saved.' : 'It is not saved to a file.', () => reopenClosedEntry(entry))
+  }
+
   function reopenLastClosedTab() {
     const entry = closedTabStack[closedTabStack.length - 1]
-    if (!entry) return
-    closedTabStack = closedTabStack.slice(0, -1)
+    if (entry) reopenClosedEntry(entry)
+  }
+
+  /**
+   * Reopen one closed tab, wherever it sits in the stack: an Undo for one
+   * close must not bring back whatever was closed after it.
+   * @param {any} entry @returns {boolean} false when it is gone already
+   */
+  function reopenClosedEntry(entry) {
+    const at = closedTabStack.lastIndexOf(entry)
+    if (at < 0) return false
+    closedTabStack = closedTabStack.filter((_, i) => i !== at)
     saveActiveTabState()
     dropWelcomeTabs()
     const tab = { ...entry, id: crypto.randomUUID(), pinned: false, state: entry.state ? { ...entry.state } : entry.state }
     tabs = [...tabs, tab]
     void activateTab(tab.id)
+    return true
   }
 
   /** @param {string} id - keep this tab (and pinned tabs), close everything else */
@@ -6042,6 +6297,7 @@ let rowSearch = $state('')
     if (!(await confirmDiscardTabChanges(closing))) return
     // Remember it so Reopen Closed Tab (⌘⇧T) can restore it - mirrors closeTab().
     rememberClosedTab(closing)
+    offerReopenIfUnsaved(closing)
     const nextTabs = tabs.filter((t) => t.id !== id)
     // Only tabs the bar shows count: a hidden one can't be the screen you land on.
     if (!nextTabs.some(isGroupable)) {
@@ -6626,7 +6882,9 @@ let rowSearch = $state('')
       // Dedupe values defensively: enum labels are a set, but a bad introspection
       // join could return repeats, and the schema pages key their {#each} on the
       // value - a duplicate would crash the view (each_key_duplicate).
-      return list.map((e) => ({ name: e.name ?? '', values: [...new Set(e.values ?? [])] }))
+      // usedInTables too: dropping it here made the Enums page call every enum
+      // "unused", including the ones a column was typed with.
+      return list.map((e) => ({ name: e.name ?? '', values: [...new Set(e.values ?? [])], usedInTables: e.usedInTables ?? e.used_in_tables ?? [] }))
     } catch {
       return []
     }
@@ -7327,6 +7585,7 @@ let rowSearch = $state('')
     _windowSeq++
     _windowLoaded = new Set()
     _windowFetching = new Set()
+    _windowRemote = new Set()
     _windowQueue = []
     _windowInFlight = 0
     _windowSlow = false
@@ -7360,6 +7619,7 @@ let rowSearch = $state('')
     _windowSeq++
     _windowLoaded = new Set(s.windowedLoaded ?? [])
     _windowFetching = new Set()
+    _windowRemote = new Set()
     _windowQueue = []
     _windowInFlight = 0
     _windowSlow = false
@@ -7383,6 +7643,7 @@ let rowSearch = $state('')
     _windowSeq++
     _windowLoaded = new Set()
     _windowFetching = new Set()
+    _windowRemote = new Set()
     _windowQueue = []
     _windowInFlight = 0
     _windowSlow = false
@@ -7440,6 +7701,8 @@ let rowSearch = $state('')
   // for.
   /** Where the grid is looking (handleVisibleRange), for a screenful-first fetch. */
   let _visStart = 0
+  /** Row-level scroll direction (1 down, -1 up), for the gap fetch's read-ahead. */
+  let _visDir = 1
   let _visEnd = 0
   /** A window larger than this gets its on-screen rows fetched first on a jump. */
   const VIEWPORT_FIRST_MIN = 1000
@@ -7536,6 +7799,7 @@ let rowSearch = $state('')
         } catch { /* dropped or unreadable: the remote path below */ }
         if (seq !== _windowSeq) return
       }
+      if (!local) _windowRemote.add(w)
       // A jump to rows nothing has loaded near: put the screenful up first. The
       // whole window is 10,000 rows, ~1.5 MB, most of a second over a far
       // link, for the ~30 rows on screen. Those are asked for alone (a few
@@ -7607,6 +7871,7 @@ let rowSearch = $state('')
       }
     } finally {
       _windowFetching.delete(w)
+      _windowRemote.delete(w)
       // Clamped: a reset (new query) zeroes the counter while requests are still
       // in flight, and their finallys must not drive it negative.
       _windowInFlight = Math.max(0, _windowInFlight - 1)
@@ -7729,6 +7994,7 @@ let rowSearch = $state('')
    */
   function handleVisibleRange(start, end) {
     if (!windowed) return
+    if (start !== _visStart) _visDir = start > _visStart ? 1 : -1
     _visStart = start
     _visEnd = end
     const firstW = Math.floor(start / _windowRows)
@@ -7770,6 +8036,8 @@ let rowSearch = $state('')
    * rows. One at a time, re-checked when it lands.
    */
   let _gapInFlight = false
+  /** Most a gap fetch carries: one quick round trip, not a window. */
+  const GAP_MAX_BYTES = 160_000
   /** Screenful-first fetches running (fetchWindow): they already cover the screen. */
   let _screenfulInFlight = 0
   /** @param {number} start @param {number} end */
@@ -7781,12 +8049,23 @@ let rowSearch = $state('')
     if (from < 0) return
     let to = from
     for (let i = last; i > from; i--) if (rows[i] === undefined) { to = i; break }
-    // Only behind a window already in flight: a window still queued fetches
-    // its own screenful first (fetchWindow), and a mirror read is local.
+    // Only behind a window already on its way to the database: a window still
+    // queued fetches its own screenful first (fetchWindow), and one read from
+    // the mirror is local. A mirror that merely exists used to count too, and
+    // every large table starts one on open, empty: rows 100-130 then waited
+    // ~2 s for the whole 600 KB first window on a 4 Mbit link.
     const w = Math.floor(from / _windowRows)
-    if (!_windowFetching.has(w) || activeMirror()) return
-    const begin = Math.max(0, from - 10)
-    const count = Math.min(400, to - begin + 1 + 30, _windowCount - begin)
+    if (!_windowRemote.has(w)) return
+    // Read ahead in the direction of travel: two screens, so a steady scroll
+    // finds the next rows already here instead of asking for each screenful
+    // as it arrives. Capped by bytes, so wide rows don't make it a window.
+    const screen = Math.max(20, end - start + 1)
+    const byteCap = _windowBytesPerRow > 0 ? Math.max(60, Math.floor(GAP_MAX_BYTES / _windowBytesPerRow)) : 400
+    const cap = Math.min(400, byteCap)
+    const span = to - from + 1
+    const extra = Math.max(0, Math.min(screen * 2, cap - span - 10))
+    const begin = _visDir < 0 ? Math.max(0, from - 10 - extra) : Math.max(0, from - 10)
+    const count = Math.min(cap, to - begin + 1 + (_visDir < 0 ? 10 : extra), _windowCount - begin)
     const seq = _windowSeq
     const schema = activeSchema
     const table = activeTable
@@ -8704,7 +8983,7 @@ let rowSearch = $state('')
         let view = null
         let lastPaint = 0
         let paintedLen = 0
-        results = await executeSqlStream(sqlRan, queryId, (chunk) => {
+        results = await abandonable(queryId, executeSqlStream(sqlRan, queryId, (chunk) => {
           if (chunk.stored) {
             // Store mode: the first message paints, later ones move the count.
             if (chunk.columns) {
@@ -8734,7 +9013,7 @@ let rowSearch = $state('')
           paintedLen = streamed.length
           sqlColumns = streamedCols
           sqlRows = streamed.slice()
-        }, { keepInStore: get(appStreamResults) })
+        }, { keepInStore: get(appStreamResults) }))
         // Each statement's outcome, for the editor marks. A single failed
         // statement is the run failing; in a script the others still ran.
         if (stillHere()) {
@@ -9742,6 +10021,8 @@ let rowSearch = $state('')
   let sessionsTick = $state(0)
   /** Labs: the database being opened while the one on screen stays up ('' when none). */
   let switchingTo = $state('')
+  /** The saved connection being opened, for the sidebar row's spinner. */
+  let switchingToId = $state('')
   /** Databases in the order they were first opened: the tab bar groups by it, so tabs don't jump around on a switch. */
   let sessionOrder = $state(/** @type {string[]} */ ([]))
   const multiConnection = () => loadSettings().multiConnection === true
@@ -10000,6 +10281,22 @@ let rowSearch = $state('')
    * @param {{ focusTab?: string | null }} [opts] Labs: the tab to land on
    */
   async function handleSwitchDatabase(conn, opts = {}) {
+    // One connect at a time; say so, rather than ignore the click while a slow
+    // one (an unreachable host takes ~30 s to give up) is still going. The id
+    // also puts a spinner on that connection's row in the sidebar.
+    if (switchingToId) {
+      toast.message(`Still connecting to ${switchingTo || 'the last database'}`, { key: 'still-connecting' })
+      return
+    }
+    switchingToId = conn?.id ?? '-'
+    try { await _switchDatabase(conn, opts) } finally { switchingToId = '' }
+  }
+
+  /**
+   * @param {import('$lib/stores/connections.js').SavedConnection} conn
+   * @param {{ focusTab?: string | null }} [opts] Labs: the tab to land on
+   */
+  async function _switchDatabase(conn, opts = {}) {
     // Click to connected, for the perf log (off unless profiling).
     const traceConnect = traceInteraction(`connect ${conn?.type ?? ''}`)
     // A deliberate switch is the other half of "PIN to open or reconnect".
@@ -10080,7 +10377,13 @@ let rowSearch = $state('')
       switchingTo = ''
       // Say why, then put the user back where they were instead of leaving
       // them disconnected behind a dialog with no message in it.
-      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: e instanceof Error ? e.message : String(e) })
+      // The fix is nearly always in the connection's settings (host, port, a
+      // password), so the error offers them rather than leaving a hunt for
+      // the row and its menu.
+      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, {
+        description: connectFailureText(/** @type {any} */ (conn), e),
+        ...(conn.id ? { action: { label: 'Edit', onClick: () => { connectionModalEditId = conn.id; showConnectionModal = true } } } : {}),
+      })
       const back = kept ? _sessions.get(kept) : undefined
       if (back && (await resumeKept(kept, back, null))) return
       let restored = false
@@ -10179,6 +10482,24 @@ let rowSearch = $state('')
    * first - retrying the same query against a closed pool just reprints the
    * same error.
    */
+  /**
+   * Stop waiting for a table load that is taking too long. A connection that
+   * dropped mid-query (Wi-Fi off, a VPN gone) leaves the read waiting on a dead
+   * socket for minutes, with a spinner and no way out. The pending load is let
+   * go (its result, if it ever comes, is dropped) and the error panel offers
+   * Retry, which reconnects first. No cancel is sent: cancel_query without an
+   * id stops every running query, a SQL run in another tab included.
+   */
+  function stopRowLoad() {
+    const tabId = activeTabId
+    bumpLoadSeq(tabId)
+    const msg = 'Stopped waiting for the database. It may be unreachable.'
+    connectionLost = true
+    patchTableTab(tabId ?? '', { loadingRows: false, error: msg })
+    loadingRows = false
+    error = msg
+  }
+
   async function retryTableLoad() {
     if (retryingLoad) return
     const dropped = connectionErrorKind(error) === 'dropped' || connectionLost
@@ -11034,6 +11355,7 @@ let rowSearch = $state('')
   bind:open={showConnectionModal}
   bind:initialEngine={connectionModalEngine}
   bind:initialEditId={connectionModalEditId}
+  bind:initialNew={connectionModalNew}
   bind:initialUri={connectionModalUri}
   bind:initialName={connectionModalName}
   onconnected={(conn, id) => onConnected(conn, id)}
@@ -11241,7 +11563,7 @@ let rowSearch = $state('')
             showProGate = false
             openLicenseTab()
           }}
-          class="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-foreground px-4 text-ui-xs font-medium text-background transition-colors hover:bg-foreground/90"
+          class="flex h-8 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary px-4 text-ui-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80"
         >
           <KeyRound class="size-3" />
           Activate Pro
@@ -11275,9 +11597,45 @@ let rowSearch = $state('')
 <CommandPalette
   bind:open={commandOpen}
   bind:page={commandPage}
+  bind:seed={commandSeed}
   onexporttable={activeTab?.kind === 'table' && activeTable && !aiMode && total > 0 ? (/** @type {string} */ f) => void handleExport(f) : null}
   exportTableName={activeTable ?? ''}
+  ontablestructure={activeTab?.kind === 'table' && activeTable && canShowStructure && !aiMode
+    ? () => {
+        if (tableViewMode === 'structure') { tableViewMode = 'data'; structureColumns = [] }
+        else { tableViewMode = 'structure'; if (!structureColumns.length) void loadStructure() }
+      }
+    : null}
+  tableStructureShown={tableViewMode === 'structure'}
+  tableCommands={activeTab?.kind === 'table' && activeTable && !aiMode && tableViewMode !== 'structure' ? {
+    // Toolbar menus open after the command menu has closed and handed focus
+    // back, or the focus return closes them again at once.
+    filter: () => afterPalette(() => tableToolbar?.openFilterMenu?.()),
+    sort: () => afterPalette(() => tableToolbar?.openSortMenu?.()),
+    columns: () => afterPalette(() => tableToolbar?.openColumnsMenu?.()),
+    addRow: tableReadonly ? null : () => afterPalette(() => dtBeginInsertRow?.()),
+    findReplace: findReplaceEnabled && !tableReadonly ? () => afterPalette(() => openFindReplacePanel()) : null,
+    refresh: () => void loadRows(),
+    view: columns.length ? (/** @type {string} */ v) => { dataViewMode = /** @type {any} */ (v) } : null,
+    openInSql: () => openTableInSqlEditor(),
+  } : null}
+  viewCommands={{ zoomIn: increaseZoom, zoomOut: decreaseZoom, zoomReset: resetZoom, fullscreen: () => void toggleFullscreen() }}
+  tabActions={connection && !aiMode ? {
+    reopen: closedTabStack.length ? reopenLastClosedTab : null,
+    close: activeTabId && tabs.length > 0 ? () => void closeTab(activeTabId) : null,
+    closeOthers: activeTabId && tabs.filter((t) => t.id !== activeTabId && !t.pinned).length ? () => void closeOtherTabs(activeTabId) : null,
+    togglePin: activeTabId ? () => toggleTabPin(activeTabId) : null,
+    pinned: !!tabs.find((t) => t.id === activeTabId)?.pinned,
+    newTable: !isKV ? openNewTable : null,
+  } : null}
   onexplainquery={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false && !aiMode ? () => sqlConsoleRef?.explainEditor?.() : null}
+  sqlCommands={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false && !aiMode ? {
+    runAll: () => /** @type {any} */ (sqlConsoleRef)?.runEditor?.(),
+    runStatement: () => /** @type {any} */ (sqlConsoleRef)?.runStatementAtCursor?.(),
+    format: () => afterPalette(() => /** @type {any} */ (sqlConsoleRef)?.formatEditor?.()),
+    save: () => afterPalette(() => void /** @type {any} */ (sqlConsoleRef)?.saveQuery?.()),
+    begin: () => void beginSqlTransaction(),
+  } : null}
   onimporttable={activeTab?.kind === 'table' && activeTable && !aiMode && !tableReadonly ? () => (importDataOpen = true) : null}
   connected={!!connection}
   {schemas}
@@ -11285,7 +11643,16 @@ let rowSearch = $state('')
   {activeSchema}
   {savedConnections}
   {activeConnectionId}
-  ontableselect={(name) => { if (aiMode) exitAiMode(); void handleTableSelect(name) }}
+  ontableselect={(name) => {
+    if (aiMode) exitAiMode()
+    // Into the grid, as Shift+Enter in the sidebar goes: the menu handed focus
+    // back to whatever had it before (a sidebar tab), so the arrows did
+    // nothing in the table just opened.
+    void handleTableSelect(name).then(() => afterPalette(() => {
+      const grid = document.querySelector('[data-studio-region="main"] [data-canvas-table]')
+      if (grid instanceof HTMLElement && !isTypingTarget(document.activeElement)) grid.focus()
+    }))
+  }}
   onschemachange={(schema) => { if (aiMode) exitAiMode(); handleSchemaChange(schema) }}
   onopensql={() => { if (aiMode) exitAiMode(); void focusSqlView() }}
   onnewsql={() => { if (aiMode) exitAiMode(); openNewSqlTab() }}
@@ -11298,6 +11665,7 @@ let rowSearch = $state('')
   onreadonlytoggle={() => { tableReadonly = !tableReadonly }}
   onopenai={() => openAiTab()}
   onopenaisidebar={() => { if (aiMode) exitAiMode(); toggleAiSidebar() }}
+  aiSidebarEnabled={AI_SIDEBAR_ENABLED}
   {aiMode}
   ontoggleaimode={() => aiMode ? exitAiMode() : enterAiMode()}
   onopenorm={() => { if (aiMode) exitAiMode(); openOrmTab() }}
@@ -11339,6 +11707,9 @@ let rowSearch = $state('')
   onopenshortcuts={() => openShortcuts()}
   onopenmyshares={() => openSharesTab()}
   onopenkeybindings={() => { settingsSection = 'keybindings'; showSettingsModal = true }}
+  ontogglesidebar={connection && !aiMode ? toggleSidebar : null}
+  onback={() => goTabHistory(-1)}
+  onforward={() => goTabHistory(1)}
   onopenappearance={() => { settingsSection = 'appearance'; showSettingsModal = true }}
   onopenabout={() => (showAboutModal = true)}
   onopenreport={() => (showReportIssueDialog = true)}
@@ -11365,7 +11736,7 @@ let rowSearch = $state('')
 
 
 <!-- Capture phase, deliberately - see onWindowKeydownCapture. -->
-<svelte:window onkeydowncapture={onWindowKeydownCapture} />
+<svelte:window onkeydowncapture={onWindowKeydownCapture} onpointerdowncapture={noteEditorEngaged} />
 
 {#if overlayWanted || overlayHeld}
   <!-- Only covers the actual connect handshake: onConnected sets `connection`
@@ -11420,8 +11791,15 @@ let rowSearch = $state('')
             onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
+            onback={() => goTabHistory(-1)}
+            onforward={() => goTabHistory(1)}
+            canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
+            canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
+            onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onrename={renameTab}
+            onshowsidebar={sidebarOpen || aiMode ? null : toggleSidebar}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
@@ -11435,12 +11813,13 @@ let rowSearch = $state('')
 
 <div class="flex h-full min-h-0 w-full flex-col overflow-hidden bg-background">
 {#if !IS_MAC}{@render titleBar()}{/if}
-<div class="flex min-h-0 flex-1 overflow-hidden">
+<div class="flex min-h-0 flex-1 overflow-hidden" data-studio-body>
   {#if connection}
     <!-- Sidebar dock. Navigation between pages/views now lives in the ⌘P
          "Go to page" palette, so there's no activity rail, the sidebar just
          hosts the tables list. Hidden on Ctrl+B and in AI mode. -->
     <div
+      bind:this={sidebarDockEl}
       class="flex min-h-0 shrink-0 flex-col"
       class:order-last={sidebarSide === 'right'}
       style={sidebarOpen && !aiMode ? '' : 'display:none'}
@@ -11497,9 +11876,11 @@ let rowSearch = $state('')
         {navSidebarPanel}
         connections={savedConnections}
         activeConnectionId={connection?.id ?? ''}
+        connectingId={switchingToId}
         onswitchconnection={(c) => { if (aiMode) exitAiMode(); void handleSwitchDatabase(c) }}
         onaddconnection={() => { showConnectionModal = true }}
-        onremoveconnection={(id) => { removeConnection(id); handleConnectionRemoved(id) }}
+        onnewconnection={() => { connectionModalNew = true; showConnectionModal = true }}
+        onremoveconnection={(id) => { removeConnection(id, { undoable: true }); handleConnectionRemoved(id) }}
         oneditconnection={(c) => { connectionModalEditId = c.id; showConnectionModal = true }}
         onsetconnectiongroup={(id, group) => { savedConnections = setConnectionGroup(id, group) }}
         onconnectionmeta={(list) => { savedConnections = list }}
@@ -11562,8 +11943,9 @@ let rowSearch = $state('')
         }}
         onrecentclear={() => {
           if (persistConnectionId) {
-            clearRecentTabs(persistConnectionId)
+            const undo = clearRecentTabs(persistConnectionId)
             refreshRecentTabs()
+            if (undo) offerUndo('Recent tables cleared', '', () => { undo(); refreshRecentTabs() })
           }
         }}
         queriesCount={savedQueries.length}
@@ -11592,7 +11974,7 @@ let rowSearch = $state('')
        sidebar is its own full-height column (T3), so its edge runs unbroken. -->
   <div class="flex min-h-0 min-w-0 flex-1 flex-col">
 {#if !aiMode && IS_MAC}{@render titleBar()}{/if}
-  <div class="relative flex min-h-0 flex-1 overflow-hidden">
+  <div class="relative flex min-h-0 flex-1 overflow-hidden" data-studio-panel>
   <main class={cn("relative flex min-h-0 min-w-0 flex-1 flex-col bg-panel", terminalDockMoving && "overflow-hidden")} data-studio-region="main">
     {#if accountPageOpen && !connection}
       <div class="absolute inset-0 z-30 flex flex-col bg-panel">
@@ -11698,8 +12080,15 @@ let rowSearch = $state('')
             onclose={(id) => (tabs.some((t) => t.id === id) ? closeTab(id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
+            onback={() => goTabHistory(-1)}
+            onforward={() => goTabHistory(1)}
+            canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
+            canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
+            onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onrename={renameTab}
+            onshowsidebar={sidebarOpen || aiMode ? null : toggleSidebar}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
@@ -11721,8 +12110,15 @@ let rowSearch = $state('')
             onclose={(id) => (tabs.some((t) => t.id === id) ? void closeTabInGroup(group.id, id) : closeForeignTab(id))}
             oncloseothers={(id) => { if (tabs.some((t) => t.id === id)) closeOtherTabs(id) }}
             oncloseall={closeAllTabs}
+            onback={() => goTabHistory(-1)}
+            onforward={() => goTabHistory(1)}
+            canback={_tabBack.some((id) => tabs.some((t) => t.id === id))}
+            canforward={_tabFwd.some((id) => tabs.some((t) => t.id === id))}
+            onnewtab={() => { if (connection) openWelcomeTab() }}
             onclosemany={(ids, anchorId) => void closeManyTabs(ids, anchorId)}
             onduplicate={(id) => { if (tabs.some((t) => t.id === id)) void duplicateTab(id) }}
+            onrename={renameTab}
+            onshowsidebar={sidebarOpen || aiMode ? null : toggleSidebar}
             onresettable={(id) => { if (tabs.some((t) => t.id === id)) void resetTableTab(id) }}
             onreopenclosed={reopenLastClosedTab}
             canreopenclosed={closedTabStack.length > 0}
@@ -12313,6 +12709,7 @@ let rowSearch = $state('')
           <svelte:boundary failed={tabError}>
           {#await import('./OrmRunner.svelte')}<TabLoading />{:then { default: OrmRunner }}
           <OrmRunner
+            bind:this={ormRunnerRef}
             bind:code={ormCode}
             bind:mode={ormMode}
             columns={ormColumns}
@@ -12330,6 +12727,7 @@ let rowSearch = $state('')
             onmodshifte={() => { if (connection) aiMode ? exitAiMode() : enterAiMode() }}
             onmodshiftd={() => { if (connection) showDisconnectDialog = true }}
             onmodaltd={() => { if (connection) void focusDataView() }}
+            onsearchdb={() => { if (connection) openSearchTab() }}
           />
           {/await}
           </svelte:boundary>
@@ -12377,6 +12775,7 @@ let rowSearch = $state('')
             message={sqlMessage}
             loading={sqlLoading}
             runningQueryId={activeSqlQueryId}
+            onstoprequested={abandonSqlRunSoon}
             error={sqlError}
             multiResults={sqlMultiResults}
             schemaHints={sqlSchemaHints}
@@ -12393,12 +12792,14 @@ let rowSearch = $state('')
             onmodshiftd={() => { if (connection) showDisconnectDialog = true }}
             onmodaltd={() => { if (connection) void focusDataView() }}
             onmodshifto={() => { if (connection) openOrmTab() }}
+            onsearchdb={() => { if (connection) openSearchTab() }}
             onqueryrefresh={refreshQueryStores}
             onhistoryselect={(sql) => openQueryInEditor(sql)}
             onopenqueries={(view) => openQueriesTab(view)}
             onsavequery={handleSaveQuery}
             onsaveinplace={handleSaveInPlace}
             savedQueryName={activeSavedQuery?.name ?? ''}
+            tabName={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).renamed ? activeTab.title : ''}
             onfixwithai={handleFixWithAi}
             onrevertrun={revertSqlRun}
             onprorequired={() => (showProGate = true)}
@@ -12511,6 +12912,7 @@ let rowSearch = $state('')
             {rowSortMore}
             {rowFilters}
             loading={loadingRows}
+            onstopload={stopRowLoad}
             selectedCount={selected.size}
             hasPrimaryKey={primaryKey.length > 0}
             deleting={deletingRows}
@@ -12616,6 +13018,7 @@ let rowSearch = $state('')
                 onretrywindows={retryFailedWindows}
                 columnWidthsKey={gridData.columnWidthsKey}
                 loading={loadingRows}
+                onstopload={stopRowLoad}
                 {loadingMore}
                 {infiniteScroll}
                 endOfResults={gridData.endOfResults}
@@ -12781,6 +13184,8 @@ let rowSearch = $state('')
           {isRedis}
           {isKV}
           onpalette={(page) => { commandPage = page; commandOpen = true }}
+          recent={recentTabs}
+          onopenrecent={(r) => void openTableTab(r.schema, r.table)}
           ondocs={openDocsTab}
           onsql={openSqlTab}
           ondynamo={openDynamoTab}
@@ -12901,7 +13306,7 @@ let rowSearch = $state('')
   {pendingEditCount}
   applying={savingCell || deletingRows || insertingRow}
   onapplyedits={() => void applyEdits()}
-  onresetedits={() => resetEdits()}
+  onresetedits={() => resetEdits({ undoable: true })}
   oncopyeditssql={() => void copyEditsSql()}
   showTableNav={activeTab?.kind === 'table'}
   onscrolltabletop={() => scrollTableTop()}

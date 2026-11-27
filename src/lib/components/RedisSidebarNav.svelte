@@ -132,7 +132,7 @@
 </div>
   {#if server}
     <!-- The server at a glance; Overview has the rest. -->
-    <button type="button" class="mx-2 mb-1 flex flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left text-ui-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/60" onclick={() => redisNavCall('setView', 'insights')} title="Open Overview">
+    <button type="button" class="mx-2 mb-1 flex flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left text-ui-xs text-muted-foreground transition-colors hover:bg-sidebar-accent/60" onclick={() => redisNavCall('setView', 'insights')} title="Open the overview">
       <span class="text-foreground/85">{server.version}</span>
       <span class="tabular-nums">{[server.memory && `${server.memory} used`, server.clients && `${server.clients} ${String(server.clients) === '1' ? 'client' : 'clients'}`, server.ops !== '' && `${server.ops} ops/s`].filter(Boolean).join(' · ')}</span>
     </button>

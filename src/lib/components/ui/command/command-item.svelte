@@ -1,17 +1,50 @@
 <script>
 	import { Command as CommandPrimitive } from "bits-ui";
+	import { getContext } from "svelte";
 	import { cn } from "$lib/utils.js";
+	import { LOCAL_FILTER, LOCAL_GROUP, pointerReallyMoved } from "$lib/command-local-filter.svelte.js";
 
 	let {
 		ref = $bindable(null),
 		class: className,
 		children,
+		value = "",
+		keywords = [],
+		/** Below this score the row stays out: rows shown only while searching
+		 *  (tab, table and view commands) skip the loose letters-with-gaps
+		 *  matches, or every letter typed mounted them all. */
+		minScore = 0,
 		...restProps
 	} = $props();
+
+	/** @type {ReturnType<typeof import("$lib/command-local-filter.svelte.js").createLocalFilter> | undefined} */
+	const local = getContext(LOCAL_FILTER);
+	/** @type {{ key: string } | undefined} */
+	const group = getContext(LOCAL_GROUP);
+
+	// A page that filters its own rows (command-local-filter.svelte.js): this
+	// row scores itself and draws nothing when it does not match. (Keeping it
+	// mounted but hidden and disabled measured no faster.) Elsewhere bits-ui
+	// filters as usual.
+	const rawScore = $derived(local?.search ? local.score(value, local.search, keywords) : 1);
+	const score = $derived(rawScore >= minScore ? rawScore : 0);
+	// Only while that page is searching: the group order, the best row and the
+	// empty state read these scores then, and every row reporting (and
+	// forgetting) on each render of a page that filters elsewhere cost more
+	// than the rows' own markup.
+	$effect(() => {
+		if (!local?.search) return;
+		const v = value;
+		local.report(v, group?.key, score);
+		return () => local.forget(v);
+	});
 </script>
 
+{#if score > 0}
 <CommandPrimitive.Item
 	bind:ref
+	{value}
+	{keywords}
 	data-slot="command-item"
 	class={cn(
 		"group/command-item relative flex w-full min-w-0 cursor-default items-center gap-3 rounded-md px-2.5 py-1.5 min-h-9 text-ui-sm outline-hidden select-none",
@@ -26,6 +59,16 @@
 		className,
 	)}
 	{...restProps}
+	onpointermove={(e) => {
+		// bits-ui highlights the row under the pointer on every pointermove,
+		// and WebKit sends one when rows move under a still cursor: typing
+		// "light" in the theme list re-ranked the rows and the highlight jumped
+		// to whatever row slid under the resting pointer. Ours runs first, and a
+		// prevented event stops bits-ui's (svelte-toolbelt composeHandlers).
+		if (!pointerReallyMoved(e)) e.preventDefault();
+		restProps.onpointermove?.(e);
+	}}
 >
 	{@render children?.()}
 </CommandPrimitive.Item>
+{/if}

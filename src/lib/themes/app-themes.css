@@ -295,7 +295,9 @@ html[data-theme="bro"] {
   --card-foreground:          oklch(0.955 0.002 286);
   --popover:                  oklch(0.205 0.003 286);
   --popover-foreground:       oklch(0.955 0.002 286);
-  --primary:                  oklch(0.660 0.170 256);
+  /* 0.56, not 0.66: white text on the fill measured 3.01:1 and now 4.52:1.
+     The ring keeps 0.66 and links have --link, so only the fill moved. */
+  --primary:                  oklch(0.560 0.170 256);
   --primary-foreground:       oklch(0.985 0.002 286);
   --secondary:                oklch(0.225 0.003 286);
   --secondary-foreground:     oklch(0.900 0.002 286);
@@ -1228,4 +1230,226 @@ html[data-os="macos"]:is([data-theme="glass-dark"], [data-theme="glass-light"], 
 html[data-os="macos"]:is([data-theme="glass-dark"], [data-theme="glass-light"], [data-glass])
   .stroke-background {
   stroke: var(--popover) !important;
+}
+
+/* ── Semantic text colours ───────────────────────────────────────────────
+   --success / --warning / --destructive / --info (and --primary) are fills first: dots, badges,
+   bg-success behind white text. As text they measured under 4.5:1 in every
+   theme (warning 4.02 on Light, success 3.75 and info 3.24 on Dark, worst on
+   their own 10% tint). The text utilities (text-success, ...) read these
+   instead: the same colour mixed toward the theme's foreground, by the least
+   amount that reaches 4.7:1 on background, panel, sidebar and popover, and
+   on its own 12% tint over each. Mixed in oklab, not oklch: the foreground has no hue, and oklch
+   swung green toward olive on the way to it. Solved per theme in the running
+   app; re-solve when a theme changes. Themes not listed here (imported, built
+   in the theme builder) take 80%. */
+:root {
+  --success-text: color-mix(in oklab, var(--success) 80%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 80%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 80%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 85%, var(--foreground));
+}
+html[data-theme="light"] {
+  --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 85%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 95%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="parchment"] {
+  --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 90%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="ice"] {
+  --success-text: color-mix(in oklab, var(--success) 90%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 85%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 90%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 95%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="dark"] {
+  --success-text: color-mix(in oklab, var(--success) 80%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: var(--destructive);
+  --info-text: color-mix(in oklab, var(--info) 75%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 80%, var(--foreground));
+}
+html[data-theme="obsidian"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="clay"] {
+  --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 95%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="hotdog"] {
+  --success-text: color-mix(in oklab, var(--success) 70%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 70%, var(--foreground));
+  --destructive-text: var(--destructive);
+  --info-text: color-mix(in oklab, var(--info) 65%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 65%, var(--foreground));
+}
+html[data-theme="bro"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 75%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 90%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 80%, var(--foreground));
+}
+html[data-theme="midnight"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: var(--destructive);
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="vitesse"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="slate"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: var(--destructive);
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="mono"] {
+  --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 85%, var(--foreground));
+  --destructive-text: var(--destructive);
+  --info-text: color-mix(in oklab, var(--info) 80%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="forest"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 90%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="github-light"] {
+  --success-text: color-mix(in oklab, var(--success) 90%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 85%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 90%, var(--foreground));
+  --info-text: var(--info);
+  --primary-text: color-mix(in oklab, var(--primary) 90%, var(--foreground));
+}
+html[data-theme="rose-pine"] {
+  --success-text: color-mix(in oklab, var(--success) 65%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 70%, var(--foreground));
+  --destructive-text: var(--destructive);
+  --info-text: color-mix(in oklab, var(--info) 60%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="catppuccin"] {
+  --success-text: color-mix(in oklab, var(--success) 45%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 45%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 40%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="solarized"] {
+  --success-text: color-mix(in oklab, var(--success) 15%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 20%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 30%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 15%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 15%, var(--foreground));
+}
+html[data-theme="graphite"] {
+  --success-text: color-mix(in oklab, var(--success) 60%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 60%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 75%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 55%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 60%, var(--foreground));
+}
+html[data-theme="dark-high-contrast"] {
+  --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 85%, var(--foreground));
+  --destructive-text: var(--destructive);
+  --info-text: color-mix(in oklab, var(--info) 80%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="light-high-contrast"] {
+  --success-text: color-mix(in oklab, var(--success) 90%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 90%, var(--foreground));
+  --destructive-text: var(--destructive);
+  --info-text: color-mix(in oklab, var(--info) 95%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="matte"] {
+  --success-text: color-mix(in oklab, var(--success) 65%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 65%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 60%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="claude-light"] {
+  --success-text: color-mix(in oklab, var(--success) 80%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 90%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 90%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 80%, var(--foreground));
+}
+html[data-theme="moss-light"] {
+  --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 95%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="orchid-light"] {
+  --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 95%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="claude"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 75%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 90%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="moss"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="orchid"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: var(--primary);
+}
+html[data-theme="glass-dark"] {
+  --success-text: color-mix(in oklab, var(--success) 75%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 95%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 70%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 80%, var(--foreground));
+}
+html[data-theme="glass-light"] {
+  --success-text: color-mix(in oklab, var(--success) 85%, var(--foreground));
+  --warning-text: color-mix(in oklab, var(--warning) 80%, var(--foreground));
+  --destructive-text: color-mix(in oklab, var(--destructive) 85%, var(--foreground));
+  --info-text: color-mix(in oklab, var(--info) 90%, var(--foreground));
+  --primary-text: color-mix(in oklab, var(--primary) 95%, var(--foreground));
 }

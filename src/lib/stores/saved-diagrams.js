@@ -1,4 +1,4 @@
-import { writable } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 import { debounce } from '$lib/utils.js'
 
 /** @typedef {{ id: string, name: string, code: string, group: string, createdAt: number, updatedAt: number }} SavedDiagram */
@@ -52,6 +52,21 @@ export function updateDiagram(id, patch) {
   )
 }
 
+/**
+ * @param {string} id
+ * @returns {(() => boolean) | null} puts it back in its place, for an Undo; false
+ *   once the diagrams on screen belong to another connection
+ */
 export function deleteDiagram(id) {
+  const list = get(savedDiagrams)
+  const index = list.findIndex((d) => d.id === id)
+  if (index < 0) return null
+  const diagram = list[index]
+  const conn = _connId
   savedDiagrams.update((all) => all.filter((d) => d.id !== id))
+  return () => {
+    if (_connId !== conn || get(savedDiagrams).some((d) => d.id === id)) return false
+    savedDiagrams.update((all) => [...all.slice(0, index), diagram, ...all.slice(index)])
+    return true
+  }
 }

@@ -69,6 +69,8 @@
     onmodshiftd = undefined,
     onmodaltd = undefined,
     onmodshifto = undefined,
+    /** Find in database: the app's key, which CodeMirror took for find-previous. */
+    onsearchdb = undefined,
     onmodj = undefined,
     onmodshiftb = undefined,
     /**
@@ -226,7 +228,9 @@
             .map((e) => Decoration.mark({ class: 'cm-sql-run-error' }).range(e.from, e.to)),
           ...run.marks
             .filter((m) => m.kind === 'ok' && m.info)
-            .map((m) => Decoration.widget({ widget: new RunInfoWidget(/** @type {string} */ (m.info)), side: 1 }).range(m.to)),
+            // side 2: after the ghost semicolon (side 1) at the same spot, which
+            // belongs against the code it completes, not past the run's timing.
+            .map((m) => Decoration.widget({ widget: new RunInfoWidget(/** @type {string} */ (m.info)), side: 2 }).range(m.to)),
         ],
         true,
       ),
@@ -990,6 +994,7 @@
     ['view.data', onmodaltd],
     ['ai.panel', onmodshifte],
     ['view.orm', onmodshifto],
+    ['search.database', onsearchdb],
   ])
 
   // The editor's own chords: these mean something different in a console
@@ -1352,8 +1357,10 @@
     // SQL editor - several notebook cells are visible at once.
     /** @param {KeyboardEvent} e */
     function docRunHandler(e) {
-      if (!host || host.clientWidth === 0) return
+      // The key first: reading clientWidth forces a layout, and this runs for
+      // every key typed anywhere, once per SQL editor open in any tab.
       if (!(e.ctrlKey || e.metaKey) || e.key !== 'Enter' || e.shiftKey || e.altKey) return
+      if (!host || host.clientWidth === 0) return
       const ae = document.activeElement
       if (ae && ae !== document.body && !host.contains(ae)) {
         if (ae.closest('.sql-editor-host')) return
@@ -1503,7 +1510,8 @@
    * so it never rewrites text the error is no longer about.
    * @param {string} name the bare name the error reported
    * @param {string} replacement already quoted as the dialect needs
-   * @returns {boolean} whether anything was replaced
+   * @returns {string | false} the statement as it reads now, or false when
+   *   nothing was replaced
    */
   export function replaceInFailed(name, replacement) {
     const view = editorRef?.getView()
@@ -1533,7 +1541,31 @@
         userEvent: 'input.complete',
       })
       view.focus()
-      return true
+      const delta = insert.length - (hit.to - hit.from)
+      return view.state.doc.sliceString(e.stmtFrom, e.stmtTo + delta)
+    }
+    return false
+  }
+
+  /**
+   * The error console's "Add ; and run": two statements with no `;` between
+   * them ran as one and failed. Insert the `;` the linter places (the one it
+   * offers as a quick fix) in the statement that failed, and hand back the
+   * statement under the caret, which is the one meant to run.
+   * @returns {string | false} that statement, or false when there was nothing to add
+   */
+  export function addMissingSemicolon() {
+    const view = editorRef?.getView()
+    if (!view) return false
+    for (const e of view.state.field(runMarksField).errors) {
+      const text = view.state.doc.sliceString(e.stmtFrom, e.stmtTo)
+      const fixes = lintSql(text)
+        .filter((d) => d.message.startsWith("Missing ';' - this starts a new statement") && d.fix)
+        .map((d) => ({ from: e.stmtFrom + /** @type {any} */ (d.fix).from, to: e.stmtFrom + /** @type {any} */ (d.fix).to, insert: /** @type {any} */ (d.fix).insert }))
+      if (!fixes.length) continue
+      view.dispatch({ changes: fixes, userEvent: 'input.complete' })
+      view.focus()
+      return (statementAtCaret(view.state)?.text) || false
     }
     return false
   }

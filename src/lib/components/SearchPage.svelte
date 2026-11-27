@@ -1,5 +1,6 @@
 <script>
   import Kbd from './Kbd.svelte'
+  import EmptyState from './EmptyState.svelte'
   import { getTableRows, listTables } from '$lib/api.js'
   import { isSystemSchema } from '$lib/system-schemas.js'
   import { buildSearchQuery, searchOptionsSupported, searchOptionHotkey, SEARCH_OPTION_KEYS } from '$lib/search-options.js'
@@ -61,6 +62,19 @@
   let regexError = $state('')
   /** Tables whose query failed (permissions, a type the predicate can't read). */
   let failed = $state(0)
+  /** Tables being read right now, as "schema.name". */
+  let inFlight = $state(/** @type {string[]} */ ([]))
+  /** Tables left unread because the search was stopped. */
+  let skipped = $state(0)
+  /** Stop waiting: keep what was found, say how many tables were left. A big
+   *  table over a slow link held the page at "184 of 185" with no way out. */
+  function stopSearch() {
+    searchGeneration++
+    skipped = progress.total - progress.done
+    inFlight = []
+    searching = false
+    searched = true
+  }
   /** The highlighted result, for arrow keys and Enter. */
   let selected = $state(-1)
   /** @type {HTMLInputElement | null} */
@@ -82,6 +96,8 @@
       results = []
       searched = false
       failed = 0
+      skipped = 0
+      inFlight = []
       selected = -1
       progress = { done: 0, total: 0 }
       schemaTables.clear()
@@ -137,6 +153,8 @@
     results = []
     searched = false
     searching = false
+    skipped = 0
+    inFlight = []
     progress = { done: 0, total: 0 }
   }
 
@@ -171,6 +189,8 @@
     searched = false
     results = []
     failed = 0
+    skipped = 0
+    inFlight = []
     selected = -1
 
     /** @param {TableInfo & { kind?: string }} t */
@@ -204,6 +224,8 @@
       while (index < searchable.length && searchGeneration === gen) {
         const t = searchable[index++]
         if (!t) continue
+        const key = `${t.schema}.${t.name}`
+        inFlight = [...inFlight, key]
         try {
           const res = await getTableRows(t.schema, t.name, 1, 0, {
             ...searchParams,
@@ -226,6 +248,7 @@
           if (searchGeneration === gen) failed++
         }
         if (searchGeneration === gen) {
+          inFlight = inFlight.filter((k) => k !== key)
           progress = { done: progress.done + 1, total: progress.total }
         }
       }
@@ -298,9 +321,14 @@
     if (!hit.sampleRow) return []
     const n = matchCase ? needle : needle.toLowerCase()
     const cells = hit.columns.map((c, i) => {
-      const text = displayValue(hit.sampleRow?.[i])
-      const hay = matchCase ? String(hit.sampleRow?.[i] ?? '') : String(hit.sampleRow?.[i] ?? '').toLowerCase()
-      return { name: c.name, text, hit: !!n && hay.includes(n), isNull: hit.sampleRow?.[i] == null }
+      const v = hit.sampleRow?.[i]
+      const raw = v === null || v === undefined ? '' : typeof v === 'object' ? JSON.stringify(v) : String(v)
+      const at = n ? (matchCase ? raw : raw.toLowerCase()).indexOf(n) : -1
+      // A match deep in a long value (HTML, JSON, a log line) was cut off with
+      // the rest, so the cell said nothing about why the row matched: start
+      // just before the match instead.
+      const text = at > 12 ? '…' + displayValue(raw.slice(at - 10)) : displayValue(v)
+      return { name: c.name, text, hit: at >= 0, isNull: v == null }
     })
     return [...cells.filter((c) => c.hit), ...cells.filter((c) => !c.hit)].slice(0, 6)
   }
@@ -366,7 +394,7 @@
           ><X class="size-3.5 shrink-0" /></button>
         {/if}
         {#if optionsSupported}
-          <span class="mx-0.5 h-5 w-px shrink-0 bg-border/70" aria-hidden="true"></span>
+          <span class="w-2 shrink-0" aria-hidden="true"></span>
           {#each [
             { key: 'matchCase', on: matchCase, label: 'Match case', glyph: 'Aa' },
             { key: 'wholeWord', on: wholeWord, label: 'Whole word', glyph: 'ab' },
@@ -417,10 +445,18 @@
             <span class="block h-full rounded-full bg-primary transition-[width] duration-150" style="width: {progressPct}%"></span>
           </span>
           {#if results.length}<span>· {results.length} with matches</span>{/if}
+          <!-- The last few tables, named: the wait is usually one big one. -->
+          {#if inFlight.length && inFlight.length <= 2 && progress.total - progress.done <= 2}
+            <span class="min-w-0 truncate">· reading {inFlight.map((k) => k.startsWith(`${schema}.`) ? k.slice(schema.length + 1) : k).join(', ')}</span>
+          {/if}
+          <button type="button" class="shrink-0 rounded-md px-1.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onclick={stopSearch}>Stop</button>
         {:else if searched && results.length}
           <span><span class="font-medium text-foreground">{totalMatches.toLocaleString()}</span> {totalMatches === 1 ? 'match' : 'matches'} in <span class="font-medium text-foreground">{results.length}</span> of {progress.total} tables</span>
         {:else if !query.trim()}
           {#if !canScope}<span>{relationCount(tables)} in {schema}</span>{/if}
+        {/if}
+        {#if skipped && !searching && query.trim()}
+          <span>· {skipped} {skipped === 1 ? 'table' : 'tables'} not searched</span>
         {/if}
         {#if failed && !searching && query.trim()}
           <!-- The dot separates it from a results line; alone it led with one. -->
@@ -476,22 +512,20 @@
           {/each}
         </ul>
       {:else if searched && !searching}
-        <div class="flex flex-col items-center gap-2 py-20 text-center">
-          <span class="flex size-11 items-center justify-center rounded-lg bg-muted/60"><Search class="size-5 shrink-0 text-muted-foreground" /></span>
-          <p class="mt-1 text-ui-sm font-medium text-foreground">Nothing matches <span class="font-mono">"{query.trim()}"</span></p>
-          <p class="max-w-80 text-ui-xs leading-relaxed text-muted-foreground">
-            Searched {progress.total} table{progress.total === 1 ? '' : 's'} in {scope === 'all' && canScope ? `${userSchemas.length} schemas` : schema}.
+        <EmptyState class="py-20" icon={Search}>
+          {#snippet heading()}Nothing matches <span class="font-mono">"{query.trim()}"</span>{/snippet}
+          {#snippet body()}
+            Searched {progress.total - skipped} table{progress.total - skipped === 1 ? '' : 's'} in {scope === 'all' && canScope ? `${userSchemas.length} schemas` : schema}{#if skipped}, stopped before {skipped} more{/if}.
             {#if matchCase || wholeWord}Try without {matchCase && wholeWord ? 'Match case and Whole word' : matchCase ? 'Match case' : 'Whole word'}.{/if}
-          </p>
-        </div>
+          {/snippet}
+        </EmptyState>
       {:else if !searching}
-        <div class="flex flex-col items-center gap-2 py-20 text-center">
-          <span class="flex size-11 items-center justify-center rounded-lg bg-muted/60"><Search class="size-5 shrink-0 text-muted-foreground" /></span>
-          <p class="mt-1 text-ui-sm font-medium text-foreground">Find a value anywhere</p>
-          <p class="max-w-96 text-ui-xs leading-relaxed text-muted-foreground">
-            Every column of every table in {schema} is searched at once. Type at least {MIN_QUERY} characters; results open the table with the search already applied.
-          </p>
-        </div>
+        <EmptyState
+          class="py-20"
+          icon={Search}
+          title="Find a value anywhere"
+          description={`Every column of every table in ${schema} is searched at once. Type at least ${MIN_QUERY} characters; results open the table with the search already applied.`}
+        />
       {/if}
     </div>
   </div>

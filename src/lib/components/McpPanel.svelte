@@ -97,12 +97,11 @@
 
     <!-- ── Header ── -->
     <div class="flex items-center gap-3 border-b border-border/40 px-6 py-5 pr-12">
-      <div class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted/50 ring-1 ring-border/30">
-        <Server class="size-4 shrink-0 text-foreground/70" />
-      </div>
+      <!-- Glyphs alone throughout (DESIGN_SYSTEM.md §11: no icon tiles). -->
+      <Server class="size-5 shrink-0 text-muted-foreground" />
       <div class="flex min-w-0 flex-col gap-1">
         <Dialog.Title class="text-ui-xl font-semibold leading-none tracking-tight text-foreground">
-          MCP Server
+          MCP server
         </Dialog.Title>
         <Dialog.Description class="text-ui-sm leading-snug text-muted-foreground">
           Connect Claude, Cursor, or VS Code to your database.
@@ -179,9 +178,7 @@
           class="flex w-full items-center gap-3 text-left"
           onclick={toggleReadOnly}
         >
-          <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/40 ring-1 ring-border/25">
-            <ShieldCheck class={cn("size-4 shrink-0", readOnly ? "text-warning" : "text-muted-foreground")} />
-          </div>
+          <ShieldCheck class={cn("size-4 shrink-0", readOnly ? "text-warning" : "text-muted-foreground")} />
           <div class="flex min-w-0 flex-1 flex-col gap-0.5">
             <span class="text-ui-sm font-medium text-foreground">Read-only mode</span>
             <span class="text-ui-xs leading-snug text-muted-foreground">
@@ -234,9 +231,7 @@
 
             {#snippet clientRow(/** @type {any} */ Icon, /** @type {string} */ name, /** @type {import('svelte').Snippet} */ hint, /** @type {string} */ copyKey, /** @type {string} */ copyText, /** @type {string} */ copyLabel, /** @type {string} */ installUrl)}
               <div class="flex items-center gap-3 px-3.5 py-3">
-                <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50 ring-1 ring-border/30">
-                  <Icon class="size-4 shrink-0 text-foreground/70" />
-                </div>
+                <Icon class="size-4 shrink-0 text-muted-foreground" />
                 <div class="flex min-w-0 flex-1 flex-col gap-0.5">
                   <span class="truncate text-ui-sm font-medium text-foreground">{name}</span>
                   <span class="truncate text-ui-2xs text-muted-foreground">{@render hint()}</span>

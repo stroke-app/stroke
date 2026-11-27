@@ -56,9 +56,19 @@ export function recordActivity(entry) {
   return full
 }
 
+/**
+ * @returns {() => void} puts the cleared entries back (under any recorded
+ *   since, newest first), for an Undo
+ */
 export function clearActivityLog() {
+  const cleared = _log
   _log = []
   scheduleNotify()
+  return () => {
+    const ids = new Set(_log.map((e) => e.id))
+    _log = [..._log, ...cleared.filter((e) => !ids.has(e.id))].slice(0, MAX_ENTRIES)
+    scheduleNotify()
+  }
 }
 
 /**

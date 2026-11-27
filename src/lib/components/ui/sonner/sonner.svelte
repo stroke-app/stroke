@@ -207,16 +207,19 @@
             {/if}
           </div>
         {/if}
-        {#if t.action}
-          <button
-            type="button"
-            class="mt-2 self-start rounded-full bg-muted/70 px-3 py-1 text-ui-2xs font-medium text-foreground transition-colors hover:bg-accent"
-            onclick={() => { t.action?.onClick(); toast.dismiss(t.id) }}
-          >
-            {t.action.label}
-          </button>
-        {/if}
       </div>
+      {#if t.action}
+        <!-- Beside the message, not under it: a third line made an Undo toast
+             a card, and the eye had to drop to find the button. Clear of the
+             close button that shows on hover in the top corner. -->
+        <button
+          type="button"
+          class="mr-6 shrink-0 self-center rounded-md bg-muted/70 px-2.5 py-1 text-ui-xs font-medium text-foreground transition-colors hover:bg-accent"
+          onclick={() => { t.action?.onClick(); toast.dismiss(t.id) }}
+        >
+          {t.action.label}
+        </button>
+      {/if}
 
       <button
         type="button"

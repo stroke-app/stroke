@@ -1,10 +1,11 @@
 <script>
+  import TableListSkeleton from './TableListSkeleton.svelte'
+  import EmptyState from './EmptyState.svelte'
   import { tick, untrack } from 'svelte'
   import { listTables, getTableColumnStructure, listIndexes, getTableRowCounts } from '$lib/api.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import RelationTreeNode from './RelationTreeNode.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
-  import Loader from '@lucide/svelte/icons/loader'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Search from '@lucide/svelte/icons/search'
   import X from '@lucide/svelte/icons/x'
@@ -312,7 +313,7 @@
         bind:this={listSearchEl}
         bind:value={listSearch}
         placeholder="Filter tables…"
-        class="search-box no-field-frame h-7 w-full pl-7 pr-2 font-mono text-ui-xs"
+        class="search-box no-field-frame h-7 w-full pl-7 pr-2 font-mono placeholder:font-sans text-ui-xs"
       />
     </div>
     {/if}
@@ -327,10 +328,9 @@
     <!-- Table list -->
     <div class="min-h-0 flex-1 overflow-y-auto">
       {#if loading && tableMeta.size === 0}
-        <div class="loading-reveal flex items-center gap-2 px-3 py-3">
-          <Loader class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-          <span class="font-mono text-ui-xs text-muted-foreground">Loading…</span>
-        </div>
+        <!-- The list's shape while it loads, as the sidebar's table list
+             does, instead of a spinner line the rows then replaced. -->
+        <TableListSkeleton rows={10} />
       {:else if error}
         <p class="px-3 py-3 font-mono text-ui-xs text-destructive">{error}</p>
       {:else}
@@ -428,10 +428,7 @@
   {:else}
   <div class="min-h-0 min-w-0 flex-1 overflow-y-auto p-4">
     {#if !focusedTable || !tableMeta.has(focusedTable)}
-      <div class="flex h-full min-h-[200px] flex-col items-center justify-center gap-3">
-        <GitBranch class="size-10 shrink-0 text-muted-foreground" />
-        <p class="font-mono text-ui-xs text-muted-foreground">Select a table to explore its relationships</p>
-      </div>
+      <EmptyState class="h-full min-h-[200px] justify-center" icon={GitBranch} title="Pick a table" description="Its foreign keys, in and out, show here as a tree." />
     {:else}
       {@const rootMeta = tableMeta.get(focusedTable)}
       {@const rootOut = outbound.get(focusedTable) ?? []}

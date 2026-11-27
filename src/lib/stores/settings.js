@@ -40,6 +40,11 @@ export function defaultNativeScroll() {
   return true
 }
 
+/** Panels slide where WebKit composites on the GPU (macOS, Windows), not on Linux. */
+export function defaultSlidePanels() {
+  return typeof navigator !== 'undefined' && detectOs() !== 'linux'
+}
+
 /** One-shot marker for the migration in `loadSettings` (see there for why). */
 const SCROLL_DEFAULT_KEY = 'stroke:scroll-default-v3'
 const scrollDefaultApplied = () => {
@@ -134,7 +139,7 @@ function pushProxySettings(proxy) {
     .catch((e) => { _proxySent = ''; console.warn('proxy settings not applied:', e) })
 }
 
-/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, displayTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, animatePanels: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null, proxy: ProxySettings, fonts: import('$lib/fonts.js').FontSettings }} AppSettings */
+/** @typedef {{ theme: ThemeId, zoom: number, font: FontId, iconStyle: IconStyleId, iconSet: IconSetId, tableStyle: TableStyleId, jsonTheme: JsonThemeId, editorTheme: import('$lib/themes/editor-themes.js').EditorThemeId, mcpAutoStart: boolean, launchAtLogin: boolean, autoUpdate: boolean, autoReconnectOnStartup: boolean, previewDmlBeforeApply: boolean, defaultDataView: string, paginationMode: string, maxQueryHistory: number, connectTimeoutMs: number, socketTimeoutMs: number, maxAllowedPacket: number, sessionTimezone: string, displayTimezone: string, vimMode: boolean, cmdkAiEnabled: boolean, liveModeEnabled: boolean, sidebarStyle: SidebarStyleId, aiInTab: boolean, lazyWideColumns: boolean, nullSortOrder: string, agentChatFontSize: number, agentCodeFontSize: number, agentThinkingStyle: string, agentShowQueryCards: boolean, agentWebAccess: boolean, tableTextAlign: string, telemetry: boolean, jsonWordWrap: boolean, nativeScroll: boolean, rowSpacing: RowSpacingId, motion: MotionId, slidePanels: boolean, insetPanel: boolean, quitGuard: boolean, reopenTabs: boolean, multiConnection: boolean, studioShare: boolean, treeFocusOnSwitch: boolean, boringConnectionBar: boolean, zebraRows: boolean, showRowNumbers: boolean, showRelationColumns: boolean, showMenuBar: boolean, numberGrouping: boolean, imagePreview: boolean, openUrlsOnClick: boolean, highlightActiveRow: boolean, fkAutoExpandJson: boolean, gridFontSize: number, autoSaveQueries: boolean, streamResults: boolean, sqlUndo: boolean, sidebarComments: boolean, sidebarRememberGroups: boolean, sqlFormat: import('$lib/sql-format-options.js').SqlFormatOptions, sqlEditor: import('$lib/sql-editor-options.js').SqlEditorOptions, shareDefaults: Record<string, any> | null, proxy: ProxySettings, fonts: import('$lib/fonts.js').FontSettings }} AppSettings */
 
 /**
  * UI type scale in design pixels: `[step, font-size, line-height?]`, matching
@@ -607,10 +612,16 @@ export const DEFAULT_SETTINGS = {
   nativeScroll: defaultNativeScroll(),
   rowSpacing: DEFAULT_ROW_SPACING,
   motion: DEFAULT_MOTION,
-  // The terminal dock and the AI panel slide open and closed. Off by default:
-  // on Linux the slide dropped frames, and an instant panel reads as fast.
-  // (Was `panelMotion`, on by default; renamed so every install starts off.)
-  animatePanels: false,
+  // The sidebar, the terminal dock and the AI panel slide open and closed.
+  // A platform default: on macOS and Windows WebKit composites on the GPU and
+  // the slide is smooth; on Linux it runs on the software renderer, where it
+  // dropped frames, so there they appear at once. (Was `animatePanels`, off
+  // everywhere, and before that `panelMotion`; renamed so every install takes
+  // the platform default once.)
+  slidePanels: defaultSlidePanels(),
+  // The page sits in a rounded panel inset from the window, the sidebar, title
+  // and status bars around it on one canvas (the Linear layout). Off: flat.
+  insetPanel: true,
   quitGuard: true,
   reopenTabs: true,
   multiConnection: false,
@@ -1024,7 +1035,8 @@ export function loadSettings() {
     }
     const rowSpacing = normalizeRowSpacing(parsed.rowSpacing)
     const motion = normalizeMotion(parsed.motion)
-    const animatePanels = parsed.animatePanels === true
+    const slidePanels = typeof parsed.slidePanels === 'boolean' ? parsed.slidePanels : defaultSlidePanels()
+    const insetPanel = parsed.insetPanel !== false
     const quitGuard = parsed.quitGuard !== false
     const reopenTabs = parsed.reopenTabs !== false
     const multiConnection = parsed.multiConnection === true
@@ -1077,7 +1089,7 @@ export function loadSettings() {
     const agentShowQueryCards = parsed.agentShowQueryCards === true
     const agentWebAccess = parsed.agentWebAccess === true
     const tableTextAlign = TABLE_ALIGN_IDS.includes(parsed.tableTextAlign) ? parsed.tableTextAlign : DEFAULT_TABLE_ALIGN
-    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, displayTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, animatePanels, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults, proxy, fonts }
+    _settingsCache = { theme, zoom, font, iconStyle, iconSet, tableStyle, jsonTheme, editorTheme, mcpAutoStart, launchAtLogin, autoUpdate, autoReconnectOnStartup, previewDmlBeforeApply, defaultDataView, paginationMode, maxQueryHistory, connectTimeoutMs, socketTimeoutMs, maxAllowedPacket, sessionTimezone, displayTimezone, vimMode, cmdkAiEnabled, liveModeEnabled, sidebarStyle, aiInTab, lazyWideColumns, nullSortOrder, agentChatFontSize, agentCodeFontSize, agentThinkingStyle, agentShowQueryCards, agentWebAccess, tableTextAlign, telemetry, jsonWordWrap, nativeScroll, rowSpacing, motion, slidePanels, insetPanel, quitGuard, reopenTabs, multiConnection, studioShare, treeFocusOnSwitch, boringConnectionBar, zebraRows, showRowNumbers, showRelationColumns, showMenuBar, numberGrouping, imagePreview, openUrlsOnClick, highlightActiveRow, fkAutoExpandJson, gridFontSize, autoSaveQueries, streamResults, sqlUndo, sidebarComments, sidebarRememberGroups, sqlFormat, sqlEditor, shareDefaults, proxy, fonts }
     // A migrated value is saved at once, or the next launch reads the old one.
     if (settingsMigrated) {
       try { localStorage.setItem(STORAGE_KEY, JSON.stringify(_settingsCache)) } catch {}
@@ -1375,7 +1387,8 @@ function applySettingsNow(settings, root, theme, zoom, dark) {
   // query in app.css decides; the other two override it in either direction.
   const motion = normalizeMotion(settings.motion)
   setAttr(root, 'data-motion', motion === 'system' ? null : motion)
-  setAttr(root, 'data-panel-motion', settings.animatePanels === true ? null : 'off')
+  setAttr(root, 'data-panel-motion', settings.slidePanels === true ? null : 'off')
+  setAttr(root, 'data-layout', settings.insetPanel === false ? null : 'inset')
   // macOS ⌘Q: a second press (or a held key) quits. The menu lives in Rust.
   if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) void import('@tauri-apps/api/core').then(({ invoke }) => invoke('set_quit_guard', { on: settings.quitGuard !== false })).catch(() => {})
   setStore(appMotion, motion)

@@ -131,7 +131,7 @@
     { id: 'database',     label: 'Database',     icon: 'database' },
     { id: 'appearance',   label: 'Appearance',   icon: 'sparkles' },
     { id: 'agent',        label: 'Agent',        icon: 'bot' },
-    { id: 'account',      label: 'Account & Sync', icon: 'cloud' },
+    { id: 'account',      label: 'Account & sync', icon: 'cloud' },
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
     { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
     { id: 'snippets',     label: 'Snippets',     icon: 'braces' },
@@ -143,16 +143,29 @@
   let query = $state('');
   /** The search field has focus: its `/` hint steps aside. */
   let settingsSearchFocused = $state(false);
-  const q = $derived(query.trim().toLowerCase());
+  // The results follow the field after a short pause in typing: they render
+  // every matching row of every page, and the first letter matches nearly all
+  // of them (~440 ms a keystroke), so a burst of typing rendered each prefix
+  // in turn. Clearing the field applies at once.
+  let appliedQuery = $state('');
+  $effect(() => {
+    const next = query;
+    if (!next.trim()) { appliedQuery = ''; return; }
+    const t = setTimeout(() => { appliedQuery = next; }, 120);
+    return () => clearTimeout(t);
+  });
+  const q = $derived(appliedQuery.trim().toLowerCase());
   const searching = $derived(q.length > 0);
   /** Row visibility under the current search query. */
   // Every word, in any order: "page size" has to find "Rows per page ... page
   // size", and "theme dark" the dark theme row.
   const qWords = $derived(q.split(/\s+/).filter(Boolean));
+  // At word starts: anywhere, "port" found every Import, Export and Report.
   const show = (/** @type {string} */ title, /** @type {string} */ desc = '') => {
     if (!q) return true;
     const hay = `${title} ${desc}`.toLowerCase();
-    return qWords.every((w) => hay.includes(w));
+    const words = hay.split(/[^\p{L}\p{N}]+/u).filter(Boolean);
+    return qWords.every((w) => words.some((x) => x.startsWith(w)) || (/[^\p{L}\p{N}]/u.test(w) && hay.includes(w)));
   };
   const activeCategory = $derived(CATEGORIES.find((c) => c.id === category) ?? CATEGORIES[0]);
   // A caller asking for a page (the command palette's "Keyboard shortcuts")
@@ -785,7 +798,7 @@
           {#key searching ? '__search__' : category}
             <div class="settings-pane">
               <h2 class="mb-6 text-ui-lg font-semibold tracking-tight text-foreground">
-                {searching ? `Results for "${query.trim()}"` : $t('settings.nav.' + activeCategory.id)}
+                {searching ? `Results for "${appliedQuery.trim()}"` : $t('settings.nav.' + activeCategory.id)}
               </h2>
 
               {#if searching}
@@ -1941,12 +1954,20 @@
       />
     </div>
   {/if}
-  {#if show('Animate panels', 'Slide the terminal and the AI panel open and closed')}
+  {#if show('Inset content panel', 'Page in a rounded panel inset from the window, Linear layout')}
+    {@render switchRow(
+      'Inset content panel',
+      'The page sits in a rounded panel, with the sidebar, title bar and status bar around it on one background. Off, regions meet at hairlines.',
+      settings.insetPanel !== false,
+      () => { settings = updateSettings({ insetPanel: settings.insetPanel === false }); },
+    )}
+  {/if}
+  {#if show('Animate panels', 'Slide the sidebar, the terminal and the AI panel; menus and dialogs ease in')}
     {@render switchRow(
       'Animate panels',
-      'The terminal dock and the AI panel slide open and closed. Off, they appear at once.',
-      settings.animatePanels === true,
-      () => { settings = updateSettings({ animatePanels: settings.animatePanels !== true }); },
+      'The sidebar, the terminal dock and the AI panel slide, and menus and dialogs ease in. Off, everything appears at once.',
+      settings.slidePanels === true,
+      () => { settings = updateSettings({ slidePanels: settings.slidePanels !== true }); },
     )}
   {/if}
   {#if isMacOs && show('Press ⌘Q twice to quit', 'Quit confirm command q hold double press')}
@@ -2133,8 +2154,8 @@
     <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
       {#if bindingFor('theme.next')}{@render shortcut(bindingFor('theme.next'), $t('settings.kbd.cycleTheme'))}{/if}
       {#if bindingFor('theme.prev')}{@render shortcut(bindingFor('theme.prev'), $t('settings.kbd.prevTheme'))}{/if}
-      {@render shortcut('Mod+Plus', $t('settings.kbd.zoom'))}
-      {@render shortcut('Mod+Minus', $t('settings.kbd.zoom'))}
+      {@render shortcut('Mod+Plus', $t('settings.kbd.zoomIn'))}
+      {@render shortcut('Mod+Minus', $t('settings.kbd.zoomOut'))}
       {@render shortcut('Mod+0', $t('settings.kbd.resetZoom'))}
     </div>
   {/if}

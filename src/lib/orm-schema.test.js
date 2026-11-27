@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  enumConstName,
   buildOrmSchemaModel,
   renderPrismaSchema,
   renderDrizzleSchema,
@@ -380,5 +381,13 @@ describe('renderSqlDatabase', () => {
 
   it('says so rather than returning nothing when there are no schemas', () => {
     expect(renderSqlDatabase([])).toContain('No schemas')
+  })
+})
+
+describe('enumConstName', () => {
+  it('adds Enum once', () => {
+    expect(enumConstName('order_status')).toBe('orderStatusEnum')
+    expect(enumConstName('approval_policies_kind_enum')).toBe('approvalPoliciesKindEnum')
+    expect(enumConstName('Role')).toBe('roleEnum')
   })
 })

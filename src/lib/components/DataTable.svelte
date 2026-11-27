@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   import { isReadOnly, guardWrite } from '$lib/stores/read-only.js';
   import { isPanelResizing } from '$lib/panel-motion.js';
   import { tick, onDestroy, untrack } from "svelte";
@@ -16,6 +17,7 @@
   import { readClipboardText } from '$lib/clipboard.js'
   import { setVimSubMode } from '$lib/vim/vim.js'
   import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
+  import { offerUndo } from "$lib/undo-toast.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -187,6 +189,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     columns = [],
     rows = [],
     loading = false,
+    /** Stop waiting for a load that is taking too long (the loader offers it after a few seconds). @type {(() => void) | null} */
+    onstopload = null,
     primaryKey = [],
     foreignKeys = [],
     saving = false,
@@ -263,7 +267,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     applyEdits = $bindable(/** @type {() => void | Promise<void>} */ (() => {})),
     /** Copy the staged changes as SQL instead of running them. */
     copyEditsSql = $bindable(/** @type {() => void | Promise<void>} */ (() => {})),
-    resetEdits = $bindable(/** @type {() => void} */ (() => {})),
+    /** Discard every staged change; `{ undoable: true }` (the user's Reset) offers Undo. */
+    resetEdits = $bindable(/** @type {(opts?: { undoable?: boolean }) => void} */ (() => {})),
     /** Assigned by this component; the parent (StatusBar) calls these to jump the
      *  table to the top / bottom. */
     scrollToTop = $bindable(/** @type {() => void} */ (() => {})),
@@ -1025,6 +1030,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   let newRowDrafts = $state(/** @type {Record<string, string>[] | null} */ (null))
   /** Name of the column whose input is focused in the new row. */
   let newRowFocusCol = $state(/** @type {string | null} */ (null))
+  /** Bumped by each Add: a new row asking for the same column as the last one
+   *  (discarded) changes nothing above, and the caret stayed on the button. */
+  let newRowFocusReq = $state(0)
   /** Which staged row the focused field belongs to. */
   let newRowFocusIdx = $state(0)
 
@@ -2394,9 +2402,25 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       await applyPendingEdits();
     };
     copyEditsSql = copyPendingChangeSql;
-    resetEdits = () => {
+    resetEdits = (opts) => {
       if (newRowDrafts) cancelNewRow();
+      // Reset threw away every staged edit at once with nothing to get them
+      // back. They go back on Undo while the same rows are on screen: staged
+      // edits point at row positions, so after a refetch they cannot.
+      const edits = new Map(pendingEdits);
+      const deletes = new Set(pendingDeletes);
+      const n = edits.size + deletes.size;
+      const rowsAt = rows;
       resetPendingEdits();
+      if (n > 0 && opts?.undoable) {
+        offerUndo(`Discarded ${n} ${n === 1 ? 'change' : 'changes'}`, tableName || '', () => {
+          if (rows !== rowsAt || pendingEdits.size || pendingDeletes.size) return false;
+          pendingEdits = edits;
+          pendingDeletes = deletes;
+          savePendingChanges(_persistKey, pendingEdits, pendingDeletes);
+          scheduleDraw();
+        });
+      }
     };
   });
   // An open insert draft counts. It is a change you have made and not applied,
@@ -2525,15 +2549,30 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     return drafts
   }
 
+  /**
+   * Where a new staged row puts the caret: the first column you have to fill,
+   * then one you may, then one with a default, and a generated key last. It
+   * took the first column that was not generated, which on a table keyed by a
+   * uuid with a default was the key, and the first letters typed became the
+   * id. A shown column first: the band only draws those.
+   */
+  function firstDraftFocusCol() {
+    /** @param {(c: any) => boolean} pred */
+    const pick = (pred) => visibleColumns.find(pred) ?? columns.find(pred)
+    /** @param {string} kind */
+    const omits = (kind) => (/** @type {any} */ c) => insertOmitBehaviour(c, primaryKey) === kind
+    const first = pick(omits('required')) ?? pick(omits('null')) ?? pick(omits('default')) ?? pick((c) => !isAutoColumn(c, primaryKey))
+    return first?.name ?? visibleColumns[0]?.name ?? columns[0]?.name ?? null
+  }
+
   function openInsertDraft(anchorRow = null) {
     if (readonly) { if (isReadOnly()) guardWrite('add rows'); return }
     // Add on an open band appends: pressing it three times is three rows, not
     // the same row reset twice.
     newRowDrafts = [...(newRowDrafts ?? []), blankDraft()]
     newRowFocusIdx = newRowDrafts.length - 1
-    // Focus first non-auto column (all columns, including hidden ones)
-    const first = columns.find((c) => !isAutoColumn(c, primaryKey))
-    newRowFocusCol = first?.name ?? columns[0]?.name ?? null
+    newRowFocusCol = firstDraftFocusCol()
+    newRowFocusReq++
     if (anchorRow === null) {
       tableContainer?.scrollTo({ top: 0, behavior: 'smooth' })
       return
@@ -2789,6 +2828,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // second staged row put the next character in the first one.
     const col = newRowFocusCol
     const bandIdx = newRowFocusIdx
+    void newRowFocusReq
     if (!col) return
     untrack(() => {
       if (!newRowDrafts?.length) return
@@ -3563,8 +3603,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     });
     newRowDrafts = [...(newRowDrafts ?? []), drafts];
     newRowFocusIdx = newRowDrafts.length - 1;
-    const firstEditable = columns.find((c) => !isAutoColumn(c, primaryKey));
-    newRowFocusCol = firstEditable?.name ?? columns[0]?.name ?? null;
+    newRowFocusCol = firstDraftFocusCol();
+    newRowFocusReq++;
     tableContainer?.scrollTo({ top: 0, behavior: "smooth" });
     toast.info(
       newRowDrafts.length === 1 ? "Copied into a new row" : `${newRowDrafts.length} rows staged`,
@@ -4722,14 +4762,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     const next = {}
     /** @type {Set<string>} */
     const auto = new Set()
+    const fittedBefore = key ? _fitCache.get(key) : undefined
     for (const col of cols) {
       const dt = col.dataType ?? col.data_type ?? ""
       // Builds before 2.21 saved every column's width when one was dragged,
       // the untouched ones at their fixed type default (420 for text). A
       // stored width equal to that default was never chosen: fit it instead.
       const own = stored[col.name] != null && stored[col.name] !== clampColumnWidth(defaultColumnWidth(dt)) ? stored[col.name] : null
-      if (own == null) auto.add(col.name)
-      next[col.name] = clampColumnWidth(own ?? defaultColumnWidth(dt))
+      // Fitted earlier this session: the same width again, with no measuring.
+      const fitted = own == null ? fittedBefore?.[col.name] : undefined
+      if (own == null && fitted == null) auto.add(col.name)
+      next[col.name] = clampColumnWidth(own ?? fitted ?? defaultColumnWidth(dt))
     }
     columnWidths = next
     // Columns nobody has sized are fitted to their content once rows arrive.
@@ -4745,6 +4788,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   /** Columns still waiting to be fitted (no stored width). */
   let _autoFitCols = $state(/** @type {Set<string>} */ (new Set()))
+  /**
+   * Widths fitted this session, by `columnWidthsKey`. The grid is one component
+   * shared by every table tab, so returning to a table re-ran the fit: up to
+   * 200 rows measured per unsized column on each switch back, for the widths
+   * it had already found. Kept in memory only, like the fit itself; capped.
+   * @type {Map<string, Record<string, number>>}
+   */
+  const _fitCache = new Map()
+  const FIT_CACHE_MAX = 200
   /** @type {CanvasRenderingContext2D | null} */
   let _measureCtx = null
   /**
@@ -4839,7 +4891,16 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         if (w != null) fitted[col.name] = w
       })
       _autoFitCols = new Set()
-      if (Object.keys(fitted).length) columnWidths = { ...columnWidths, ...fitted }
+      if (Object.keys(fitted).length) {
+        columnWidths = { ...columnWidths, ...fitted }
+        const key = columnWidthsKey
+        if (key) {
+          const prev = _fitCache.get(key)
+          _fitCache.delete(key) // re-inserted last: the cap drops the oldest table
+          _fitCache.set(key, { ...(prev ?? {}), ...fitted })
+          if (_fitCache.size > FIT_CACHE_MAX) _fitCache.delete(/** @type {string} */ (_fitCache.keys().next().value))
+        }
+      }
     })
   })
 
@@ -5130,6 +5191,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   $effect(() => {
     function onCapture(/** @type {KeyboardEvent} */ e) {
       if (!isTableFocused || editingCell) return;
+      // Every case below is Ctrl/Cmd without Alt. Checked before the layout
+      // read under it, which arrow keys moving through the grid paid for.
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       // A grid kept mounted behind another tab is display:none, and hiding a
       // focused element does not reliably send focusout: its flag can still
       // say focused while the keys belong to the page on screen.
@@ -5468,10 +5532,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       document.fonts.removeEventListener('loadingdone', refresh)
     }
   })
-
-  // Recreate the colour cache when the theme flips (the probe resolves the new
-  // computed colours). The bump runs in a MutationObserver callback (not an
-  // effect body), so reading _redrawToken here is not a tracked dependency.
+  // Recreate the colour cache when the theme flips, or the inset layout swaps
+  // the panel's surface tokens (the probe resolves the new computed colours).
+  // The bump runs in a MutationObserver callback (not an effect body), so
+  // reading _redrawToken here is not a tracked dependency.
   $effect(() => {
     const probe = colorProbe
     if (!probe || typeof MutationObserver === 'undefined') return
@@ -5480,7 +5544,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       _fonts = null // font family may have changed (--font-mono) - re-measure
       _redrawToken++
     })
-    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme'] })
+    mo.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'style', 'data-theme', 'data-layout'] })
     return () => mo.disconnect()
   })
 
@@ -6443,6 +6507,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       Number.isInteger(dy * blitScale) &&
       Number.isInteger(HEADER_H * blitScale) &&
       !_sawSkeleton &&
+      !_sawFade &&
       !newRowDrafts &&
       visibleColumns.length > 0
 
@@ -6472,6 +6537,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       Number.isInteger(dxs * blitScale) &&
       geom.frozenWidth === 0 &&
       !_sawSkeleton &&
+      !_sawFade &&
       !newRowDrafts &&
       visibleColumns.length > 0
     /** Columns outside [stripX0, stripX1) are skipped this frame (CSS px). */
@@ -6482,6 +6548,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       !canBlitX &&
       band !== null &&
       !_sawSkeleton &&
+      !_sawFade &&
       !newRowDrafts &&
       visibleColumns.length > 0
     if (!canBlit && !canBlitX && !partial) _imgWanted.clear()
@@ -6497,6 +6564,13 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // skeleton row painted below; the tail uses it to decide whether to keep
     // animating, so a fully loaded grid schedules nothing at all.
     _sawSkeleton = false
+    _sawFade = false
+    _frameNow = performance.now()
+    // Last frame's skeleton rows become this frame's fade candidates.
+    const _swap = _skelPrev
+    _skelPrev = _skelCur
+    _skelCur = _swap
+    _skelCur.clear()
     _skelMin = -1
     _skelMax = -1
     _shimmerFill = null
@@ -6853,6 +6927,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         _shimmerTimer = setTimeout(() => { _shimmerTimer = 0; scheduleDraw() }, 32)
       }
     }
+    // Rows easing in from a skeleton: keep painting until the last one is
+    // opaque, and forget any that scrolled away mid-fade.
+    if (_fadeAt.size) {
+      for (const [k, at] of _fadeAt) if (_frameNow - at >= ROW_FADE_MS) _fadeAt.delete(k)
+      if (_sawFade) scheduleDraw()
+    }
     publishLoadingSpan()
   }
 
@@ -6953,6 +7033,22 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   const SHIMMER_PERIOD = 1400
   /** True while any skeleton row was painted this frame - drives the shimmer loop. */
   let _sawSkeleton = false
+  // ── Landing fade ──────────────────────────────────────────────────────────
+  // A row that was a skeleton last frame and has data this frame eases its
+  // values in over ROW_FADE_MS rather than swapping bars for text in one
+  // frame. Only the values fade: the row's background, gutter and grid were
+  // already drawn by the skeleton and stay put.
+  const ROW_FADE_MS = 180
+  /** Rows painted as skeletons in the previous / current frame. */
+  let _skelPrev = new Set()
+  let _skelCur = new Set()
+  /** Row index -> when its data first painted (performance.now()). @type {Map<number, number>} */
+  const _fadeAt = new Map()
+  /** Any row painted mid-fade this frame (blits stay off while it is). */
+  let _sawFade = false
+  let _frameNow = 0
+  /** Skeleton bar opacity over the muted text colour. */
+  const SKELETON_ALPHA = 0.16
   let _shimmerPhase = 0
   let _lastShimmerFrame = 0
   /** The frame's highlight gradient, built once and shared by every skeleton row.
@@ -6981,6 +7077,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       ctx.fillRect(0, ry, c.usedW, rh)
     }
     _sawSkeleton = true
+    if (_shimmerOn) _skelCur.add(idx)
     if (_skelMin < 0 || idx < _skelMin) _skelMin = idx
     if (idx > _skelMax) _skelMax = idx
     // Sit on the text's own band: cap height, centred where the glyphs will be, so
@@ -7010,12 +7107,15 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       any = true
     }
     if (!any) return
-    ctx.fillStyle = withAlpha(c.cMutedBg, 0.4)
+    // The muted text colour, faint: --muted at 40% was the old fill, and on a
+    // near-black theme (Mono's --muted is L 0.15) it came out a shade off the
+    // background, so the bars all but vanished.
+    ctx.fillStyle = withAlpha(c.cMuted, SKELETON_ALPHA)
     ctx.fill()
     if (!_shimmerOn) return
     // Same path again under the sweep. The gradient is transparent outside the
     // band, so bars away from it are untouched without testing them.
-    if (!_shimmerFill) _shimmerFill = buildShimmerFill(ctx, c.cMutedBg)
+    if (!_shimmerFill) _shimmerFill = buildShimmerFill(ctx, c.cMuted)
     ctx.fillStyle = _shimmerFill
     ctx.fill()
   }
@@ -7039,7 +7139,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // mid-grid once a period - a blink, exactly on the beat.
     const cx = -band + _shimmerPhase * (_viewportWidth + band * 2)
     const g = ctx.createLinearGradient(cx - band / 2, 0, cx + band / 2, band * 0.35)
-    const peak = 0.34
+    const peak = SKELETON_ALPHA * 0.8
     g.addColorStop(0, withAlpha(mutedBg, 0))
     g.addColorStop(0.35, withAlpha(mutedBg, peak * 0.45))
     g.addColorStop(0.5, withAlpha(mutedBg, peak))
@@ -7096,7 +7196,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   /** @param {CanvasRenderingContext2D} ctx */
   function drawBodyRow(ctx, idx, ry, c) {
     const rh = ROW_HEIGHT
-    if (windowed && rows[idx] === undefined) { _rowBg = null; drawLoadingRow(ctx, idx, ry, rh, c); return }
+    if (windowed && rows[idx] === undefined) {
+      _rowBg = null
+      drawLoadingRow(ctx, idx, ry, rh, c)
+      // The same gutter (checkbox, row number) and grid as a loaded row, so the
+      // table's structure runs on past the last loaded row and only the values
+      // are placeholders.
+      const sl = c.scrollLeft
+      if (gutterWidth - sl > Math.max(0, c.stripX0) && -sl < Math.min(c.viewportWidth, c.stripX1)) drawRowGutters(ctx, idx, -sl, ry, rh, c)
+      drawRowGrid(ctx, idx, ry, rh, c)
+      return
+    }
     syncRowDisplayCache(idx)
     const isSel = selected.has(idx)
     const isPendingDelete = hasPendingDeletes && pendingDeletes.has(idx)
@@ -7105,6 +7215,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       ctx.fillStyle = _rowBg
       ctx.fillRect(0, ry, c.usedW, rh)
     }
+    const fade = rowFade(idx)
+    if (fade < 1) ctx.globalAlpha = fade
 
     // Non-pinned cells. geom.cols is ordered by ascending contentX: start at the
     // frame's precomputed first visible index (c.firstColIdx) and break once a
@@ -7245,6 +7357,30 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       }
     }
 
+    if (fade < 1) ctx.globalAlpha = 1
+    drawRowGrid(ctx, idx, ry, rh, c)
+  }
+
+  /** Opacity for a row's values: below 1 while it eases in from a skeleton. */
+  function rowFade(idx) {
+    if (_skelPrev.has(idx) && !_fadeAt.has(idx)) _fadeAt.set(idx, _frameNow)
+    const at = _fadeAt.get(idx)
+    if (at === undefined) return 1
+    const t = (_frameNow - at) / ROW_FADE_MS
+    if (t >= 1) { _fadeAt.delete(idx); return 1 }
+    _sawFade = true
+    // Ease out, from a quarter: the first frame already says where text is.
+    return 0.25 + 0.75 * (1 - (1 - t) * (1 - t))
+  }
+
+  /**
+   * The row's grid lines, in the active grid style. Shared by loaded and
+   * skeleton rows: a skeleton row that skipped it drew bars on a bare
+   * background, so the grid stopped at the last loaded row and the rows still
+   * coming read as a different layout.
+   * @param {CanvasRenderingContext2D} ctx
+   */
+  function drawRowGrid(ctx, idx, ry, rh, c) {
     // ── Batched grid pass ───────────────────────────────────────────────────
     // All separators (column edges, virtual edges, gutter, bottom row line) are
     // collected into ONE path and stroked once - instead of a beginPath/stroke
@@ -7639,9 +7775,17 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       gx += GUTTER_EXPAND_W
     }
     if (showSelection) {
-      drawCheckbox(ctx, gx + (GUTTER_SELECT_W - 16) / 2, ry + (rh - 16) / 2, 16,
-        { checked: selected.has(idx) },
-        { border: c.cMuted, fill: c.cPrimary, mark: c.cPanel })
+      // Like the expand chevron beside it: a row's box shows on the row under
+      // the pointer or the keyboard, on checked rows, and on every row once
+      // anything is selected. An empty box on every row, all the time, was a
+      // column of identical marks the eye had to read past on each line. The
+      // header's select-all box stays, so the column still says what it is.
+      const checked = selected.has(idx)
+      if (checked || selected.size > 0 || hoveredRow === idx || focusedRow === idx) {
+        drawCheckbox(ctx, gx + (GUTTER_SELECT_W - 16) / 2, ry + (rh - 16) / 2, 16,
+          { checked },
+          { border: c.cMuted, fill: c.cPrimary, mark: c.cPanel })
+      }
       gx += GUTTER_SELECT_W
     }
     if (GUTTER_NUM_W > 0) {
@@ -7958,7 +8102,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // 60% alpha measured 2.6:1 on the light themes; full muted is 6:1 or more.
     const typeStartX = tx + (indicators.length ? 5 : 3)
     const typeRoom = x + w - sortReserve - typeStartX
-    if (typeRoom > 24 && col.dataType) {
+    // SQLite reports "NULL" for a computed column (sum(x), a CASE): no type,
+    // and printed it read as the column's value.
+    if (typeRoom > 24 && col.dataType && String(col.dataType).toLowerCase() !== 'null') {
       ctx.font = _fonts.type
       ctx.fillStyle = c.cMuted
       ctx.fillText(truncText(ctx, col.dataType, typeRoom), typeStartX, cy + 0.5)
@@ -8556,7 +8702,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
           if (looksLikeUrl(val) && $appOpenUrlsOnClick) {
             void import('@tauri-apps/plugin-opener').then(m => m.openUrl(val)).catch(() => {})
           } else if (val) {
-            void navigator.clipboard.writeText(val).catch(() => {})
+            void navigator.clipboard.writeText(val).then(() => toast.success('Copied', { description: String(val).slice(0, 80), duration: 1200 }), () => {})
           }
           return
         }
@@ -9183,7 +9329,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   <div class="absolute inset-y-0 flex items-center justify-center border-r border-border/20 bg-primary/5" style="left:{showRowExpand ? GUTTER_EXPAND_W : 0}px; width:{GUTTER_SELECT_W}px">
                     <button
                       type="button"
-                      class="inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-destructive"
+                      class="hit-area inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-destructive"
                       onclick={() => removeDraftRow(di)}
                       title={draftCount > 1 ? 'Discard this row' : 'Cancel'}
                     >
@@ -9751,7 +9897,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
             <!-- Not click-through, so the Glass themes frost it like any other
                  covering surface instead of showing the old table through it. -->
             <div class="absolute inset-0 z-[3] flex flex-col bg-panel" role="status" aria-busy="true">
-              <TableLoading {embedded} />
+              <TableLoading {embedded} onstop={embedded ? null : onstopload} />
             </div>
           {:else if loading && columns.length === 0}
             <!-- Under the grace window: the last frame stays as it is. A quick
@@ -9792,15 +9938,23 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   {/if}
                 {:else if filtered}
                   <FilterX class="size-8 text-muted-foreground" />
-                  <p class="text-ui-sm text-muted-foreground">No rows match these filters</p>
+                  <!-- A search, a filter or both: words that fit either. -->
+                  <p class="text-ui-sm text-muted-foreground">No rows match</p>
                   {#if onclearfilters}
                     <Button type="button" variant="outline" size="sm" class="pointer-events-auto mt-1" onclick={() => onclearfilters?.()}>
-                      Clear filters
+                      Show all rows
                     </Button>
                   {/if}
                 {:else}
                   <Table2 class="size-8 text-muted-foreground" />
                   <p class="text-ui-sm text-muted-foreground">{emptyText}</p>
+                  <!-- An empty table's next step is its first row: the toolbar's
+                       Add sat far from the middle of the screen this points at. -->
+                  {#if hasTableContext && !readonly}
+                    <Button type="button" variant="outline" size="sm" class="pointer-events-auto mt-1 gap-2" onclick={() => openInsertDraft()}>
+                      Add row <Kbd command="table.addRow" />
+                    </Button>
+                  {/if}
                 {/if}
               </div>
             </div>
@@ -9902,7 +10056,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         {/if}
         <ContextMenu.Separator />
         <ContextMenu.Item
-          onSelect={() => runMenuAction(() => { virtualColumnsStore.remove(_tableKey, vcid) })}
+          onSelect={() => runMenuAction(() => { offerUndo('Column deleted', vcdef?.name ?? '', virtualColumnsStore.remove(_tableKey, vcid)) })}
           class="text-destructive focus:text-destructive"
         >
           <Trash2 /> Delete column
@@ -9920,12 +10074,12 @@ import FilterX from "@lucide/svelte/icons/filter-x";
         <ContextMenu.Item onSelect={() => runMenuAction(() => headerSortDirect(hcol, 'asc'))}>
           <ArrowUp />
           {$t('menu.sortAsc')}
-          {#if hAsc}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+          {#if hAsc}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
         </ContextMenu.Item>
         <ContextMenu.Item onSelect={() => runMenuAction(() => headerSortDirect(hcol, 'desc'))}>
           <ArrowDown />
           {$t('menu.sortDesc')}
-          {#if hDesc}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+          {#if hDesc}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
         </ContextMenu.Item>
         {#if hSorted}
           <ContextMenu.Item onSelect={() => runMenuAction(() => { if (pendingEdits.size > 0) { toast.error('Unsaved changes', { description: 'Apply or reset your edits before sorting.' }); return } onsortchange([]) })}>
@@ -10023,7 +10177,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
           <ContextMenu.Item onSelect={() => runMenuAction(() => { statsCol = statsCol === hcol ? null : hcol })}>
             <BarChart2 />
             {$t('menu.columnStats')}
-            {#if statsCol === hcol}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+            {#if statsCol === hcol}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
           </ContextMenu.Item>
         {/if}
         <ContextMenu.Separator />
@@ -10038,7 +10192,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
               <ContextMenu.Item onSelect={() => runMenuAction(() => setColHighlight(hcol, h.id))}>
                 <span class="size-3.5 shrink-0 rounded-full border border-border/40" style="background:{h.hex}"></span>
                 <span data-slot="menu-label">{h.label}</span>
-                {#if colHighlights[hcol]?.color === h.id}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+                {#if colHighlights[hcol]?.color === h.id}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
               </ContextMenu.Item>
             {/each}
             {#if colHighlights[hcol]?.color}
@@ -10073,7 +10227,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                 <ContextMenu.Item onSelect={() => runMenuAction(() => setColTransform(hcol, t.id))}>
                   <Wand2 />
                   <span data-slot="menu-label">{t.label}</span>
-                  {#if colTransforms[hcol] === t.id}<span class="ml-auto text-ui-3xs text-primary">✓</span>{/if}
+                  {#if colTransforms[hcol] === t.id}<Check class="ml-auto size-3.5 shrink-0 text-primary" />{/if}
                 </ContextMenu.Item>
               {/each}
             {:else}
@@ -10176,33 +10330,29 @@ import FilterX from "@lucide/svelte/icons/filter-x";
             <Copy />
             Copy as
           </ContextMenu.SubTrigger>
+          <!-- Format names only, as in the export menus: the same copy icon on
+               every row said what Copy as already does. -->
           <ContextMenu.SubContent class="min-w-44">
             <ContextMenu.Label>Cell</ContextMenu.Label>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyCellHex(contextRowIdx, contextColIdx))}>
-              <Copy />
               Hex
             </ContextMenu.Item>
             <ContextMenu.Separator />
             <ContextMenu.Label>Row</ContextMenu.Label>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'json'))}>
-              <Braces />
               JSON
             </ContextMenu.Item>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'csv'))}>
-              <Copy />
               CSV
             </ContextMenu.Item>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'plain'))}>
-              <Copy />
               Plain text
             </ContextMenu.Item>
             <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'markdown'))}>
-              <Copy />
               Markdown table
             </ContextMenu.Item>
             {#if hasTableContext}
               <ContextMenu.Item onSelect={() => runMenuAction(() => copyAs(contextRowIdx, 'insert'))}>
-                <Copy />
                 INSERT statement
               </ContextMenu.Item>
             {/if}
@@ -10241,6 +10391,8 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   {#if group.title}<ContextMenu.Label>{group.title}</ContextMenu.Label>{/if}
                   {#each group.items as item (item.key)}
                     <ContextMenu.Item onSelect={() => runMenuAction(() => onquickfilter(menuColName, item.op, item.value))}>
+                      <!-- An icon's width, so the label lines up with By this value above. -->
+                      <span class="size-3.5 shrink-0" aria-hidden="true"></span>
                       <span data-slot="menu-label">{item.label}</span>
                       {#if item.active}<Check class="ml-auto text-primary" />{/if}
                     </ContextMenu.Item>

@@ -111,12 +111,12 @@
     class="w-[min(32.5rem,calc(100vw-2rem))] sm:max-w-none gap-0 overflow-hidden p-0"
   >
     <div class="flex items-start gap-3.5 px-5 pt-5 pb-4">
-      <div class="mt-px shrink-0 rounded-lg bg-muted/50 p-2">
-        <Icon
-          name={icon}
-          class={cn('size-3.5', variant === 'destructive' ? 'text-destructive' : 'text-muted-foreground')}
-        />
-      </div>
+      <!-- The glyph alone (DESIGN_SYSTEM.md §11: no icon wells beside titles). -->
+      <Icon
+        name={icon}
+        class={cn('mt-0.5 size-4 shrink-0', variant === 'destructive' ? 'text-destructive' : 'text-muted-foreground')}
+        aria-hidden="true"
+      />
       <div class="min-w-0 flex-1">
         <Dialog.Title class="text-ui-sm font-semibold text-foreground">{title}</Dialog.Title>
         {#if body}

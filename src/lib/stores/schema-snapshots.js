@@ -289,6 +289,12 @@ export async function deleteSnapshot(id) {
   await db.delete(STORES.schemaSnapshots, id)
 }
 
+/** Put deleted snapshots back, for an Undo. @param {SchemaSnapshot[]} list */
+export async function restoreSnapshots(list) {
+  const db = await getStudioDb()
+  for (const snap of list) await db.put(STORES.schemaSnapshots, snap)
+}
+
 export async function deleteAllSnapshots() {
   const db = await getStudioDb()
   await db.clear(STORES.schemaSnapshots)

@@ -17,6 +17,18 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* Semantic colours as text read their contrast-safe variant (app-themes.css,
+   "Semantic text colours"); fills (bg-*, border-*, fill-*) keep the token.
+   `html .x` is one step more specific than the generated `.x`, so it wins
+   over it, while state variants (`hover:`, `data-[...]:`) still win over it. */
+@layer utilities {
+  html .text-success { color: var(--success-text); }
+  html .text-warning { color: var(--warning-text); }
+  html .text-destructive { color: var(--destructive-text); }
+  html .text-info { color: var(--info-text); }
+  html .text-primary { color: var(--primary-text); }
+}
+
 /* Non-theme tokens only - color palettes live on html[data-theme] in app-themes.css */
 :root {
   /* Tell the engine to render native controls (the <select> popup + <option>
@@ -298,7 +310,17 @@ textarea:not(.no-focus-ring):not(.no-field-frame):focus-visible {
    themes. */
 :root { --field-focus-edge: var(--ring); }
 @media (max-resolution: 1.5dppx) {
-  :root { --field-focus-edge: color-mix(in oklch, var(--ring) 65%, var(--field-border)); }
+  :root { --field-focus-edge: color-mix(in oklab, var(--ring) 65%, var(--field-border)); }
+}
+
+/* A filter's match inside a sidebar name (tables, views, objects, the tree).
+   Weight and full-strength text, no fill: `bg-primary/25` was a tinted chip on
+   colour themes but a flat grey block on the neutral ones (Mono's primary is
+   near-white), the full line tall and darker than the selected row behind it. */
+mark.search-hit {
+  background: none;
+  color: var(--foreground);
+  font-weight: 600;
 }
 
 /* The search row at the top of a dropdown: borderless, with the hairline under
@@ -699,8 +721,11 @@ html[data-os="linux"]   { --window-radius: 8px; }
      Inset by 2px: the row sits flush against the scroller's edge, and an
      outward ring would be clipped there. */
   [data-kbd-nav] [data-roving]:focus {
-    outline: 2px solid var(--ring);
-    outline-offset: -2px;
+    /* The same 1px edge a focused field wears (--field-focus-edge), so the
+       search box and the row the arrows land on read as one focus style. A
+       2px full-strength ring was twice as heavy as the field above it. */
+    outline: 1px solid var(--field-focus-edge);
+    outline-offset: -1px;
   }
 
   /* Portaled overlays - these render outside #app so must explicitly inherit
@@ -845,7 +870,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     font-size: var(--fs-2xs);  /* text-ui-2xs - crisper than a fixed 10px */
     font-weight: 500;
     line-height: 1;
-    color: color-mix(in oklch, var(--muted-foreground) 85%, var(--foreground));
+    color: color-mix(in oklab, var(--muted-foreground) 85%, var(--foreground));
     background: color-mix(in oklch, var(--muted) 45%, transparent);
     border: 1px solid color-mix(in oklch, var(--border) 75%, transparent);
     border-radius: 6px;
@@ -879,7 +904,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
      every row turned a list into a wall of little boxes competing with the
      labels. Keycaps stay where a key is the subject: legends, dialogs, hints. */
   :is([data-slot="command-item"], [data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-sub-trigger"],
-      [data-slot="context-menu-item"], [role="menuitem"], [role="option"]) kbd {
+      [data-slot="context-menu-item"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"]) kbd {
     min-width: 0;
     height: auto;
     padding: 0;
@@ -900,7 +925,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
     color: var(--muted-foreground);
   }
   :is([data-slot="command-item"], [data-slot="dropdown-menu-item"], [data-slot="dropdown-menu-sub-trigger"],
-      [data-slot="context-menu-item"], [role="menuitem"], [role="option"]) span:has(> kbd) {
+      [data-slot="context-menu-item"], [role="menuitem"], [role="menuitemradio"], [role="menuitemcheckbox"], [role="option"]) span:has(> kbd) {
     gap: 1px;
   }
 
@@ -1127,7 +1152,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
 
   /* Skeleton placeholders (shadcn-style pulse) */
   .skeleton {
-    background-color: color-mix(in oklch, var(--muted-foreground) 14%, var(--muted));
+    background-color: color-mix(in oklab, var(--muted-foreground) 14%, var(--muted));
     animation: skeleton-pulse 1.6s ease-in-out infinite;
   }
 
@@ -1145,7 +1170,7 @@ html[data-os="linux"]   { --window-radius: 8px; }
   .shimmer {
     position: relative;
     overflow: hidden;
-    background-color: color-mix(in oklch, var(--muted-foreground) 14%, var(--muted));
+    background-color: color-mix(in oklab, var(--muted-foreground) 14%, var(--muted));
     animation: skeleton-pulse 1.6s ease-in-out infinite;
   }
 
@@ -1677,8 +1702,8 @@ pre code,
   border-radius: var(--radius-sm);
   line-height: 1;
   letter-spacing: 0.01em;
-  color: color-mix(in oklch, var(--chip) 90%, var(--foreground));
-  background: color-mix(in oklch, var(--foreground) 7%, var(--background));
+  color: color-mix(in oklab, var(--chip) 90%, var(--foreground));
+  background: color-mix(in oklab, var(--foreground) 7%, var(--background));
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent);
 }
 .chip-gloss.chip-warning { --chip: var(--warning); }
@@ -1694,7 +1719,7 @@ pre code,
   align-items: center;
   border-radius: var(--radius-sm);
   color: var(--foreground);
-  background: color-mix(in oklch, var(--foreground) 6%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 6%, var(--background));
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 14%, transparent);
 }
 .key-gloss::before,
@@ -1729,16 +1754,16 @@ pre code,
    Clean hairline button surface with instant native press tint (no bounce). */
 .keycap-btn {
   color: var(--foreground);
-  background: color-mix(in oklch, var(--foreground) 7%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 7%, var(--background));
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 16%, transparent);
 }
 @media (hover: hover) and (pointer: fine) {
   .keycap-btn:not(:disabled):hover {
-    background: color-mix(in oklch, var(--foreground) 11%, var(--background));
+    background: color-mix(in oklab, var(--foreground) 11%, var(--background));
   }
 }
 .keycap-btn:not(:disabled):active {
-  background: color-mix(in oklch, var(--foreground) 15%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 15%, var(--background));
 }
 .keycap-btn:focus-visible {
   outline: 2px solid var(--ring);
@@ -1751,21 +1776,21 @@ html:not(.dark) .keycap-btn {
 }
 @media (hover: hover) and (pointer: fine) {
   html:not(.dark) .keycap-btn:not(:disabled):hover {
-    background: color-mix(in oklch, var(--foreground) 4%, var(--background));
+    background: color-mix(in oklab, var(--foreground) 4%, var(--background));
   }
 }
 html:not(.dark) .keycap-btn:not(:disabled):active {
-  background: color-mix(in oklch, var(--foreground) 8%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 8%, var(--background));
 }
 html:not(.dark) .key-well { box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 14%, transparent); }
 html:not(.dark) .key-well:focus-within { box-shadow: inset 0 0 0 1px var(--ring); }
 /* A field drawn as a well: a step darker than its surface, hairline edge. */
 .key-well {
-  background: color-mix(in oklch, var(--foreground) 4%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 4%, var(--background));
   box-shadow: inset 0 0 0 1px color-mix(in oklch, var(--foreground) 12%, transparent);
 }
 .key-well:focus-within {
-  background: color-mix(in oklch, var(--foreground) 2%, var(--background));
+  background: color-mix(in oklab, var(--foreground) 2%, var(--background));
   box-shadow: inset 0 0 0 1px var(--ring);
 }
 .key-well[data-invalid] {
@@ -1903,4 +1928,153 @@ html[data-os="linux"][data-dialog-open]
    scroll once the dialog reaches its max height. */
 [data-slot="dialog-content"] > .flex-1 {
   flex-basis: auto;
+}
+
+/* ── Inset content panel (Settings → Appearance) ─────────────────────────────
+   The Linear layout: title bar, sidebar and status bar share one canvas (the
+   sidebar colour) and the page sits in a rounded panel inset from it, so the
+   panel's own edge separates it and no hairline runs between regions. Every
+   colour is a theme token: the panel is --panel, the canvas --sidebar, which
+   every theme already draws as a distinct step. Off (flat), nothing here
+   applies. */
+html[data-layout="inset"] [data-studio-body],
+html[data-layout="inset"] [data-studio-region="titlebar"],
+html[data-layout="inset"] [data-studio-region="statusbar"] {
+  background-color: var(--sidebar);
+}
+html[data-layout="inset"] [data-studio-region="titlebar"] { border-bottom-color: transparent; }
+html[data-layout="inset"] [data-studio-region="statusbar"] { border-top-color: transparent; }
+html[data-layout="inset"] [data-studio-region="sidebar"] aside { border-color: transparent; }
+html[data-layout="inset"] [data-studio-panel] {
+  margin-right: 0.5rem;
+  border: 1px solid color-mix(in oklab, var(--border) 80%, transparent);
+  border-radius: calc(var(--radius) + 4px);
+  background-color: var(--panel);
+}
+/* No sidebar beside it (hidden, or in AI mode): the panel keeps a gutter on
+   its left as well. The dock is hidden with an inline `display: none`
+   (Svelte writes it with the space; both spellings are matched). */
+html[data-layout="inset"] [data-studio-body] > [style*="display: none"] + * > [data-studio-panel],
+html[data-layout="inset"] [data-studio-body] > [style*="display:none"] + * > [data-studio-panel],
+html[data-layout="inset"] [data-studio-body] > :first-child:not(:has([data-studio-region="sidebar"])) > [data-studio-panel] {
+  margin-left: 0.5rem;
+}
+/* No status bar under it: a gutter below too. */
+html[data-layout="inset"] :not(:has(> [data-studio-region="statusbar"])) > [data-studio-panel] {
+  margin-bottom: 0.5rem;
+}
+/* Nothing above it in its column (the title bar spans the window, or AI mode
+   hides the macOS title row): a gutter above as well. On macOS the title row
+   sits in the same column, right above the panel, and is the gap itself. */
+html[data-layout="inset"] [data-studio-panel]:first-child {
+  margin-top: 0.5rem;
+}
+
+/* ── Surfaces arriving (Settings → Appearance → Animate panels) ──────────────
+   Hover and press colours still snap (see "Native feel"). What moves is a
+   surface arriving: a menu grows from the edge of what opened it, a dialog
+   settles in, a pressed button gives a little, a check pops in. Short (120 to
+   160ms), ease-out, transform and opacity only, so the compositor does it.
+   Gated on the panel-motion switch: on by default where WebKit composites on
+   the GPU (macOS, Windows), off on Linux's software renderer, where a scaling
+   surface repainted its shadow every frame. Reduced motion zeroes all of it
+   (the blocks above). Submenus stay fade-only: they open under a pointer
+   already moving toward them. */
+@keyframes stroke-surface-in {
+  from { opacity: 0; transform: scale(0.97); }
+}
+@keyframes stroke-dialog-in {
+  from { opacity: 0; transform: translateY(4px) scale(0.98); }
+}
+@keyframes stroke-check-in {
+  from { opacity: 0; transform: scale(0.6); }
+}
+html:not([data-panel-motion="off"]) :is(
+  [data-slot="dropdown-menu-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="popover-content"],
+  [data-slot="select-content"]
+)[data-state="open"] {
+  transform-origin: var(--bits-floating-transform-origin, top center);
+  animation: stroke-surface-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+/* Floating cards that are not menu primitives (the connection hover card, the
+   table peek) opt in with data-surface-in; data-surface-origin says which
+   edge they grow from. */
+html:not([data-panel-motion="off"]) [data-surface-in] {
+  transform-origin: var(--surface-origin, left top);
+  animation: stroke-surface-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-state="open"] {
+  animation: stroke-dialog-in 160ms cubic-bezier(0.2, 0, 0, 1);
+}
+/* Dialogs sit on the popover surface, as menus do (DESIGN_SYSTEM.md: popover
+   is the surface for floating menus and dialogs). They drew --background: in
+   light themes that is the grey of the page around the panel, so a dialog was
+   a grey sheet; in dark ones it is the page's own near-black, set apart only
+   by a shadow that barely shows on it. */
+[data-slot="dialog-content"] {
+  background-color: var(--popover);
+}
+/* Linux: WebKitGTK paints in software and repaints a dialog's blurred shadow
+   whenever anything inside it changes. The two-layer shadow (22 and 52px
+   blurs) cost 30-45 ms on each letter typed in the command menu; one 24px
+   layer reads the same at a glance. */
+html[data-os="linux"] [data-slot="dialog-content"] {
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent), 0 12px 24px -10px oklch(0 0 0 / 0.22);
+}
+/* The command menu opens many times an hour: the shorter, smaller motion. */
+html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-command-dialog][data-state="open"] {
+  animation: stroke-surface-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+html:not([data-panel-motion="off"]) [data-slot="button"] {
+  transition: transform 80ms cubic-bezier(0.2, 0, 0, 1);
+}
+html:not([data-panel-motion="off"]) [data-slot="button"]:active:not(:disabled) {
+  transform: scale(0.98);
+}
+html:not([data-panel-motion="off"]) [data-slot="checkbox-indicator"] > svg {
+  animation: stroke-check-in 120ms cubic-bezier(0.2, 0, 0, 1);
+}
+/* The sidebar's rows line up with the panel's across the gap (its icon row
+   with the tab row, its schema picker with the toolbar), so it starts below
+   the same gutter. Not on macOS: there the sidebar runs up under the traffic
+   lights and the panel has no gutter above it. */
+html[data-layout="inset"]:not([data-os="macos"]) [data-studio-region="sidebar"] {
+  /* 6px, not the gutter's 8: the sidebar's first row is a little taller than
+     the tab row, and this puts their centres on one line. */
+  padding-top: 0.375rem;
+}
+/* Dark themes: the panel is raised, the canvas recessed. Their sidebar token
+   is one step LIGHTER than the content (the flat layout's choice), so drawn
+   as is the inset panel read as a well sunk into a lighter frame. Elevation in
+   the dark goes up by lightening, so here the two swap: the canvas takes the
+   darker --background and everything inside the panel takes the lighter tone
+   as its --background and --panel. The grid and the editors read their
+   colours from these tokens, so they follow. Light themes already have a
+   white panel on a grey canvas. */
+html.dark[data-layout="inset"] {
+  --inset-canvas: var(--background);
+  --inset-raised: var(--sidebar);
+}
+html.dark[data-layout="inset"] :is([data-studio-body], [data-studio-region="titlebar"], [data-studio-region="statusbar"]) {
+  background-color: var(--inset-canvas);
+}
+html.dark[data-layout="inset"] [data-studio-region="sidebar"] {
+  --sidebar: var(--inset-canvas);
+}
+/* Light themes: the panel is the near-white --panel and --background is the
+   grey around it, so a page that painted bg-background (the AI view, the
+   Advisor, Diagrams) sat a shade darker than its neighbours in the same
+   panel. Inside the panel the page colour is the panel's, as in dark. */
+html:not(.dark)[data-layout="inset"] [data-studio-panel] {
+  --background: var(--panel);
+}
+html.dark[data-layout="inset"] [data-studio-panel] {
+  --background: var(--inset-raised);
+  --panel: var(--inset-raised);
+  /* A side list inside the panel (AI mode's chats) keeps its step from the
+     page around it, recessed like the app's own sidebar. */
+  --sidebar: var(--inset-canvas);
+  background-color: var(--inset-raised);
 }

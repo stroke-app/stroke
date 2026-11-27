@@ -190,7 +190,7 @@ borderless fill.
 | `rounded-sm` | menu / select rows — the concentric radius inside a `rounded-[10px]` panel with `p-1` (10 − 4 = 6px) |
 | `rounded-lg` | cards, panels, grouped containers, field wrappers |
 | `rounded-[10px]` | floating popovers / command menus |
-| `rounded-2xl` | modal dialog contents only (`bg-background border-border/60 elevate-3-rim`, overlay `bg-black/65`) |
+| `rounded-2xl` | modal dialog contents only (`bg-popover border-border/60 elevate-3-rim`, overlay `bg-black/65`; `app.css` puts every `dialog-content` on `--popover`) |
 | `rounded-full` | dots, pills, avatars, status indicators |
 
 No other radii. No `rounded-xl`/`rounded-sm` in new code unless matching a
@@ -300,6 +300,12 @@ that contrast is the point.
   a menu past ~10 top-level rows is hard to scan (see the DataTable cell menu:
   Copy as ›, Filter ›, Transform ›, Insert ›).
 - One active dialog/menu at a time from the global hotkey flow.
+- **Command menu rows** (root page) filter themselves through
+  `src/lib/command-local-filter.svelte.js`, not bits-ui: every `Command.Item`
+  there needs a `value` (the words it is found by) and `keywords={[label]}`
+  (the visible label, which ranks highest). A row without the label keyword
+  ranks below rows that merely mention its words. Groups need a stable
+  `value` (their id in `ROOT_GROUPS`), which orders them while searching.
 
 ### Canonical menu recipe (dropdown / context / select — all identical)
 
@@ -415,6 +421,28 @@ choices (engines, providers, suggestions) follow as borderless rows/chips
 grid of bordered cards. The AI landing puts the composer directly under the
 headline in one centred column (max ~44rem), with at most four suggestion rows
 below it.
+
+## 10b. Deleting: undo, not confirm
+
+A delete that can be put back goes at once and offers **Undo** in the toast:
+`offerUndo('<Thing> deleted', name, restore)` from `src/lib/undo-toast.js`
+(8 seconds; a `restore` that returns `false` says it could not).
+The store's delete returns a restore function (see `deleteDashboard`,
+`deleteChart`, `deleteDiagram` in `src/lib/stores/`) that puts the item back at
+its index and returns `false` once the list on screen belongs to another
+connection. A confirm dialog charges every delete a second click to guard the
+rare wrong one; Undo charges only that one.
+
+Keep a confirm only when the effect cannot be undone from the app: dropping or
+truncating a table, deleting database rows or documents, deleting backups on
+disk, clearing a whole history at once.
+
+## 10c. Surfaces inside the inset panel
+
+With `data-layout="inset"`, `--background` inside `[data-studio-panel]` is the
+panel's colour in both themes (`app.css`). Paint a page with `bg-background` or
+`bg-panel` and it sits on the panel; the grey around the panel is for the
+sidebar, title bar and status bar only.
 
 ---
 

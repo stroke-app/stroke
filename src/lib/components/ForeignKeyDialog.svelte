@@ -214,7 +214,7 @@
             class="inline-flex h-8 items-center whitespace-nowrap rounded-md px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
             onclick={() => (open = false)}>Cancel</button>
           <button type="button" disabled={!isValid || saving || deleting}
-            class="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-foreground px-4 text-ui-sm font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
+            class="inline-flex h-8 items-center gap-1.5 whitespace-nowrap rounded-lg bg-primary px-4 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80 disabled:opacity-40"
             onclick={handleSave}>
             {#if saving}<Loader class="size-3 shrink-0 animate-spin" />{/if}
             {constraintName ? 'Update FK' : 'Add FK'}

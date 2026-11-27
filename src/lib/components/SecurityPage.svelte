@@ -1,5 +1,8 @@
 <script>
+  import EmptyState from './EmptyState.svelte'
+  import { Button } from '$lib/components/ui/button/index.js'
   import { comboTitle } from '$lib/shortcuts.js'
+  import SkeletonRows from "./SkeletonRows.svelte";
   import { errorText } from '$lib/utils.js'
   import { executeSql } from "$lib/api.js";
   import ShieldCheck from "@lucide/svelte/icons/shield-check";
@@ -345,10 +348,10 @@
   );
 
   const TABS = [
-    { id: "roles", label: "Roles & Users" },
+    { id: "roles", label: "Roles & users" },
     { id: "permissions", label: "Permissions" },
     { id: "policies", label: "Policies" },
-    { id: "rls", label: "Row Level Security" },
+    { id: "rls", label: "Row-level security" },
   ];
 </script>
 
@@ -368,16 +371,8 @@
       mysql: 'MySQL', mariadb: 'MariaDB', sqlite: 'SQLite', d1: 'Cloudflare D1',
       libsql: 'LibSQL', clickhouse: 'ClickHouse', duckdb: 'DuckDB', mssql: 'SQL Server',
     }[connectionType ?? ''] ?? (connectionType ?? 'This engine')}
-    <div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-4 p-8 text-center">
-      <ShieldCheck class="size-10 shrink-0 text-muted-foreground" />
-      <div class="space-y-1.5">
-        <p class="text-ui font-medium text-foreground">{engineLabel} does not support roles or RLS</p>
-        <p class="text-ui-xs text-muted-foreground">
-          Row Level Security and role management require PostgreSQL or CockroachDB.<br />
-          Use the SQL editor to manage {engineLabel} users and permissions directly.
-        </p>
-      </div>
-    </div>
+    <EmptyState class="min-h-0 flex-1 justify-center p-8" icon={ShieldCheck} title={`${engineLabel} does not support roles or RLS`}
+      description={`Row-level security and role management need PostgreSQL or CockroachDB. Manage ${engineLabel} users and permissions in the SQL editor.`} />
   {:else}
   <!-- Tab row -->
   <div class="flex shrink-0 items-center border-b border-border bg-panel">
@@ -416,8 +411,10 @@
       <div
         class="flex items-center justify-between border-b border-border/40 px-3 py-2"
       >
+        <!-- No count until the roles are in: it read "0 roles" while they
+             loaded. -->
         <span class="text-ui-xs text-muted-foreground"
-          >{ownRoles.length} {ownRoles.length === 1 ? "role" : "roles"}{#if builtinRoles.length}{` · ${builtinRoles.length} built-in`}{/if}</span
+          >{#if roles !== null && !rolesLoading}{ownRoles.length} {ownRoles.length === 1 ? "role" : "roles"}{#if builtinRoles.length}{` · ${builtinRoles.length} built-in`}{/if}{/if}</span
         >
         <button
           type="button"
@@ -429,13 +426,8 @@
       </div>
 
       {#if rolesLoading || roles === null}
-        <div
-          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
-        >
-          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
-            class="text-ui-sm">Loading…</span
-          >
-        </div>
+        <!-- The roles table's eight columns: name, then the flags. -->
+        <SkeletonRows cols={[60, 12, 12, 12, 12, 12, 20, 20]} />
       {:else if rolesError}
         <div class="px-4 py-8 text-center">
           <p class="text-ui-xs text-destructive">{rolesError}</p>
@@ -449,12 +441,7 @@
           >
         </div>
       {:else if roles.length === 0}
-        <div
-          class="flex h-full flex-col items-center justify-center gap-3 py-16 text-center"
-        >
-          <Users class="size-10 shrink-0 text-muted-foreground" />
-          <p class="text-ui text-muted-foreground">No roles found</p>
-        </div>
+        <EmptyState class="h-full justify-center py-16" icon={Users} title="No roles yet" description="Roles and users created in this database show up here." />
       {:else}
         <table class="w-full text-ui-xs">
           <thead class="studio-chrome sticky top-0 z-10 bg-panel text-left">
@@ -500,13 +487,18 @@
               >
                 <td class="px-3 py-2">
                   <div class="flex items-center gap-2">
+                    <!-- The initials repeat the name beside them: decoration, so
+                         hidden from screen readers. The tint carries the kind;
+                         primary-coloured letters on the primary tint measured
+                         3.86:1 on dark, so the letters are the text colour. -->
                     <span
+                      aria-hidden="true"
                       class={cn(
                         "inline-flex size-6 shrink-0 items-center justify-center rounded-full text-ui-3xs font-semibold uppercase",
                         isSuper
                           ? "bg-destructive/10 text-destructive"
                           : isLogin
-                            ? "bg-primary/10 text-primary"
+                            ? "bg-primary/15 text-foreground"
                             : "bg-muted text-muted-foreground",
                       )}>{String(role.rolname).slice(0, 2)}</span
                     >
@@ -572,9 +564,7 @@
       <!-- Permissions (master-detail) -->
     {:else if activeTab === "permissions"}
       {#if rolesLoading || roles === null}
-        <div class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground">
-          <RefreshCw class="size-4 shrink-0 animate-spin" /><span class="text-ui-sm">Loading…</span>
-        </div>
+        <SkeletonRows cols={[45, 20, 15, 15, 15]} />
       {:else if rolesError}
         <div class="px-4 py-8 text-center">
           <p class="text-ui-xs text-destructive">{rolesError}</p>
@@ -689,7 +679,8 @@
               <section class="px-4 py-3">
                 <p class="mb-2 text-ui-xs font-medium text-muted-foreground">Database access</p>
                 {#if dbGrantsLoading || dbGrants === null}
-                  <div class="loading-reveal flex items-center gap-2 py-6 text-muted-foreground"><RefreshCw class="size-3.5 shrink-0 animate-spin" /><span class="text-ui-xs">Loading grants…</span></div>
+                  <!-- The grants table's three columns while they load. -->
+                  <SkeletonRows rows={3} cols={[50, 25, 25]} class="overflow-hidden rounded-md border border-border/40" />
                 {:else if dbGrantsError}
                   <p class="text-ui-2xs text-destructive">{dbGrantsError}</p>
                 {:else if dbGrants.length === 0}
@@ -732,6 +723,9 @@
 
       <!-- Policies -->
     {:else if activeTab === "policies"}
+      <!-- The count and New policy wait for the first policy: with none, the
+           empty state below says 0 and offers the same button. -->
+      {#if (policies?.length ?? 0) > 0}
       <div
         class="flex items-center justify-between border-b border-border/40 px-3 py-2"
       >
@@ -748,15 +742,10 @@
           <Plus class="size-3.5 shrink-0" />New policy
         </button>
       </div>
+      {/if}
 
       {#if policiesLoading || policies === null}
-        <div
-          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
-        >
-          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
-            class="text-ui-sm">Loading…</span
-          >
-        </div>
+        <SkeletonRows cols={[45, 20, 15, 15, 15]} />
       {:else if policiesError}
         <div class="px-4 py-8 text-center">
           <p class="text-ui-xs text-destructive">{policiesError}</p>
@@ -770,23 +759,9 @@
           >
         </div>
       {:else if policies.length === 0}
-        <div
-          class="flex h-full flex-col items-center justify-center gap-3 py-20 text-center"
-        >
-          <ShieldCheck class="size-10 shrink-0 text-muted-foreground" />
-          <p class="text-ui text-muted-foreground">
-            No policies found
-          </p>
-          <p class="mt-1 text-ui-xs text-muted-foreground">
-            Enable RLS on a table and create a policy to control row access
-          </p>
-          <button
-            type="button"
-            class= "field-surface mt-3 inline-flex h-7 items-center gap-1.5 bg-background px-2.5 text-ui-xs text-muted-foreground transition-colors hover:bg-accent/35 hover:text-foreground"
-            onclick={openPolicyModal}
-            ><Plus class="size-3.5 shrink-0" />Create first policy</button
-          >
-        </div>
+        <EmptyState class="h-full justify-center py-20" icon={ShieldCheck} title="No policies yet" description="Enable RLS on a table and create a policy to control which rows each role sees.">
+          <Button size="sm" onclick={openPolicyModal}><Plus class="size-3.5 shrink-0" />Create first policy</Button>
+        </EmptyState>
       {:else}
         <table class="w-full text-ui-xs">
           <thead class="studio-chrome sticky top-0 z-10 bg-panel text-left">
@@ -928,13 +903,7 @@
       </div>
 
       {#if rlsLoading || rlsTables === null}
-        <div
-          class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground"
-        >
-          <RefreshCw class="size-4 shrink-0 animate-spin" /><span
-            class="text-ui-sm">Loading…</span
-          >
-        </div>
+        <SkeletonRows cols={[45, 20, 15, 15, 15]} />
       {:else if rlsError}
         <div class="px-4 py-8 text-center">
           <p class="text-ui-xs text-destructive">{rlsError}</p>

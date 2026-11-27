@@ -1,6 +1,8 @@
 <script>
 	import { Command as CommandPrimitive, useId } from "bits-ui";
+	import { getContext, setContext } from "svelte";
 	import { cn } from "$lib/utils.js";
+	import { LOCAL_FILTER, LOCAL_GROUP } from "$lib/command-local-filter.svelte.js";
 
 	let {
 		ref = $bindable(null),
@@ -10,6 +12,15 @@
 		value,
 		...restProps
 	} = $props();
+
+	const fallbackId = useId();
+	const groupValue = $derived(value ?? heading ?? `----${fallbackId}`);
+	/** @type {ReturnType<typeof import("$lib/command-local-filter.svelte.js").createLocalFilter> | undefined} */
+	const local = getContext(LOCAL_FILTER);
+	setContext(LOCAL_GROUP, { get key() { return groupValue; } });
+	// With the page filtering its own rows, a group none of whose rows match
+	// hides, but stays mounted: its rows keep scoring as the search changes.
+	const hidden = $derived(!!local?.search && local.best(groupValue) <= 0);
 </script>
 
 <CommandPrimitive.Group
@@ -18,9 +29,10 @@
 	class={cn(
 		"text-foreground py-1",
 		"[&_[data-command-group-items]]:flex [&_[data-command-group-items]]:w-full [&_[data-command-group-items]]:min-w-0 [&_[data-command-group-items]]:flex-col [&_[data-command-group-items]]:gap-px",
+		hidden && "hidden",
 		className,
 	)}
-	value={value ?? heading ?? `----${useId()}`}
+	value={groupValue}
 	{...restProps}
 >
 	{#if heading}

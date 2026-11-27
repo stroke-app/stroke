@@ -1,4 +1,5 @@
 <script>
+  import { untrack } from 'svelte'
   import Settings2 from '@lucide/svelte/icons/settings-2'
   import ChevronDown from '@lucide/svelte/icons/chevron-down'
   import Sparkles from '@lucide/svelte/icons/sparkles'
@@ -54,6 +55,16 @@
   let query = $state('')
   let favorites = $state(loadFavorites())
   let highlight = $state(0)
+  /** Set once the highlight is moved by hand (keys, pointer, typing). Until
+   *  then it follows the current model, whose row can arrive after the picker
+   *  opens: the local agents (Claude Code, Codex) are looked up on open, and
+   *  the highlight sat on Stroke Free above them. */
+  let highlightMoved = false
+  $effect(() => {
+    if (!open || highlightMoved) return
+    const i = flat.findIndex((e) => e.active)
+    if (i >= 0 && i !== untrack(() => highlight)) highlight = i
+  })
   let searchEl = $state(/** @type {HTMLInputElement | null} */ (null))
   /** The agent whose setup command was just copied. */
   let copied = $state('')
@@ -209,6 +220,7 @@
     query = ''
     copied = ''
     expanded = new Set()
+    highlightMoved = false
     highlight = Math.max(0, flat.findIndex((e) => e.active))
     void refreshLocalAgents()
     queueMicrotask(() => {
@@ -225,6 +237,7 @@
 
   /** @param {number} i */
   function moveTo(i) {
+    highlightMoved = true
     highlight = i
     document.getElementById(`ai-model-opt-${i}`)?.scrollIntoView({ block: 'nearest' })
   }
@@ -281,7 +294,7 @@
       <input
         bind:this={searchEl}
         bind:value={query}
-        oninput={() => (highlight = 0)}
+        oninput={() => { highlightMoved = true; highlight = 0 }}
         onkeydown={onSearchKey}
         class="no-focus-ring min-w-0 flex-1 bg-transparent text-ui-xs text-foreground outline-none placeholder:text-muted-foreground"
         placeholder="Search models"
@@ -338,7 +351,7 @@
               "group flex h-8 w-full min-w-0 cursor-pointer items-center gap-2 rounded-md px-2",
               i === highlight && "bg-accent",
             )}
-            onmouseenter={() => (highlight = i)}
+            onmouseenter={() => { highlightMoved = true; highlight = i }}
             onclick={() => choose(e)}
             onkeydown={(ev) => ev.key === 'Enter' && choose(e)}
           >

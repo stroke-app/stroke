@@ -1,8 +1,11 @@
 <script>
   import Kbd from './Kbd.svelte'
+  import { toastConnectionRemoved } from "$lib/connection-undo.js";
+  import { toast } from "$lib/components/ui/sonner/toast.svelte.js";
+  import TablePeek, { clearPeekCache } from "./TablePeek.svelte";
   import { toggleLightDark, isCurrentThemeDark } from '$lib/stores/settings.js'
   import DbIcon from './DbIcon.svelte'
-  import { engineId } from '$lib/connection-provider.js'
+  import { engineId, engineLabel } from '$lib/connection-provider.js'
   import { workspaces, activeWorkspaceId, inWorkspace } from '$lib/stores/workspaces.js'
 
   import { comboTitle } from '$lib/shortcuts.js'
@@ -27,7 +30,6 @@
   import { smoothScroll } from "$lib/smooth-scroll.js";
   import * as Select from "$lib/components/ui/select/index.js";
   import * as ContextMenu from "$lib/components/ui/context-menu/index.js";
-  import ConfirmDialog from "./ConfirmDialog.svelte";
   import { setConnectionMeta } from "$lib/stores/connections.js";
   import PanelRight from "@lucide/svelte/icons/panel-right";
   import PanelLeft from "@lucide/svelte/icons/panel-left";
@@ -36,14 +38,14 @@
   import RedisSidebarNav from "./RedisSidebarNav.svelte";
 
   import { Button } from '$lib/components/ui/button/index.js'
-  import { cn } from "$lib/utils.js";
+  import { cn, errorText } from "$lib/utils.js";
   import { CRASH_WORD, isMagic, armCrash } from '$lib/games/easter-eggs.js'
   import { flushSync, tick } from "svelte";
   import { t, tx } from "$lib/i18n.js";
   import { visibleRowCount, soleMatch } from "$lib/sidebar-filter.js";
   import { splitSchemas, isSystemSchema } from "$lib/system-schemas.js";
   import { aiChatList, requestChat } from "$lib/stores/ai-chat-bridge.js";
-  import { listConversations, deleteConversation, updateConversation } from "$lib/stores/conversations.js";
+  import { listConversations, deleteConversation, restoreConversation, updateConversation } from "$lib/stores/conversations.js";
   import { formatTableRowCount, compareCreated } from "$lib/table-list.js";
   import {
     clampNavSidebarWidth,
@@ -83,6 +85,8 @@
     connections = [],
     /** id of the currently live connection (Connections panel highlight). */
     activeConnectionId = "",
+    /** A saved connection being opened: its row shows a spinner. */
+    connectingId = "",
     /** AI chat opens as a tab (beta): list its chats here, above Connections. */
     aiInTab = false,
     /** The connection's chat key, and the test for its stored chats (lib/ai-chat-key.js). */
@@ -96,6 +100,8 @@
     /** @type {(c: import('$lib/stores/connections.js').SavedConnection) => void} */
     onswitchconnection = () => {},
     onaddconnection = () => {},
+    /** The + on the Connections header: the New connection form. */
+    onnewconnection = () => {},
     /** Sidebar footer (T3-style). */
     onopensettings = () => {},
     onopenshortcuts = () => {},
@@ -659,7 +665,10 @@
       const id = treeMode && TREE_REPLACES.has(tab.id) ? 'tree' : tab.id
       if (!visibleTabs.some((t) => t.id === id)) return
       e.preventDefault()
-      sidebarTab = id
+      // Find & replace is a tool, not a list: its key puts you in the Find
+      // field, as Edit > Find & replace does. The lists keep focus where it is.
+      if (id === 'search') openFindReplace()
+      else sidebarTab = id
     })
   })
   /** Mod+Alt+Left/Right is the table's (first / last column) unless focus is here. */
@@ -823,9 +832,6 @@
   // few thousand tables affordable.
   let menuTable = $state('')
 
-  /** A saved connection waiting on "Delete connection?". @type {any} */
-  let pendingConnRemove = $state(null)
-  let confirmConnRemoveOpen = $state(false)
 
   // ── Selection state ───────────────────────────────────────────────────────
   /** @type {Set<string>} */
@@ -891,7 +897,11 @@
 
 
   function copySelectedNames() {
-    navigator.clipboard.writeText([...selectedItems].join('\n'))
+    const names = [...selectedItems]
+    void navigator.clipboard.writeText(names.join('\n')).then(
+      () => toast.success(`Copied ${names.length} table name${names.length === 1 ? '' : 's'}`, { duration: 1500 }),
+      () => toast.error("Couldn't copy to the clipboard"),
+    )
     clearSelection()
   }
 
@@ -959,11 +969,22 @@
     }
     localFilter = value;
     if (filterDebounce) clearTimeout(filterDebounce);
+    filterDebounce = null;
+    // The wait scales with the list. A flat 200ms made a schema of a few
+    // hundred tables answer each keystroke a fifth of a second late, when
+    // narrowing a windowed list that size takes a few milliseconds. Only a
+    // schema with thousands of tables still waits for a pause in typing.
+    const wait = tables.length > 2000 ? 200 : tables.length > 500 ? 80 : 0;
+    if (wait === 0) {
+      debouncedFilter = value;
+      ontablefilter(value);
+      return;
+    }
     filterDebounce = setTimeout(() => {
       filterDebounce = null;
       debouncedFilter = value;
       ontablefilter(value);
-    }, 200);
+    }, wait);
   }
 
   // Release the pending filter timer when the sidebar unmounts.
@@ -1197,6 +1218,8 @@
   })
   /** How many rows the open list is drawing. Drives the ↵ chip and Enter. */
   const renderedRowCount = $derived(navKeys.length)
+  /** A search has left exactly one row: the field shows an Enter cap that opens it. */
+  const showOpenCap = $derived(renderedRowCount === 1 && !!debouncedFilter.trim() && sidebarTab !== "tree")
 
   // ── One tab stop for the list (ARIA APG roving tabindex) ──────────────────
   // Every row was its own tab stop, so crossing the sidebar with Tab took one
@@ -1225,6 +1248,102 @@
     }
     return keys[0] ?? null
   })
+
+  /**
+   * The table a focused row stands for: a table row or its pin. Views, recents
+   * and databases have menus of their own and no keys yet.
+   * @param {EventTarget | null} target
+   */
+  function focusedTableName(target) {
+    const row = target instanceof Element ? target.closest('[data-sidebar-row]') : null
+    const key = row instanceof HTMLElement ? row.dataset.sidebarRow ?? '' : ''
+    const m = /^(?:table|pin):(.+)$/.exec(key)
+    return m ? m[1] : null
+  }
+
+  // ── Peek (Space on a table row) ────────────────────────────────────────
+  /** @type {{ table: string, x: number, y: number, row: HTMLElement } | null} */
+  let peek = $state(null)
+
+  /** Open, move or close the peek for a row. @param {HTMLElement | null} row @param {string | null} name */
+  function peekAt(row, name) {
+    if (!row || !name) { peek = null; return }
+    const r = row.getBoundingClientRect()
+    peek = { table: name, x: Math.round(r.right + 8), y: Math.round(r.top), row }
+  }
+
+  /** Re-anchor to the row after a scroll; a row scrolled out of the DOM closes it. */
+  function followPeek() {
+    if (!peek) return
+    if (!peek.row.isConnected) { peek = null; return }
+    peekAt(peek.row, peek.table)
+  }
+
+  $effect(() => {
+    if (!peek) return
+    const onDown = (/** @type {PointerEvent} */ e) => {
+      if (!(e.target instanceof Element) || !e.target.closest('[aria-label^="Columns of "]')) peek = null
+    }
+    const onScroll = () => followPeek()
+    const onBlur = () => (peek = null)
+    window.addEventListener('pointerdown', onDown, true)
+    window.addEventListener('scroll', onScroll, { capture: true, passive: true })
+    window.addEventListener('blur', onBlur)
+    return () => {
+      window.removeEventListener('pointerdown', onDown, true)
+      window.removeEventListener('scroll', onScroll, { capture: true })
+      window.removeEventListener('blur', onBlur)
+    }
+  })
+  // A schema or connection switch replaces the list: the peek goes with it.
+  $effect(() => { void activeSchema; void connectionName; peek = null; clearPeekCache() })
+
+  /** Copy a table's name, and say so: the menu item copied without a word. @param {string} name */
+  function copyTableName(name) {
+    void navigator.clipboard.writeText(name).then(
+      () => toast.success('Copied table name', { description: name, duration: 1500 }),
+      () => toast.error("Couldn't copy to the clipboard"),
+    )
+  }
+
+  /**
+   * Mod+C, P and X on a focused table row. True when the key was used.
+   * @param {KeyboardEvent} e
+   */
+  function handleRowActionKey(e) {
+    if (e.altKey || e.repeat) return false
+    const name = focusedTableName(e.target)
+    if (!name) return false
+    const mod = e.ctrlKey || e.metaKey
+    const k = e.key.toLowerCase()
+    if (mod && !e.shiftKey && k === 'c') {
+      // A text selection inside the row is the user's to copy.
+      if (String(window.getSelection?.() ?? '')) return false
+      e.preventDefault()
+      copyTableName(name)
+      return true
+    }
+    if (mod || e.shiftKey) return false
+    if (e.key === ' ') {
+      e.preventDefault()
+      const row = /** @type {Element} */ (e.target).closest('[data-sidebar-row]')
+      if (peek?.table === name) peek = null
+      else peekAt(row instanceof HTMLElement ? row : null, name)
+      return true
+    }
+    if (e.key === 'Escape' && peek) { e.preventDefault(); e.stopPropagation(); peek = null; return true }
+    if (k === 'p') {
+      e.preventDefault()
+      togglePin(name)
+      // Pinning moves the row to Pinned (and unpinning moves it back), so the
+      // focused element unmounts: focus follows the table to its new row.
+      const key = `${pinnedTables.includes(name) ? 'pin' : 'table'}:${name}`
+      void tick().then(() => { kbdNav = true; focusRow(key) })
+      return true
+    }
+    if (k === 'x') { e.preventDefault(); toggleSelect(name); return true }
+    return false
+  }
 
   /** The rendered element for a row key, if it is in the DOM. @param {string | null} key */
   function rowEl(key) {
@@ -1654,14 +1773,8 @@
   /** @type {string | null} */
   let renamingChatId = $state(null)
   let renamingChatTitle = $state('')
-  /** The chat whose delete button has been pressed once (it asks again). */
-  /** @type {string | null} */
-  let confirmDeleteChatId = $state(null)
-  /** @type {ReturnType<typeof setTimeout> | undefined} */
-  let confirmDeleteTimer
   /** @param {{ id: string, title: string }} chat */
   function startChatRename(chat) {
-    confirmDeleteChatId = null
     renamingChatId = chat.id
     renamingChatTitle = chat.title
   }
@@ -1676,20 +1789,31 @@
     storedChats = storedChats.map((c) => (c.id === id ? { ...c, title } : c))
     await updateConversation(id, { title }).catch(() => { storedChats = before })
   }
-  /** @param {string} id */
+  /**
+   * No confirm: the chat goes at once and the toast offers Undo. With the AI
+   * tab mounted it owns the list and raises that toast itself.
+   * @param {string} id
+   */
   async function deleteChat(id) {
-    if (confirmDeleteChatId !== id) {
-      confirmDeleteChatId = id
-      clearTimeout(confirmDeleteTimer)
-      confirmDeleteTimer = setTimeout(() => (confirmDeleteChatId = null), 3000)
-      return
-    }
-    confirmDeleteChatId = null
-    clearTimeout(confirmDeleteTimer)
     if (liveChats) return requestChat({ type: 'delete', id })
     const before = storedChats
+    const index = before.findIndex((c) => c.id === id)
     storedChats = storedChats.filter((c) => c.id !== id)
-    await deleteConversation(id).catch(() => { storedChats = before })
+    let gone
+    try { gone = await deleteConversation(id) } catch { storedChats = before; return }
+    if (!gone || index < 0) return
+    const row = before[index]
+    toast.message('Chat deleted', {
+      description: row.title,
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: async () => {
+          try { await restoreConversation(gone) } catch (err) { toast.error(`Couldn't undo: ${errorText(err)}`); return }
+          if (!storedChats.some((c) => c.id === id)) storedChats = [...storedChats.slice(0, index), row, ...storedChats.slice(index)]
+        },
+      },
+    })
   }
   /** Focus and select a field as it mounts. @param {HTMLInputElement} el */
   function selectOnMount(el) {
@@ -1704,6 +1828,8 @@
   let connsQuery = $state('')
   /** @type {HTMLInputElement | null} */
   let connsSearchEl = $state(null)
+  /** The connection list, for arrow keys from the search into its rows. @type {HTMLDivElement | null} */
+  let connsListEl = $state(null)
   /** The list after the search: name, engine, host or database. */
   const connsShown = $derived.by(() => {
     const q = connsQuery.trim().toLowerCase()
@@ -1757,11 +1883,14 @@
   /** The connection the list's right-click menu is for. @type {any} */
   let connMenuFor = $state(null)
   let connHover = $state(null)
+  /** The list's right-click menu is up: no hover card meanwhile. */
+  let connMenuOpen = false
   /** @type {ReturnType<typeof setTimeout> | undefined} */
   let connHoverTimer
   /** @param {any} c @param {EventTarget | null} el */
   function showConnCard(c, el) {
     clearTimeout(connHoverTimer)
+    if (connMenuOpen) return
     const r = /** @type {HTMLElement} */ (el)?.getBoundingClientRect?.()
     if (!r) return
     connHoverTimer = setTimeout(() => { connCardTop = Math.round(r.top - 4); connHover = { c, x: Math.round(r.right + 8), y: connCardTop } }, 350)
@@ -1805,9 +1934,10 @@
 <!-- The single-table context menu: the Tables list's, and the Tree sidebar's
      for tables in the open schema, so the two can never drift apart. -->
 {#snippet tableActions(/** @type {string} */ name, /** @type {boolean} */ inTree)}
-  <ContextMenu.Item onSelect={() => { navigator.clipboard.writeText(name) }}>
+  <ContextMenu.Item onSelect={() => copyTableName(name)}>
     <Icon name="clipboard-copy" />
     Copy name
+    {#if !inTree}<ContextMenu.Shortcut combo="Mod+C" />{/if}
   </ContextMenu.Item>
   {#if sqlTables}
   <ContextMenu.Item onSelect={() => oncopycolumns(name)}>
@@ -1829,6 +1959,7 @@
       <Icon name="pin" />
       Pin table
     {/if}
+    {#if !inTree}<ContextMenu.Shortcut combo="P" />{/if}
   </ContextMenu.Item>
   {#if !inTree}
   <ContextMenu.Item onSelect={() => toggleSelect(name)}>
@@ -1839,6 +1970,7 @@
       <Icon name="square-check" />
       Select
     {/if}
+    <ContextMenu.Shortcut combo="X" />
   </ContextMenu.Item>
   {/if}
   <ContextMenu.Separator />
@@ -1863,6 +1995,12 @@
   <ContextMenu.Item onSelect={() => onviewstructure(name)}>
     <Icon name="layout-list" />
     View structure
+  </ContextMenu.Item>
+  {/if}
+  {#if sqlTables}
+  <ContextMenu.Item onSelect={() => onopentableerd(name)}>
+    <Icon name="git-branch" />
+    Open in schema diagram
   </ContextMenu.Item>
   {/if}
   {#if sqlTables}
@@ -1996,7 +2134,7 @@
           <div
             role="tablist"
             aria-label="Sidebar sections"
-            class="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden"
+            class="flex min-w-0 flex-1 items-stretch gap-0.5 self-stretch overflow-hidden"
             bind:clientWidth={tabStripW}
           >
             {#each stripTabs.shown as tab (tab.id)}
@@ -2076,9 +2214,10 @@
                     {@const tabNo = SIDEBAR_TABS.indexOf(tab) + 1}
                     <DropdownMenu.Item onSelect={() => (sidebarTab = tab.id)}>
                       <Icon name={tab.icon} class="size-3.5 shrink-0" />
-                      <span data-slot="menu-label">{tab.label}</span>
-                      {#if tabCounts[tab.id] > 0}<span data-slot="menu-trailing" class="ml-auto font-mono text-ui-2xs tabular-nums text-muted-foreground">{tabCounts[tab.id]}</span>
-                      {:else if tabNo <= 6 && bindingFor(`sidebar.tab.${tabNo}`)}<DropdownMenu.Shortcut command={`sidebar.tab.${tabNo}`} />{/if}
+                      <!-- The count beside the name: in the shortcut column a bare
+                           "5" read as a key, and it took Recent's shortcut away. -->
+                      <span data-slot="menu-label">{tab.label}{#if tabCounts[tab.id] > 0}<span class="ms-1.5 font-mono text-ui-2xs tabular-nums text-muted-foreground">{tabCounts[tab.id]}</span>{/if}</span>
+                      {#if tabNo <= 6 && bindingFor(`sidebar.tab.${tabNo}`)}<DropdownMenu.Shortcut command={`sidebar.tab.${tabNo}`} />{/if}
                     </DropdownMenu.Item>
                   {/each}
                 </DropdownMenu.Content>
@@ -2144,10 +2283,11 @@
               </DropdownMenu.Content>
             </DropdownMenu.Root>
           {:else}
-          <!-- These act on the table list only. On Queries and Find & replace
-               they did nothing for the panel below, so they keep their space
-               there (no shift between tabs) but are not shown or reachable. -->
-          <div class={cn("flex items-center gap-0.5", (sidebarTab === 'queries' || sidebarTab === 'search') && "invisible")}>
+          <!-- These act on the table list only. On Databases, Queries and Find &
+               replace they did nothing for the panel below (Databases has its
+               own + and refresh), so they keep their space there (no shift
+               between tabs) but are not shown or reachable. -->
+          <div class={cn("flex items-center gap-0.5", (sidebarTab === 'queries' || sidebarTab === 'search' || sidebarTab === 'databases') && "invisible")}>
           {@render displayOptions()}
           <button
             type="button"
@@ -2171,7 +2311,7 @@
               >
                 <Icon name="plus" class="size-3.5 shrink-0" />
               </DropdownMenu.Trigger>
-              <DropdownMenu.Content align="end" class="w-44 p-1 text-ui-sm">
+              <DropdownMenu.Content align="end" class="min-w-44 p-1 text-ui-sm">
                 <DropdownMenu.Item
                   onSelect={onnewtable}
                   disabled={$readOnlyMode}
@@ -2230,6 +2370,7 @@
                       placeholder={$tx('sidebar.searchSchemas', 'Search schemas…')}
                       empty="No schema"
                       items={schemaMenuItems}
+                      current={activeSchema}
                       onselect={(it) => {
                         if (!it.value) return
                         // The last entry is the toggle, not a schema.
@@ -2277,7 +2418,10 @@
           {/if}
           <!-- A field you can see at rest (faint fill), with room between the
                magnifier and the text, so the caret never sits on the icon. -->
-          <div class="group/search relative min-w-0 flex-1">
+          <!-- A size container: beside the schema picker the field is ~100px,
+               and the `/` cap plus its padding left room for "Sear". Below 9rem
+               the cap goes and the hint moves to the tooltip. -->
+          <div class="group/search @container/search relative min-w-0 flex-1">
           <Icon name="search"
             class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground transition-colors duration-150 group-focus-within/search:text-foreground"
           />
@@ -2359,47 +2503,44 @@
                 if (first) { e.preventDefault(); kbdNav = true; focusRow(first) }
               }
             }}
-            class="peer search-box no-field-frame w-full min-w-0 pl-[2.125rem] pr-8 text-ui-sm"
+            class={cn("peer search-box no-field-frame w-full min-w-0 pl-[2.125rem] text-ui-sm", showOpenCap ? "pr-14" : "pr-8 @max-[9rem]/search:pr-2")}
             aria-label="Filter {activeTabLabel.toLowerCase()}"
+            title={connectionName ? `Filter ${activeTabLabel.toLowerCase()} (/)` : undefined}
             aria-describedby="sidebar-filter-hint"
             data-sidebar-filter
           />
-          <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
+          <Kbd combo="/" class="pointer-events-none hidden peer-placeholder-shown:inline-flex peer-focus:hidden @max-[9rem]/search:!hidden absolute top-1/2 right-2 -translate-y-1/2" aria-hidden="true" />
+          <!-- Only while a search has narrowed the list to one row: a real target
+               that opens the match. It sits inside the field, beside the clear
+               button, so the field keeps its width. As a sibling in the row it
+               took ~60px from a field that already shares the row with the
+               schema picker, and the typed name was squeezed to a few letters.
+               `tabindex="-1"`: Tab from the filter goes to the list, which with
+               one match is this same row. The keyboard path is Enter. -->
+          {#if showOpenCap}
+            <button
+              type="button"
+              tabindex="-1"
+              class="hit-area absolute top-1/2 right-7 inline-flex h-5 -translate-y-1/2 items-center rounded px-1 text-ui-2xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
+              title={soleResult ? `Open ${soleResult.label} (Enter)` : 'Open the only match (Enter)'}
+              aria-label={soleResult ? `Open ${soleResult.label}` : 'Open the only match'}
+              onclick={() => { const only = navKeys.length === 1 ? rowEl(navKeys[0]) : null; if (only) only.click(); else soleResult?.open() }}
+            ><Kbd combo="Enter" aria-hidden="true" /></button>
+          {/if}
           {#if localFilter}
             <button
               type="button"
               tabindex="-1"
-              class="hit-area absolute top-1/2 right-1.5 inline-flex size-4 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/25 text-sidebar transition-colors hover:bg-muted-foreground/45"
+              class="hit-area absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Clear"
               aria-label="Clear filter"
               onclick={() => { handleFilterInput(''); flushFilter(); filterEl?.focus() }}
             >
-              <Icon name="x" class="size-2.5 shrink-0" strokeWidth={3} />
+              <!-- The same plain × as every other search field (SearchField.svelte). -->
+              <Icon name="x" class="size-3 shrink-0" />
             </button>
           {/if}
           </div>
-          <!-- Only while a search has narrowed the list to one row. A schema
-               that simply has one table showed it with an empty box, where it
-               read as a stray key rather than "open your match". -->
-          {#if renderedRowCount === 1 && debouncedFilter.trim() && sidebarTab !== 'tree'}
-            <!-- A real target, not a legend. When the filter has left one row,
-                 the fastest thing to do with it is open it, and a hint that only
-                 tells you which key to press makes the pointer take the long way
-                 round to a row it can already see.
-                 `tabindex="-1"` keeps it out of the tab order on purpose: Tab
-                 from the filter goes to the list, which with one match is this
-                 same row, so a stop here would be a second stop on one thing.
-                 The keyboard path is Enter in the field, which the field's own
-                 description offers. -->
-            <button
-              type="button"
-              tabindex="-1"
-              class="hit-area inline-flex h-6 shrink-0 items-center gap-1 rounded-md px-1.5 text-ui-2xs text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-foreground"
-              title={soleResult ? `Open ${soleResult.label} (Enter)` : 'Open the only match (Enter)'}
-              aria-label={soleResult ? `Open ${soleResult.label}` : 'Open the only match'}
-              onclick={() => { const only = navKeys.length === 1 ? rowEl(navKeys[0]) : null; if (only) only.click(); else soleResult?.open() }}
-            >Open ↵</button>
-          {/if}
           <!-- Held apart: the description is static and read on focus, the status
                is rewritten as the list narrows. Merging them would re-announce
                the instruction on every keystroke. Both are rendered whether or
@@ -2528,6 +2669,18 @@
             // The stop follows focus, so Tab comes back to the row it left.
             const row = e.target instanceof Element ? e.target.closest('[data-sidebar-row]') : null
             if (row instanceof HTMLElement) rovingRowKey = row.dataset.sidebarRow ?? null
+            // An open peek follows focus down the list, the way Linear's does.
+            if (peek && row instanceof HTMLElement) {
+              const name = focusedTableName(row)
+              if (name) peekAt(row, name)
+              else peek = null
+            }
+          }}
+          onfocusout={(e) => {
+            // Focus leaving the list (Tab into the grid, a click on the editor)
+            // takes the peek with it.
+            const to = /** @type {Node | null} */ (e.relatedTarget)
+            if (peek && !(to && /** @type {HTMLElement} */ (e.currentTarget).contains(to))) peek = null
           }}
           onkeydown={(e) => {
             if (e.key === 'Escape' && selectedItems.size > 0) { clearSelection(); return }
@@ -2545,6 +2698,12 @@
               tick().then(() => focusMainRegion())
               return
             }
+            // One key acts on the focused table, as the menu beside it lists:
+            // Mod+C copies its name, P pins it, X selects it, Space peeks at its
+            // columns. A row's actions
+            // were only in the right-click menu, so the keyboard could open a
+            // table and nothing else.
+            if (handleRowActionKey(e)) return
             // Tab walks the list, one row per press, because that is what the
             // key does everywhere else in this panel and pressing it twice from
             // the filter box otherwise skipped the whole list to land in the
@@ -2691,11 +2850,11 @@
                           <ContextMenu.Content class="min-w-52">
                             {#if !isCurrent}
                               <ContextMenu.Item onSelect={() => { focusListAfterSwitch(); onswitchdatabase(db) }}>
-                                <Icon name="arrow-right" />
+                                <Icon name="arrow-left-right" />
                                 Switch to this database
                               </ContextMenu.Item>
                             {/if}
-                            <ContextMenu.Item onSelect={() => { navigator.clipboard.writeText(db.label) }}>
+                            <ContextMenu.Item onSelect={() => { void navigator.clipboard.writeText(db.label).then(() => toast.success('Copied database name', { description: db.label, duration: 1500 }), () => toast.error("Couldn't copy to the clipboard")) }}>
                               <Icon name="copy" />
                               Copy name
                             </ContextMenu.Item>
@@ -2756,7 +2915,7 @@
                     <li class="group/recent">
                       <div
                         class={cn(
-                          "grid w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 transition-colors cursor-pointer",
+                          "flex w-full items-center gap-x-2 rounded-md px-2 py-1.5 transition-colors cursor-pointer",
                           activeTable === item.table
                             ? "bg-sidebar-accent font-medium text-sidebar-accent-foreground"
                             : "text-sidebar-foreground hover:bg-sidebar-accent/60 hover:text-foreground",
@@ -2800,12 +2959,14 @@
                         {:else}
                           <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground" />
                         {/if}
-                        <span class="min-w-0 truncate text-ui-sm leading-4 -my-1 py-1">{@render hl(item.table)}</span>
+                        <span class="min-w-0 flex-1 truncate text-ui-sm leading-4 -my-1 py-1">{@render hl(item.table)}</span>
+                        <!-- Out of the layout until the row is hovered: hidden but
+                             still there, it kept 22px of every name cut off. -->
                         <button
                           type="button"
                           tabindex="-1"
                           aria-label="Remove {item.table} from recent (Delete)"
-                          class="hit-area inline-flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-opacity duration-150 group-hover/recent:opacity-100 hover:text-foreground focus-visible:opacity-100"
+                          class="hit-area hidden size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground group-hover/recent:inline-flex hover:text-foreground"
                           onclick={(e) => { e.stopPropagation(); onrecentremove(item.schema, item.table) }}
                         >
                           <Icon name="x" class="size-3 shrink-0" />
@@ -2847,9 +3008,11 @@
                       allPinnedSelected ? 'text-primary' : 'text-muted-foreground',
                     )}
                     onclick={(e) => { e.stopPropagation(); toggleSelectAllPinned() }}
-                    title={allPinnedSelected
-                      ? `Deselect all ${filteredPinnedTables.length} pinned tables`
-                      : `Select all ${filteredPinnedTables.length} pinned tables`}
+                    title={filteredPinnedTables.length === 1
+                      ? (allPinnedSelected ? 'Deselect the pinned table' : 'Select the pinned table')
+                      : allPinnedSelected
+                        ? `Deselect all ${filteredPinnedTables.length} pinned tables`
+                        : `Select all ${filteredPinnedTables.length} pinned tables`}
                   >
                     <Icon name={allPinnedSelected ? 'check-circle-2' : 'check'} class="size-3.5 shrink-0" />
                   </button>
@@ -2857,7 +3020,7 @@
                     type="button"
                     class="hit-area inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                     onclick={(e) => { e.stopPropagation(); openAllPinned() }}
-                    title="Open all {filteredPinnedTables.length} pinned tables in tabs"
+                    title={filteredPinnedTables.length === 1 ? 'Open the pinned table' : `Open all ${filteredPinnedTables.length} pinned tables in tabs`}
                   >
                     <Icon name="external-link" class="size-3.5 shrink-0" />
                   </button>
@@ -2908,6 +3071,7 @@
                             onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(tableName, e.shiftKey); } }}
                             role="checkbox"
                             aria-checked={isSelected}
+                            aria-label={`Select ${tableName}`}
                             tabindex="-1"
                           >
                             {#if isSelected}
@@ -2958,7 +3122,7 @@
                             Deselect all
                           </ContextMenu.Item>
                         {:else}
-                        <ContextMenu.Item onSelect={() => { navigator.clipboard.writeText(tableName) }}>
+                        <ContextMenu.Item onSelect={() => copyTableName(tableName)}>
                           <Icon name="clipboard-copy" />
                           Copy name
                         </ContextMenu.Item>
@@ -2981,7 +3145,7 @@
                         <ContextMenu.Separator />
                         <ContextMenu.Item onSelect={() => onopeninconsole(tableName)}>
                           <Icon name="terminal" />
-                          Open Console
+                          Open in SQL editor
                         </ContextMenu.Item>
                         {#if sqlTables}
                         <ContextMenu.Item onSelect={() => ongeneratesql(tableName)}>
@@ -3121,7 +3285,7 @@
                       data-roving
                       data-sidebar-current={activeTable === table.name ? '' : undefined}
                       class={cn(
-                        "group grid h-full w-full grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors",
+                        "group grid h-full w-full grid-cols-[auto_minmax(0,1fr)_auto] grid-rows-[minmax(0,1fr)] items-center gap-x-2 rounded-md px-2 py-1.5 text-left transition-colors",
                         isSelected
                           ? "bg-primary/10 text-foreground"
                           : activeTable === table.name
@@ -3143,6 +3307,7 @@
                         onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); e.stopPropagation(); selectItem(table.name, e.shiftKey); } }}
                         role="checkbox"
                         aria-checked={isSelected}
+                        aria-label={`Select ${table.name}`}
                         tabindex="-1"
                       >
                         {#if isSelected}
@@ -3364,9 +3529,9 @@
     <!-- Footer: app-wide controls as plain icons, the same 36px row as the
          status bar beside it, so the two share one centre line. -->
     <div class="flex h-9 shrink-0 items-center gap-0.5 border-t border-sidebar-border/50 px-2">
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={withShortcut('Settings', 'settings.open')} aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-3.5 shrink-0" /></button>
       <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-3.5 shrink-0" /></button>
-      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-3.5 shrink-0" /></button>
+      <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={withShortcut('Keyboard shortcuts', 'help.shortcuts')} aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-3.5 shrink-0" /></button>
       {#if onopenlabs}<button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Labs: features still being shaped" aria-label="Labs" onclick={onopenlabs}><Icon name="flask-conical" class="size-3.5 shrink-0" /></button>{/if}
       {#if updateState}
         <!-- T3's update pill: there when there is something to do, gone when
@@ -3468,7 +3633,6 @@
           {#each chatsShown as chat (chat.id)}
             {@const open = aiTabActive && liveChats && $aiChatList.activeId === chat.id}
             {@const busy = liveChats && chatBusy.includes(chat.id)}
-            {@const confirming = confirmDeleteChatId === chat.id}
             <!-- One line per chat: the title, then the time or "Working". On
                  hover (or focus) the time gives way to rename and delete; where
                  it worked (database · schema) is in the tooltip. -->
@@ -3476,7 +3640,7 @@
               <div class="flex h-7 w-full min-w-0 items-center rounded-md bg-sidebar-accent px-1">
                 <input
                   use:selectOnMount
-                  class="h-6 min-w-0 flex-1 rounded-sm bg-transparent px-1 text-ui-sm text-foreground outline-none ring-1 ring-ring"
+                  class="no-field-frame h-6 min-w-0 flex-1 rounded-sm bg-transparent px-1 text-ui-sm text-foreground outline-none ring-1 ring-ring"
                   aria-label="Chat name"
                   bind:value={renamingChatTitle}
                   onkeydown={(e) => {
@@ -3506,34 +3670,28 @@
                   {#if busy}
                     <Icon name="loader-2" class="size-3 shrink-0 animate-spin text-primary" aria-label="Working" />
                   {:else}
-                    <span class={cn('shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground', !confirming && 'group-hover/chat:invisible group-focus-within/chat:invisible')}>{confirming ? '' : ago(chat.updatedAt)}</span>
+                    <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground group-hover/chat:invisible group-focus-within/chat:invisible">{ago(chat.updatedAt)}</span>
                   {/if}
                 </button>
                 {#if !busy}
-                  <div class={cn('absolute inset-y-0 right-1 flex items-center gap-0.5', confirming ? 'flex' : 'hidden group-hover/chat:flex group-focus-within/chat:flex')}>
-                    {#if !confirming}
+                  <div class="absolute inset-y-0 right-1 hidden items-center gap-0.5 group-hover/chat:flex group-focus-within/chat:flex">
                       <button
                         type="button"
-                        class="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.97]"
+                        class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.97]"
                         title="Rename"
                         aria-label="Rename chat"
                         onclick={() => startChatRename(chat)}
                       >
                         <Icon name="pencil" class="size-3 shrink-0" />
                       </button>
-                    {/if}
                     <button
                       type="button"
-                      class={cn(
-                        'inline-flex h-5 shrink-0 items-center justify-center gap-1 rounded-sm transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] active:scale-[0.97]',
-                        confirming ? 'bg-destructive/12 px-1.5 text-ui-2xs font-medium text-destructive hover:bg-destructive/20' : 'w-5 text-muted-foreground hover:bg-sidebar-accent hover:text-destructive',
-                      )}
-                      title={confirming ? 'Click again to delete' : 'Delete'}
-                      aria-label={confirming ? 'Confirm delete chat' : 'Delete chat'}
+                      class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-destructive active:scale-[0.97]"
+                      title="Delete"
+                      aria-label="Delete chat"
                       onclick={() => void deleteChat(chat.id)}
                     >
                       <Icon name="trash-2" class="size-3 shrink-0" />
-                      {#if confirming}Delete{/if}
                     </button>
                   </div>
                 {/if}
@@ -3547,7 +3705,7 @@
                   <Icon name="pencil" class="size-3.5 shrink-0" />Rename
                 </ContextMenu.Item>
                 <ContextMenu.Separator />
-                <ContextMenu.Item variant="destructive" onSelect={() => { confirmDeleteChatId = chat.id; void deleteChat(chat.id) }}>
+                <ContextMenu.Item variant="destructive" onSelect={() => void deleteChat(chat.id)}>
                   <Icon name="trash-2" class="size-3.5 shrink-0" />Delete
                 </ContextMenu.Item>
               </ContextMenu.Content>
@@ -3561,7 +3719,7 @@
               onclick={() => onopenaichat(null)}
             >
               <Icon name="bot" class="size-4 shrink-0" />
-              Ask about this database
+              <span class="min-w-0 truncate">Ask about your data</span>
             </button>
           {/if}
           {#if chats.length > CHATS_LIMIT}
@@ -3665,9 +3823,12 @@
        last used it, "Show more", and a hover card with the details. -->
   {#if wsConnections.length && lowerReady}
     <div class="flex max-h-[45%] shrink-0 flex-col border-t border-sidebar-border/50">
+      <!-- The fold toggle and the + sit side by side: a button can't hold
+           another button. -->
+      <div class="flex h-9 shrink-0 items-center pe-2">
       <button
         type="button"
-        class="flex h-9 shrink-0 items-center gap-2 px-4 text-ui-sm text-foreground/80 hover:text-foreground"
+        class="flex h-full min-w-0 flex-1 items-center gap-2 ps-4 pe-1 text-ui-sm text-foreground/80 hover:text-foreground"
         aria-expanded={connsOpen}
         onclick={() => {
           connsOpen = !connsOpen
@@ -3680,6 +3841,16 @@
         <span class="font-mono text-ui-2xs tabular-nums">{wsConnections.length}</span>
         <Icon name={connsOpen ? 'chevron-down' : 'chevron-right'} class="size-3 shrink-0" />
       </button>
+      <button
+        type="button"
+        class="hit-area inline-flex size-6 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+        aria-label="New connection"
+        title="New connection"
+        onclick={onnewconnection}
+      >
+        <Icon name="plus" class="size-3.5 shrink-0" />
+      </button>
+      </div>
       {#if connsOpen}
         {#if wsConnections.length > 5}
           <!-- The shared search box (DESIGN_SYSTEM.md): × clears it, Esc too. -->
@@ -3689,11 +3860,16 @@
               bind:this={connsSearchEl}
               bind:value={connsQuery}
               type="text"
-              placeholder={$tx('sb.searchConnections', 'Search connections…')}
+              placeholder={$tx('sb.searchConnections', 'Search connections')}
               aria-label="Search connections"
               class="search-box no-field-frame w-full min-w-0 pl-8 pr-8 text-ui-sm"
               onkeydown={(e) => {
                 if (e.key === 'Escape') { connsQuery = ''; e.stopPropagation() }
+                else if (e.key === 'ArrowDown') {
+                  // Into the list, as the table filter does.
+                  const first = connsListEl?.querySelector('[data-conn-id]')
+                  if (first instanceof HTMLElement) { e.preventDefault(); first.focus() }
+                }
                 else if (e.key === 'Enter' && connsShown.length === 1 && connsShown[0].id !== activeConnectionId) onswitchconnection(connsShown[0])
               }}
             />
@@ -3705,8 +3881,20 @@
           </div>
         {/if}
         <div
+          bind:this={connsListEl}
           class="app-scroll min-h-0 overflow-y-auto px-2 pb-2"
           role="presentation"
+          onkeydown={(e) => {
+            // Up and Down between connections; Up from the first goes back to the search.
+            if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp') return
+            const rows = [...e.currentTarget.querySelectorAll('[data-conn-id]')]
+            const i = rows.indexOf(/** @type {Element} */ (document.activeElement))
+            if (i < 0) return
+            e.preventDefault()
+            const next = rows[e.key === 'ArrowDown' ? Math.min(i + 1, rows.length - 1) : i - 1]
+            if (next instanceof HTMLElement) { next.focus(); next.scrollIntoView({ block: 'nearest' }) }
+            else connsSearchEl?.focus()
+          }}
           onpointerenter={() => (connsFrozenOrder = wsConnections.map((c) => c.id))}
           onpointerleave={() => (connsFrozenOrder = null)}
         >
@@ -3715,10 +3903,13 @@
                to the right") with nothing about the connection. One menu for
                the list, told which row was clicked: a menu per row mounted a
                bits-ui menu tree for every saved connection on each connect. -->
-          <ContextMenu.Root>
+          <!-- The hover card stays down while the menu is up: both open at
+               once put the card over the menu's left edge. -->
+          <ContextMenu.Root onOpenChange={(o) => { connMenuOpen = o; if (o) hideConnCard() }}>
           <ContextMenu.Trigger
             class="block w-full"
             oncontextmenu={(e) => {
+              hideConnCard()
               const id = /** @type {HTMLElement | null} */ (/** @type {Element} */ (e.target).closest('[data-conn-id]'))?.dataset.connId
               connMenuFor = connsShown.find((x) => x.id === id) ?? null
             }}
@@ -3729,17 +3920,22 @@
               type="button"
               data-conn-id={c.id}
               class={cn(
-                'flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm',
-                current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
+                'flex h-8 w-full min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm outline-none',
+                current ? 'bg-sidebar-accent text-foreground' : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground focus:bg-sidebar-accent/60 focus:text-foreground',
               )}
-              onclick={() => { connHover = null; if (!current) onswitchconnection(c) }}
+              onclick={() => { hideConnCard(); if (!current) onswitchconnection(c) }}
+              onpointerdown={hideConnCard}
               onpointerenter={(e) => showConnCard(c, e.currentTarget)}
               onpointerleave={hideConnCard}
             >
               <DbIcon id={engineId(c)} class="size-4 shrink-0" />
               <span class="min-w-0 flex-1 truncate">{c.name || c.database || c.host || c.filePath || 'Connection'}</span>
               {#if c.pinned}<Icon name="pin" class="size-3 shrink-0 opacity-60" />{/if}
-              <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(c.lastConnectedAt)}</span>
+              {#if c.id === connectingId && !current}
+                <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin text-muted-foreground" aria-label="Connecting" />
+              {:else}
+                <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">{ago(c.lastConnectedAt)}</span>
+              {/if}
             </button>
           {/each}
           </ContextMenu.Trigger>
@@ -3749,7 +3945,7 @@
               {@const current = c.id === activeConnectionId}
               {#if !current}
                 <ContextMenu.Item onSelect={() => { connHover = null; onswitchconnection(c) }}>
-                  <Icon name="arrow-right" />
+                  <Icon name="plug" />
                   Connect
                 </ContextMenu.Item>
               {/if}
@@ -3768,9 +3964,9 @@
                   Disconnect
                 </ContextMenu.Item>
               {:else}
-                <ContextMenu.Item variant="destructive" onSelect={() => { pendingConnRemove = c; confirmConnRemoveOpen = true }}>
+                <ContextMenu.Item variant="destructive" onSelect={() => { onremoveconnection(c.id); toastConnectionRemoved(c) }}>
                   <Icon name="trash-2" />
-                  Delete…
+                  Delete
                 </ContextMenu.Item>
               {/if}
             {/if}
@@ -3794,9 +3990,19 @@
     </div>
   {/if}
 
+  {#if peek}
+    <TablePeek
+      schema={activeSchema}
+      table={peek.table}
+      rows={_rowCountByName.has(peek.table) ? formatTableRowCount(_rowCountByName.get(peek.table)) : ''}
+      x={peek.x}
+      y={peek.y}
+    />
+  {/if}
   {#if connHover}
     <div
       bind:this={connCardEl}
+      data-surface-in
       class="pointer-events-none fixed z-[90] min-w-52 max-w-80 rounded-[10px] border border-border/60 bg-popover px-3 py-2.5 text-ui-xs elevate-2-rim"
       style:left="{connHover.x}px"
       style:top="{connCardEl ? connCardTop : connHover.y}px"
@@ -3804,7 +4010,7 @@
     >
       <p class="mb-1.5 font-medium text-foreground">{connHover.c.name || connHover.c.database || 'Connection'}</p>
       <div class="flex flex-col gap-1 text-muted-foreground">
-        <span class="flex items-center gap-2"><DbIcon id={engineId(connHover.c)} class="size-3.5 shrink-0" /> {engineId(connHover.c)}</span>
+        <span class="flex items-center gap-2"><DbIcon id={engineId(connHover.c)} class="size-3.5 shrink-0" /> {engineLabel(engineId(connHover.c))}</span>
         {#if connHover.c.host || connHover.c.filePath}
           <!-- A file path wraps: on one line a DuckDB file in a deep folder
                stretched the card across most of the window. -->
@@ -3822,21 +4028,6 @@
 {#snippet hl(/** @type {string} */ text)}
   <!-- The filter's match inside a name, marked the way the tree marks it. -->
   {@const at = lf ? String(text).toLowerCase().indexOf(lf) : -1}
-  {#if at >= 0}{String(text).slice(0, at)}<mark class="rounded-[2px] bg-primary/25 text-inherit">{String(text).slice(at, at + lf.length)}</mark>{String(text).slice(at + lf.length)}{:else}{text}{/if}
+  {#if at >= 0}{String(text).slice(0, at)}<mark class="search-hit">{String(text).slice(at, at + lf.length)}</mark>{String(text).slice(at + lf.length)}{:else}{text}{/if}
 {/snippet}
 
-<ConfirmDialog
-  bind:open={confirmConnRemoveOpen}
-  icon="trash-2"
-  title="Delete connection?"
-  description={`"${pendingConnRemove?.name || pendingConnRemove?.database || pendingConnRemove?.host || pendingConnRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
-  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
-  confirmLabel="Delete"
-  confirmIcon="trash-2"
-  variant="destructive"
-  onconfirm={() => {
-    if (pendingConnRemove) onremoveconnection(pendingConnRemove.id);
-    pendingConnRemove = null;
-  }}
-  oncancel={() => (pendingConnRemove = null)}
-/>

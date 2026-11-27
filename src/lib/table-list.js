@@ -11,7 +11,9 @@ export function formatCompactCount(count) {
   const abs = Math.abs(n)
   const sign = n < 0 ? '-' : ''
 
-  if (abs < 1000) return sign + abs.toLocaleString('en-US')
+  // Under 1000 an integer prints as itself. toLocaleString builds a number
+  // formatter per call, and the sidebar formats one count per row it draws.
+  if (abs < 1000) return sign + (Number.isInteger(abs) ? String(abs) : abs.toLocaleString('en-US'))
 
   /**
    * @param {number} value
@@ -31,6 +33,17 @@ export function formatCompactCount(count) {
   if (abs < 999_500) return withSuffix(abs, 1000, 'k')
   if (abs < 999_500_000) return withSuffix(abs, 1_000_000, 'M')
   return withSuffix(abs, 1_000_000_000, 'B')
+}
+
+const FULL = new Intl.NumberFormat('en-US')
+/**
+ * A count in full with thousands separators ("1,234,567"), for a tooltip.
+ * One shared formatter: toLocaleString builds a new one per call, and a list
+ * that titles every row paid for that on each render.
+ * @param {number | string} count
+ */
+export function formatFullCount(count) {
+  return FULL.format(Number(count))
 }
 
 /** @param {number | string | null | undefined} count */

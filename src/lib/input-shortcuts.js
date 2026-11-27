@@ -47,7 +47,9 @@ const TEXT_INPUT_TYPES = new Set(['text', 'search', 'url', 'tel', 'email', 'pass
 function editableKind(/** @type {Element} */ el) {
   if (el instanceof HTMLTextAreaElement) return 'field'
   if (el instanceof HTMLInputElement) return TEXT_INPUT_TYPES.has((el.type || 'text').toLowerCase()) ? 'field' : null
-  if (el instanceof HTMLElement && el.isContentEditable) return 'ce'
+  // isContentEditable brings styles up to date before it answers, and this runs
+  // on every key. Only an element under a contenteditable attribute can be one.
+  if (el instanceof HTMLElement && el.closest('[contenteditable]') && el.isContentEditable) return 'ce'
   return null
 }
 

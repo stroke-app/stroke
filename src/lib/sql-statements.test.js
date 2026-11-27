@@ -114,3 +114,15 @@ describe('lintSql fixes', () => {
     expect(fixed('SELECT 1);', 'Unmatched closing')).toBe('SELECT 1;')
   })
 })
+
+describe('lintSql missing semicolon fix', () => {
+  it('puts the ; after the last word of the statement before the blank line', () => {
+    const sql = 'select * from approval_policies  -- all\n\nselect nme from approval_policies limit 3;'
+    const d = lintSql(sql).find((x) => x.message.startsWith("Missing ';' - this starts a new statement"))
+    expect(d?.fix).toBeTruthy()
+    const f = /** @type {any} */ (d).fix
+    const fixed = sql.slice(0, f.from) + f.insert + sql.slice(f.to)
+    expect(fixed.startsWith('select * from approval_policies;')).toBe(true)
+    expect(splitSqlStatements(fixed)).toHaveLength(2)
+  })
+})

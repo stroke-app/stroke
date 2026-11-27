@@ -1,4 +1,5 @@
 <script>
+  import { offerUndo } from '$lib/undo-toast.js'
   import { withShortcut } from '$lib/stores/keybindings.js'
   import { onMount } from 'svelte'
   import { getAppScale } from '$lib/app-zoom.js'
@@ -130,7 +131,7 @@
       type="button"
       class="inline-flex size-6 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-destructive disabled:opacity-30"
       title="Clear"
-      onclick={() => clearActivityLog()}
+      onclick={() => { const n = entries.length; offerUndo(`Cleared ${n} ${n === 1 ? 'event' : 'events'}`, 'Activity log', clearActivityLog()) }}
       disabled={entries.length === 0}
     ><Trash2 class="size-3 shrink-0" /></button>
 

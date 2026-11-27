@@ -5,6 +5,7 @@
   // picked once per connection). Read-only: applying stays with the tool's
   // CLI, whose command the page hands over. Logic: $lib/migrations.js.
   import { invoke } from '@tauri-apps/api/core'
+  import EmptyState from './EmptyState.svelte'
   import { executeSql } from '$lib/api.js'
   import { mergePrisma, mergeDrizzle, mergeD1, counts, rowsOf, migrationQueries, isMissingTable } from '$lib/migrations.js'
   import { Button } from '$lib/components/ui/button/index.js'
@@ -284,21 +285,17 @@
   </div>
 
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto">
-    <div class="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
+    <div class="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-5 px-6 py-6">
       {#if error}
         <div class="flex flex-col items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3" role="alert">
           <p class="text-ui-sm font-medium text-destructive">Could not read the migrations table</p>
           <p class="text-ui-xs break-words text-muted-foreground">{error}</p>
         </div>
       {:else if neither}
-        <div class="flex flex-col items-center gap-3 py-20 text-center">
-          <span class="flex size-10 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground"><GitMerge class="size-5 shrink-0" /></span>
-          <div class="flex max-w-sm flex-col gap-1">
-            <p class="text-ui-sm font-medium text-foreground">No migrations in this database yet</p>
-            <p class="text-ui-xs text-muted-foreground">There's no <code class="font-mono">_prisma_migrations</code>, <code class="font-mono">__drizzle_migrations</code> or <code class="font-mono">d1_migrations</code> table here. Pick the project folder to see what would run.</p>
-          </div>
-          <Button variant="secondary" size="sm" onclick={() => void chooseFolder()}><FolderOpen class="size-3.5 shrink-0" />Pick project folder</Button>
-        </div>
+        <EmptyState class="flex-1 justify-center py-12" icon={GitMerge} title="No migrations in this database yet">
+          {#snippet body()}There's no <code class="font-mono">_prisma_migrations</code>, <code class="font-mono">__drizzle_migrations</code> or <code class="font-mono">d1_migrations</code> table here. Pick the project folder to see what would run.{/snippet}
+          <Button size="sm" onclick={() => void chooseFolder()}><FolderOpen class="size-3.5 shrink-0" />Pick project folder</Button>
+        </EmptyState>
       {:else if list.length}
         <!-- At a glance: how far along this database is. -->
         <section class="overflow-hidden rounded-lg border border-border/60" aria-label="Summary">

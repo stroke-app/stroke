@@ -5,6 +5,8 @@
   // Shift+Tab also move the highlight, Esc closes. Used by the table toolbar's
   // Sort / Columns / Filter menus.
   import { Command, Popover } from "bits-ui";
+  // Rows moving under a resting pointer must not take the highlight: see command-item.svelte.
+  import { pointerReallyMoved } from "$lib/command-local-filter.svelte.js";
   import { cn } from "$lib/utils.js";
   import SearchIcon from "@lucide/svelte/icons/search";
 
@@ -39,6 +41,9 @@
     header,
     /** optional snippet() rendered below the list (e.g. a footer action) */
     footer,
+    /** The value chosen now. With nothing typed the menu opens on that row,
+     *  scrolled into view, instead of the first one. */
+    current = undefined,
   } = $props();
 
   let search = $state("");
@@ -64,8 +69,13 @@
     } else {
       // Refocus the search input after a non-closing select so cmdk's keyboard
       // selection cursor returns to the input and clears the item highlight.
+      // The keyboard highlight goes back to the row just toggled: it fell to
+      // the first row, so hiding three columns by keyboard meant arrowing back
+      // down after each one.
+      const keep = it?.value;
       requestAnimationFrame(() => {
         inputEl?.focus();
+        if (keep != null && shown.some((x) => x.value === keep && !x.disabled)) highlighted = keep;
         if (listEl && listEl.scrollTop !== prevTop) listEl.scrollTop = prevTop;
       });
     }
@@ -105,9 +115,24 @@
   // top result as you type, so Enter picked whatever the previous query had
   // highlighted ("sql" then "dyn" + Enter chose SQL Server). Reset it per query.
   let highlighted = $state("");
+  /** The row for `current`, while nothing is typed. */
+  const currentRow = $derived(
+    current == null || search.trim() ? null : (shown.find((it) => !it.disabled && String(it.value) === String(current)) ?? null),
+  );
   $effect(() => {
     search;
-    highlighted = shown.find((it) => !it.disabled)?.value ?? "";
+    highlighted = currentRow?.value ?? shown.find((it) => !it.disabled)?.value ?? "";
+  });
+  // A long list opened at its top with the chosen row out of sight (a schema
+  // or a database far down): bring it into view once the rows are there.
+  $effect(() => {
+    if (!open || !currentRow || !listEl) return;
+    const value = String(currentRow.value);
+    const list = listEl;
+    const raf = requestAnimationFrame(() => {
+      list.querySelector(`[data-command-item][data-value="${CSS.escape(value)}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+    return () => cancelAnimationFrame(raf);
   });
 
   /** Esc closes; Tab / Shift+Tab map onto the Command's Arrow navigation. */
@@ -215,8 +240,9 @@
               disabled={it.disabled}
               onSelect={() => handleSelect(it)}
               onpointerenter={onhover ? () => onhover?.(it) : undefined}
+              onpointermove={(e) => { if (!pointerReallyMoved(e)) e.preventDefault() }}
               class={cn(
-                "flex min-h-7 w-full min-w-0 cursor-default items-center gap-2 rounded-menu-item px-2 py-1 text-ui-xs outline-hidden select-none",
+                "group/smrow flex min-h-7 w-full min-w-0 cursor-default items-center gap-2 rounded-menu-item px-2 py-1 text-ui-xs outline-hidden select-none",
                 "text-foreground/85 hover:bg-accent hover:text-foreground data-selected:bg-accent data-selected:text-foreground",
                 "data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-40",
                 "[&_svg]:pointer-events-none [&_svg]:shrink-0",

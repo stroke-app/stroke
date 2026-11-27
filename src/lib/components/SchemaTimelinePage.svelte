@@ -1,5 +1,6 @@
 <script>
   import AlertTriangle from '@lucide/svelte/icons/triangle-alert'
+  import EmptyState from './EmptyState.svelte'
   import PenLine from '@lucide/svelte/icons/pen-line'
   import SelectMenu from './SelectMenu.svelte'
   import DbIcon from './DbIcon.svelte'
@@ -17,6 +18,7 @@
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { cn, errorText } from '$lib/utils.js'
   import * as Dialog from '$lib/components/ui/dialog/index.js'
+  import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import FileCode from '@lucide/svelte/icons/file-code'
   import Copy from '@lucide/svelte/icons/copy'
@@ -28,6 +30,7 @@
     listAllSnapshots,
     deleteSnapshot,
     deleteAllSnapshots,
+    restoreSnapshots,
     diffSnapshots,
     isDiffEmpty,
   } from '$lib/stores/schema-snapshots.js'
@@ -64,14 +67,6 @@
   let selectedTable = $state(null)
   /** @type {Set<string>} */
   let collapsedSchemas = $state(new Set())
-
-  // ── More menu ──────────────────────────────────────────────────────────────
-  let moreMenuOpen = $state(false)
-  let clearStep = $state(0)
-
-  $effect(() => {
-    if (!moreMenuOpen) clearStep = 0
-  })
 
   // ── Capture modal ──────────────────────────────────────────────────────────
   let captureOpen = $state(false)
@@ -207,16 +202,31 @@
 
   // ── Clear all ──────────────────────────────────────────────────────────────
 
-  function onClearClick() {
-    if (clearStep === 0) { clearStep = 1 }
-    else { void doDeleteAll() }
+  /** Deleted snapshots go back on Undo, with the comparison they were in. @param {SchemaSnapshot[]} gone @param {string} title */
+  function offerUndo(gone, title) {
+    const was = { beforeId, afterId }
+    // Plain copies: IndexedDB cannot store the page's reactive proxies.
+    const keep = $state.snapshot(gone)
+    toast.message(title, {
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: async () => {
+          try { await restoreSnapshots(keep) } catch (err) { toast.error(`Couldn't undo: ${errorText(err)}`); return }
+          await load()
+          if (!beforeId && !afterId) ({ beforeId, afterId } = was)
+        },
+      },
+    })
   }
 
-  async function doDeleteAll() {
-    await deleteAllSnapshots()
-    snapshots = []; beforeId = null; afterId = null
-    moreMenuOpen = false; clearStep = 0
-    toast.success('All snapshots deleted')
+  // No confirm: it goes at once and the toast offers Undo.
+  async function onClearClick() {
+    const gone = snapshots
+    try { await deleteAllSnapshots() } catch (err) { toast.error(`Delete failed: ${errorText(err)}`); return }
+    snapshots = []
+    offerUndo(gone, gone.length === 1 ? 'Snapshot deleted' : `${gone.length} snapshots deleted`)
+    beforeId = null; afterId = null
   }
 
   function swapSnapshots() {
@@ -373,7 +383,9 @@
       toast.error(`Delete failed: ${/** @type {Error} */ (err).message}`)
       return
     }
+    const gone = snapshots.filter((s) => s.id === id)
     snapshots = snapshots.filter((s) => s.id !== id)
+    offerUndo(gone, 'Snapshot deleted')
     if (beforeId === id) beforeId = null
     if (afterId === id) afterId = null
   }
@@ -464,6 +476,9 @@
 <div class="flex h-full min-h-0 overflow-hidden">
 
   <!-- ── Sidebar ────────────────────────────────────────────────────────── -->
+  <!-- Only once there is a snapshot to list: before that it was an empty
+       column with a second New button beside the page's own Capture. -->
+  {#if loading || snapshots.length > 0}
   <div class="flex w-64 shrink-0 flex-col overflow-hidden border-r border-border/30 bg-panel">
 
     <!-- Sidebar header -->
@@ -475,32 +490,19 @@
       <span class="flex-1"></span>
 
       {#if snapshots.length > 0}
-        <div class="relative">
-          {#if moreMenuOpen}
-            <div class="fixed inset-0 z-10" role="presentation" onclick={() => { moreMenuOpen = false }}></div>
-          {/if}
-          <button
-            onclick={() => { moreMenuOpen = !moreMenuOpen }}
-            class="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent/50 hover:text-foreground"
+        <DropdownMenu.DropdownMenu>
+          <DropdownMenu.DropdownMenuTrigger
+            class="flex size-7 items-center justify-center rounded-full text-muted-foreground hover:bg-accent/50 hover:text-foreground data-[state=open]:bg-accent/50 data-[state=open]:text-foreground"
             aria-label="More"
           >
             <Ellipsis class="size-3.5 shrink-0" />
-          </button>
-          {#if moreMenuOpen}
-            <div class="absolute right-0 top-full z-20 mt-1 min-w-40 overflow-hidden rounded-[10px] border border-border/60 bg-popover p-1 elevate-2-rim">
-              <button
-                onclick={onClearClick}
-                class={cn(
-                  'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-xs hover:bg-accent',
-                  clearStep === 1 ? 'text-destructive' : 'text-muted-foreground hover:text-destructive',
-                )}
-              >
-                <Trash2 class="size-3.5 shrink-0" />
-                {clearStep === 1 ? 'Confirm clear all' : 'Clear all'}
-              </button>
-            </div>
-          {/if}
-        </div>
+          </DropdownMenu.DropdownMenuTrigger>
+          <DropdownMenu.DropdownMenuContent align="end" class="min-w-40">
+            <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => void onClearClick()}>
+              <Trash2 class="size-3.5 shrink-0" />Delete all snapshots
+            </DropdownMenu.DropdownMenuItem>
+          </DropdownMenu.DropdownMenuContent>
+        </DropdownMenu.DropdownMenu>
       {/if}
 
       <button
@@ -526,9 +528,8 @@
         </div>
 
       {:else if snapshots.length === 0}
-        <p class="px-2 py-6 text-ui-xs leading-relaxed text-muted-foreground">
-          No snapshots yet. Capture the schema to start a timeline.
-        </p>
+        <!-- The page beside the list explains an empty timeline and offers
+             Capture snapshot; the list saying it too was the same thing twice. -->
 
       {:else}
         {#each snapshots as snap (snap.id)}
@@ -548,7 +549,7 @@
             <div class="flex min-w-0 items-center gap-2">
               <span
                 class={cn(
-                  'flex size-5 shrink-0 items-center justify-center rounded-full text-ui-3xs font-bold',
+                  'flex size-5 shrink-0 items-center justify-center rounded-full text-ui-3xs font-semibold',
                   isBefore ? 'bg-warning/20 text-warning' : isAfter ? 'bg-info/20 text-info' : 'border border-border/70 text-transparent',
                 )}
                 aria-label={isBefore ? 'Baseline' : isAfter ? 'Compared' : undefined}
@@ -566,11 +567,16 @@
                 <X class="size-3.5 shrink-0" />
               </button>
             </div>
-            <div class="mt-1 flex min-w-0 items-center gap-1.5 ps-7 text-ui-2xs text-muted-foreground">
-              <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
-              <span aria-hidden="true">·</span>
-              <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
-              <span class="ms-auto flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
+            <!-- The date line and Base / Compare share one place: the buttons
+                 fade in over it on hover or focus. Side by side, the hidden
+                 buttons kept their width and squeezed the table count out. -->
+            <div class="mt-1 grid ps-7 text-ui-2xs text-muted-foreground *:col-start-1 *:row-start-1">
+              <span class="flex min-w-0 items-center gap-1.5 transition-opacity group-hover:opacity-0 group-focus-within:opacity-0">
+                <span class="shrink-0 tabular-nums">{fmtDate(snap.capturedAt)}</span>
+                <span aria-hidden="true">·</span>
+                <span class="min-w-0 truncate tabular-nums">{tableCount} {tableCount === 1 ? 'table' : 'tables'}</span>
+              </span>
+              <span class="-ms-1.5 flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100">
                 <button
                   type="button"
                   onclick={() => { beforeId = snap.id }}
@@ -592,34 +598,28 @@
       {/if}
     </div>
   </div>
+  {/if}
 
   <!-- ── Right: comparison ──────────────────────────────────────────────── -->
   <div class="flex min-w-0 flex-1 flex-col overflow-hidden">
     {#if !beforeSnap || !afterSnap}
-      <div class="flex flex-1 flex-col items-center justify-center px-8">
-        <div class="w-full max-w-sm">
-          <h2 class="text-ui-lg font-semibold tracking-tight text-foreground">Compare schema snapshots</h2>
-          <p class="mt-1.5 text-ui-xs leading-relaxed text-muted-foreground">
-            {#if snapshots.length === 0}
-              Capture the schema now, change it, then capture again to see what moved.
-            {:else if snapshots.length === 1}
-              One snapshot so far. Capture another after a change, then compare the two.
-            {:else}
-              Hover a snapshot and pick <span class="text-foreground">Base</span>, then another as <span class="text-foreground">Compare</span>.
-            {/if}
-          </p>
-          {#if snapshots.length < 2}
-            <button
-              onclick={openCaptureModal}
-              disabled={capturing}
-              class="mt-4 inline-flex h-8 items-center gap-1.5 rounded-full bg-foreground px-3.5 text-ui-xs font-medium text-background hover:bg-foreground/90 disabled:opacity-40"
-            >
-              <Camera class="size-3.5 shrink-0" />
-              Capture snapshot
-            </button>
+      <EmptyState class="flex-1 justify-center" icon={ArrowLeftRight} title="Compare schema snapshots">
+        {#snippet body()}
+          {#if snapshots.length === 0}
+            Capture the schema now, change it, then capture again to see what moved.
+          {:else if snapshots.length === 1}
+            One snapshot so far. Capture another after a change, then compare the two.
+          {:else}
+            Hover a snapshot and pick <span class="text-foreground">Base</span>, then another as <span class="text-foreground">Compare</span>.
           {/if}
-        </div>
-      </div>
+        {/snippet}
+        {#if snapshots.length < 2}
+          <Button size="sm" onclick={openCaptureModal} disabled={capturing}>
+            <Camera class="size-3.5 shrink-0" />
+            Capture snapshot
+          </Button>
+        {/if}
+      </EmptyState>
 
     {:else}
       <!-- Comparison header bar -->
@@ -698,7 +698,7 @@
           <!-- Changed tables tree -->
           <div class="flex w-52 shrink-0 flex-col overflow-hidden border-r border-border/30">
             <div class="flex h-8 shrink-0 items-center border-b border-border/25 px-3">
-              <span class="flex-1 text-ui-3xs font-medium uppercase tracking-widest text-muted-foreground">Changed</span>
+              <span class="flex-1 text-ui-xs font-medium text-muted-foreground">Changed</span>
               <span class="font-mono text-ui-3xs text-muted-foreground tabular-nums">{totalChanges}</span>
             </div>
             <div class="min-h-0 flex-1 overflow-y-auto">
@@ -723,25 +723,13 @@
 </div>
 
 <!-- ── Capture modal ─────────────────────────────────────────────────────── -->
-{#if captureOpen}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/65"
-    role="presentation"
-    onclick={(e) => { if (e.target === e.currentTarget) captureOpen = false }}
-  >
-    <div class="flex w-[28.75rem] flex-col overflow-hidden rounded-2xl border border-border/60 bg-popover elevate-3-rim">
-
-      <!-- Modal header -->
-      <div class="flex shrink-0 items-center gap-2.5 px-5 pt-5 pb-4">
-        <Camera class="size-4 shrink-0 text-foreground/40" />
-        <p class="flex-1 text-ui-sm font-semibold text-foreground/85">New snapshot</p>
-        <button aria-label="Close" title="Close"
-          onclick={() => { captureOpen = false }}
-          class="rounded p-1 text-muted-foreground hover:text-foreground"
-        >
-          <X class="size-3.5 shrink-0" />
-        </button>
-      </div>
+<!-- The shared dialog: it was a hand-built overlay with no dialog role,
+     no focus inside it and no Escape. -->
+<Dialog.Root bind:open={captureOpen}>
+  <Dialog.Content class="flex max-h-[85vh] max-w-[28.75rem] flex-col gap-0 overflow-hidden p-0">
+      <Dialog.Header class="px-5 pt-5 pb-4">
+        <Dialog.Title class="text-ui-sm font-semibold">New snapshot</Dialog.Title>
+      </Dialog.Header>
 
       <div class="overflow-y-auto">
         <!-- Title input -->
@@ -750,6 +738,7 @@
           <input
             bind:value={captureTitle}
             placeholder="Optional, e.g. Before migration v2"
+            onkeydown={(e) => { if (e.key === 'Enter' && !(captureLoadingSchemas || captureLoadingDbs || (!connectionId && !captureConn))) { e.preventDefault(); void doCapture() } }}
             class="no-field-frame h-9 w-full rounded-lg border-0 bg-muted/55 px-3 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-muted/80"
           />
         </div>
@@ -785,7 +774,7 @@
             <!-- Database -->
             <div class="w-44 shrink-0">
               <div class="flex items-center border-b border-border/20 px-4 py-2">
-                <span class="text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">Database</span>
+                <span class="text-ui-xs font-medium text-muted-foreground">Database</span>
                 {#if captureLoadingDbs}<Loader2 class="ml-auto size-3 shrink-0 animate-spin text-muted-foreground" />{/if}
               </div>
               <div class="max-h-44 overflow-y-auto py-1">
@@ -816,7 +805,7 @@
             <!-- Schemas -->
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 border-b border-border/20 px-4 py-2">
-                <span class="text-ui-3xs font-semibold uppercase tracking-widest text-muted-foreground">Schemas</span>
+                <span class="text-ui-xs font-medium text-muted-foreground">Schemas</span>
                 {#if captureLoadingSchemas}
                   <Loader2 class="ml-auto size-3 shrink-0 animate-spin text-muted-foreground" />
                 {:else if captureSchemaList.length > 0}
@@ -870,23 +859,15 @@
           {/if}
         </p>
         <div class="flex items-center gap-2">
-          <button
-            onclick={() => { captureOpen = false }}
-            class="rounded px-3 py-1.5 text-ui-xs text-muted-foreground hover:text-foreground/80"
-          >Cancel</button>
-          <button
-            onclick={doCapture}
-            disabled={captureLoadingSchemas || captureLoadingDbs || (!connectionId && !captureConn)}
-            class="flex items-center gap-1.5 rounded-lg bg-foreground px-4 py-1.5 text-ui-xs font-medium text-background hover:opacity-85 disabled:opacity-30"
-          >
-            <Camera class="size-3 shrink-0" />
+          <Button variant="ghost" size="sm" onclick={() => { captureOpen = false }}>Cancel</Button>
+          <Button size="sm" onclick={doCapture} disabled={captureLoadingSchemas || captureLoadingDbs || (!connectionId && !captureConn)}>
+            <Camera class="size-3.5 shrink-0" />
             Capture
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
-  </div>
-{/if}
+  </Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={migrationOpen}>
   <Dialog.Content class="flex h-[min(44rem,85vh)] max-w-3xl flex-col gap-0 overflow-hidden p-0">
@@ -957,7 +938,7 @@
               !collapsed && 'rotate-90',
             )}
           />
-          <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">
+          <span class="min-w-0 flex-1 truncate font-mono text-ui-2xs font-medium text-muted-foreground">
             {schema}
           </span>
           <span class="ml-1 shrink-0 font-mono text-ui-2xs text-muted-foreground tabular-nums">{items.length}</span>

@@ -31,6 +31,7 @@
 		)}
 		{showCloseButton}
 		{portalProps}
+		data-command-dialog
 	>
 		<Command filter={filter} shouldFilter={shouldFilter} {...restProps} bind:value bind:ref {children} />
 	</Dialog.Content>

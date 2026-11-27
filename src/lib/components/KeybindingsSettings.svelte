@@ -132,8 +132,14 @@
   let recordingId = $state(null);
   /** @type {Pending | null} */
   let pending = $state(null);
-  /** @type {Record<string, HTMLButtonElement>} */
-  const editButtons = {};
+  /**
+   * The keys button for a command, looked up when it needs focus. A
+   * `bind:this` into a plain object warned on every row (Svelte's
+   * binding_property_non_reactive), 74 times per open of this page.
+   * @param {string} id
+   */
+  const editButton = (id) =>
+    /** @type {HTMLButtonElement | null} */ (document.querySelector(`[data-kb-edit="${CSS.escape(id)}"]`));
 
   /** @param {KeyboardEvent} e */
   function onRecordKey(e) {
@@ -166,7 +172,7 @@
     recordingId = null;
     setRecordingShortcut(false);
     window.removeEventListener("keydown", onRecordKey, true);
-    if (id) void tick().then(() => editButtons[id]?.focus());
+    if (id) void tick().then(() => editButton(id)?.focus());
   }
 
   /** @param {string} id @param {string} combo */
@@ -254,7 +260,9 @@
                 aria-expanded={open}
                 onclick={() => { const n = new Set(openSeries); if (open) n.delete(it.key); else n.add(it.key); openSeries = n; }}
               >
-                <ChevronRight class={cn("size-3.5 shrink-0 text-muted-foreground transition-transform duration-150", open && "rotate-90")} />
+                <!-- In the changed-dot slot (6px), pulled into the padding, so this
+                  label starts where every other row's does. -->
+                <ChevronRight class={cn("-ms-2.5 size-3 shrink-0 text-muted-foreground transition-transform duration-150", open && "rotate-90")} />
                 <span class="min-w-0 flex-1 truncate text-ui-sm text-foreground">{it.label}</span>
                 {#if it.rows.some((r) => r.changed)}<span class="size-1.5 shrink-0 rounded-full bg-primary" title="Some are changed"></span>{/if}
                 <span class="flex shrink-0 items-center gap-1 text-ui-2xs text-muted-foreground">
@@ -298,7 +306,7 @@
         {@const id = r.id}
         <!-- The keys are the control: click them to record new ones. -->
         <button
-          bind:this={editButtons[id]}
+          data-kb-edit={id}
           type="button"
           class={cn(
             "inline-flex h-7 min-w-16 shrink-0 items-center justify-end gap-1 rounded-md px-1.5 transition-colors hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring",

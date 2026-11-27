@@ -45,6 +45,7 @@
 <SearchableMenu
   bind:open
   {items}
+  current={value == null ? undefined : String(value)}
   {align}
   {side}
   {contentClass}

@@ -1,4 +1,6 @@
 <script>
+  import EmptyState from './EmptyState.svelte'
+  import { formatCompactCount } from '$lib/table-list.js'
   import { onDestroy, untrack } from 'svelte'
   import FieldSelect from './FieldSelect.svelte'
   import ScheduledBackups from './ScheduledBackups.svelte'
@@ -674,11 +676,7 @@
 {/snippet}
 
 {#snippet emptyState(/** @type {any} */ Icon, /** @type {string} */ title, /** @type {string} */ body)}
-  <div class="flex flex-1 flex-col items-center justify-center gap-2 px-8 text-center">
-    <Icon class="size-5 shrink-0 text-muted-foreground" />
-    <p class="text-ui-sm font-medium text-foreground">{title}</p>
-    <p class="max-w-sm text-pretty text-ui-xs leading-relaxed text-muted-foreground">{body}</p>
-  </div>
+  <EmptyState class="flex-1 justify-center" icon={Icon} {title} description={body} />
 {/snippet}
 
 <div class="flex min-h-0 flex-1 flex-col overflow-hidden bg-panel">
@@ -811,7 +809,7 @@
           {@render emptyState(
             Download,
             'Export to a .sql file',
-            `${tablesText(selectedTables.size)}${estSelectedRows ? `, about ${rowsText(estSelectedRows)}` : ''}. The file restores here${cliName ? ` or with ${cliName}` : ''}.`,
+            `${tablesText(selectedTables.size)}${estSelectedRows ? `, about ${formatCompactCount(estSelectedRows)} ${estSelectedRows === 1 ? 'row' : 'rows'}` : ''}. The file restores here${cliName ? ` or with ${cliName}` : ''}.`,
           )}
         {:else}
           <div class="flex shrink-0 flex-col gap-3 border-b border-border/60 p-4">

@@ -76,6 +76,8 @@ const NETWORK_ERROR_PATTERNS = [
   'os error 51',   // ENETUNREACH macOS (Wi‑Fi dropped)
   'os error 65',   // EHOSTUNREACH macOS
   'cannot reach',            // our own preflight message
+  'server selection timeout', // MongoDB: no server answered
+  'no available servers',     // MongoDB
   ...POOL_LOST_PATTERNS,
   // NB: deliberately NOT matching bare 'timed out' / 'i/o error' - those also fire
   // on a statement/lock timeout (a slow query, not a dropped connection), which
@@ -115,6 +117,26 @@ export function connectionErrorKind(msg) {
   const lower = String(msg ?? '').toLowerCase()
   if (POOL_LOST_PATTERNS.some((p) => lower.includes(p))) return 'dropped'
   return NETWORK_ERROR_PATTERNS.some((p) => lower.includes(p)) ? 'unreachable' : null
+}
+
+/**
+ * The description for a failed connect: a plain sentence first when nothing
+ * answered, then the driver's own words, cut short. The MongoDB driver's
+ * "Server selection timeout: No available servers. Topology: { Type: Unknown,
+ * Servers: [ ... ] }" was the whole message before.
+ * @param {{ host?: string, port?: number | string, type?: string } | null | undefined} conn
+ * @param {unknown} err
+ */
+export function connectFailureText(conn, err) {
+  const raw = errorText(err)
+  if (connectionErrorKind(raw) !== 'unreachable') return raw
+  // The host and port, from the connection or, for one saved as a URI, from
+  // the driver's report ("Address: 127.0.0.1:27018") or the URI itself.
+  const uriHost = /** @type {any} */ (conn)?.uri?.match?.(/^[a-z][a-z0-9+.-]*:\/\/(?:[^@/]*@)?([^/?#,]+)/i)?.[1]
+  const addr = conn?.host ? `${conn.host}${conn.port ? `:${conn.port}` : ''}` : (raw.match(/Address: ([^,\s}]+)/)?.[1] ?? uriHost ?? '')
+  const where = addr ? ` at ${addr}` : ''
+  const said = raw.length > 140 ? `${raw.slice(0, 140).trimEnd()}…` : raw
+  return `Nothing answered${where}. Check that the server is running and reachable. (${said})`
 }
 
 /**

@@ -1,6 +1,8 @@
 <script>
   import { tx } from '$lib/i18n.js'
   import { comboTitle } from '$lib/shortcuts.js'
+  import { isPlainRead } from '$lib/sql-write.js'
+  import Kbd from './Kbd.svelte'
   import { rowsToCsv, rowsToJson, rowsToSql, rowsToTsv, rowsToMarkdown, rowsToJsonl, rowsToObjects, saveExportFile, buildExportFilename, exportRows, EXPORT_FORMATS } from '$lib/export.js'
   import Play from "@lucide/svelte/icons/play";
   import PanelBottom from "@lucide/svelte/icons/panel-bottom";
@@ -93,6 +95,8 @@
     /** Cancel handle for the run in flight in THIS tab - so Stop can't cancel
      *  a query another tab happens to be running at the same time. */
     runningQueryId = /** @type {string | null} */ (null),
+    /** Told when Stop is pressed, so the run can be let go if the server never answers the cancel. @type {(queryId: string | null) => void} */
+    onstoprequested = () => {},
     error = "",
     /** @type {any[]} */
     multiResults = [],
@@ -116,6 +120,8 @@
     onmodshiftd = undefined,
     onmodaltd = undefined,
     onmodshifto = undefined,
+    /** Find in database, from inside the editor. */
+    onsearchdb = undefined,
     onmodshiftb = undefined,
     /** Set true to open the History list in the results pane; it reads back
      *  false once the list is up, so the next request opens it again. */
@@ -137,6 +143,8 @@
     onsaveinplace = async (sql) => false,
     /** Name of the saved query this tab belongs to, or ''. */
     savedQueryName = '',
+    /** A name I gave this editor tab (renamed from its default), or ''. */
+    tabName = '',
     /** Called when user clicks "Fix with AI" - parent opens sidebar and sends the message */
     /** @param {{ error: string, sql: string }} detail */
     onfixwithai = /** @type {((detail: { error: string, sql: string }) => void) | undefined} */ (undefined),
@@ -190,7 +198,7 @@
     _wasLoading = now
   })
 
-  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => boolean, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
+  /** @type {{ focus: () => void, markRunning: (ranStatement?: string | null) => void, markExecuted: (ranStatement?: string | null, run?: { ms?: number | null, rows?: number | null }) => void, markOutcomes: (outcomes: Array<{ sql: string, sent?: string, error: string | null, position: number | null, ms?: number | null, rows?: number | null, affected?: number | null }>) => void, clearRunMarks: () => void, markReverted: (undoId: string) => void, replaceInFailed: (name: string, replacement: string) => string | false, addMissingSemicolon: () => string | false, getStatementAtCursor: () => string, getSelectionText: () => string } | null} */
   let sqlEditorRef = $state(null)
 
   /** Mod+R from outside the editor: the selection, else the statement at the cursor. */
@@ -202,6 +210,11 @@
   /** Run the whole editor, as Run does (a statement opened in a new tab). */
   export function runEditor() {
     handleRun(undefined)
+  }
+
+  /** Reformat the editor (the command palette's Format SQL). */
+  export function formatEditor() {
+    void formatSql?.()
   }
 
   /** Explain the editor's query (the command palette's Explain query). */
@@ -781,6 +794,21 @@
     return Math.round(Math.min(max, Math.max(280, w)));
   }
   const beside = $derived($appSqlEditor.resultsBeside && outputVisible);
+  /**
+   * The split's live width. The saved editor width was applied as is, so a
+   * narrower window (960px, the minimum) left the results ~150px and clipped
+   * their toolbar. The width drawn is clamped to the room there is now; the
+   * saved one is kept, so a wider window gets the old split back.
+   */
+  let splitWidth = $state(0);
+  $effect(() => {
+    const el = splitEl;
+    if (!el) return;
+    const ro = new ResizeObserver(() => { splitWidth = el.clientWidth; });
+    ro.observe(el);
+    return () => ro.disconnect();
+  });
+  const shownEditorWidth = $derived(splitWidth > 0 ? Math.min(editorWidth, Math.max(280, splitWidth - 320)) : editorWidth);
   /** Where Saved lives: its own Queries tab in the shell, else the results pane. */
   const savedWhere = $derived(onopenqueries ? 'in the Queries tab under Saved' : 'under Saved in the results pane');
   /** @type {(() => Promise<void>) | null} */
@@ -797,16 +825,28 @@
 
   /**
    * "Did you mean" in the error console: put the name in the failed statement.
-   * The editor refuses once that statement has been edited since the run, and
-   * then the name goes to the clipboard instead of nowhere.
+   * A fixed read (SELECT, WITH, SHOW, EXPLAIN...) runs again at once, so the
+   * error gives way to its rows; a write waits for Run. The editor refuses once
+   * that statement has been edited since the run, and then the name goes to
+   * the clipboard instead of nowhere.
    * @param {string} name @param {string} replacement
    */
   async function applySuggestion(name, replacement) {
-    if (sqlEditorRef?.replaceInFailed?.(name, replacement)) return
+    const fixed = sqlEditorRef?.replaceInFailed?.(name, replacement)
+    if (fixed) {
+      if (isPlainRead(fixed) && !loading) handleRun(fixed)
+      return
+    }
     try {
       await navigator.clipboard.writeText(replacement)
       toast.info(`Copied ${replacement}`, { description: 'The statement changed since it ran, so it was not edited.' })
     } catch { /* clipboard unavailable - no-op */ }
+  }
+
+  /** "Add ; and run": split the statements that ran as one, run the one at the caret if it only reads. */
+  function addSemicolonAndRun() {
+    const stmt = sqlEditorRef?.addMissingSemicolon?.()
+    if (stmt && isPlainRead(stmt) && !loading) handleRun(stmt)
   }
 
   function fixWithAi() {
@@ -823,12 +863,15 @@
     if (!loading || stopping) return
     stopping = true
     void cancelQuery(runningQueryId ?? undefined)
+    onstoprequested(runningQueryId)
   }
   // The backend reports a stopped run as an error string. It is the user's own
   // action, not a failure, so it gets its own quiet view instead of the red one.
   const stopped = $derived(/Query cancelled/i.test(shownError))
   /** Stopped on an engine that can't stop a statement: the server may finish it. */
   const serverMayFinish = $derived(stopped && /may still finish/i.test(shownError))
+  /** Let go of on this side because the server never answered the cancel. */
+  const noAnswer = $derived(stopped && /did not answer/i.test(shownError))
   // Tauri errors arrive as `Error: <message>`; the prefix repeats the header.
   const errorText = $derived(shownError.replace(/^Error:\s*/, ''))
 
@@ -864,8 +907,19 @@
   /** Save as a new query: the name dialog. Ctrl/Cmd+Shift+S, Shift+click Save. */
   function openSaveDialog() {
     if (!sql.trim()) return;
-    saveQueryName = savedQueryName ? `${savedQueryName} copy` : queryTitle(sql);
+    // A tab I renamed already says what the query is: that, not its first line.
+    saveQueryName = savedQueryName ? `${savedQueryName} copy` : tabName || queryTitle(sql);
     saveDialogOpen = true;
+    // The name selected, ready to type over, but shown from its start: focus
+    // landed with the caret at the end, and a long name (a query's first line)
+    // showed only its tail.
+    setTimeout(() => {
+      const el = /** @type {HTMLInputElement | null} */ (document.getElementById('save-query-name'));
+      if (!el) return;
+      el.focus();
+      el.setSelectionRange(0, el.value.length, 'backward');
+      el.scrollLeft = 0;
+    }, 60);
   }
 
   /**
@@ -1015,6 +1069,7 @@
             class="inline-flex h-7 w-6 shrink-0 items-center justify-center border-l border-background/20 bg-foreground text-background transition-opacity hover:opacity-90 disabled:pointer-events-none disabled:opacity-50"
             disabled={!sql.trim()}
             aria-label="Run options"
+            title="Run options: every statement, or the one at the cursor"
           >
             <ChevronDown class="size-3" />
           </DropdownMenu.Trigger>
@@ -1402,7 +1457,7 @@
       : outputVisible
         ? "relative shrink-0 overflow-hidden bg-panel"
         : "relative min-h-0 flex-1 overflow-hidden bg-panel"}
-    style={beside ? `width: ${editorWidth}px` : outputVisible ? `height: ${editorHeight}px` : undefined}
+    style={beside ? `width: ${shownEditorWidth}px` : outputVisible ? `height: ${editorHeight}px` : undefined}
   >
     <SqlEditor
       bind:this={sqlEditorRef}
@@ -1425,6 +1480,7 @@
       {onmodshiftd}
       {onmodaltd}
       {onmodshifto}
+      {onsearchdb}
       onmodj={toggleOutput}
       onmodshiftb={() => { toggleHistory(); onmodshiftb?.() }}
       onlens={onStatementAction}
@@ -1440,7 +1496,7 @@
     axis="x"
     edge="end"
     onresizestart={() => {
-      resizeStartWidth = editorWidth;
+      resizeStartWidth = shownEditorWidth;
     }}
     onresize={(dx) => {
       editorWidth = clampEditorWidth(resizeStartWidth + dx);
@@ -1564,7 +1620,7 @@
         </button>
       {/if}
       {#if resultShown && currentDisplay.rows.length > 0}
-        <span class="mx-1 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
         {#if findOpen}
           <div class="search-shell flex h-7 items-center gap-1 ps-2 pe-0.5" role="search">
             <Search class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
@@ -1680,7 +1736,6 @@
             <DropdownMenu.Content align="end" class="min-w-52">
               {#each EXPORT_FORMATS as fmt (fmt.id)}
                 <DropdownMenu.Item onclick={() => void exportAs(fmt.id)}>
-                  <Download class="size-3.5 shrink-0 text-muted-foreground" />
                   <span data-slot="menu-label">{fmt.label}</span>
                   <span class="ml-auto text-ui-2xs text-muted-foreground">{fmt.hint}</span>
                 </DropdownMenu.Item>
@@ -1756,7 +1811,9 @@
                   <!-- HTTP engines and document stores have no way to stop a
                        statement on the server: the app stopped waiting, the
                        server did not necessarily stop working. -->
-                  <p class="max-w-sm text-ui-xs text-muted-foreground">{serverMayFinish
+                  <p class="max-w-sm text-ui-xs text-muted-foreground">{noAnswer
+                    ? 'The database did not answer the cancel, so Stroke stopped waiting. It may be unreachable, and the query may still finish there.'
+                    : serverMayFinish
                     ? 'Stroke stopped waiting, but this database cannot stop a running statement, so the server may still finish it.'
                     : 'It was cancelled on the server before the results came back.'}</p>
                 </div>
@@ -1784,6 +1841,7 @@
                 oncopy={copyError}
                 onfixwithai={onfixwithai ? fixWithAi : undefined}
                 onsuggest={applySuggestion}
+                onaddsemicolon={addSemicolonAndRun}
               >
                 {#if /statement timeout|canceling statement due to/i.test(shownError)}
                   <p class="text-ui-xs leading-relaxed text-muted-foreground">
@@ -1836,6 +1894,7 @@
                 {sql}
                 initialChartType={chartType}
                 oncharttypechange={(t) => (chartType = t)}
+                showCount={false}
               />
             {:else}
               <!-- A size container: in a narrow pane (results beside the editor)
@@ -1903,18 +1962,22 @@
             </div>
           {:else}
             <!-- T3-style empty state: one light line, one quiet hint. -->
-            <div class="flex h-full flex-col items-center justify-center gap-1.5 text-center">
+            <div class="@container/runhint flex h-full flex-col items-center justify-center gap-1.5 px-4 text-center">
               <p class="text-ui-lg font-normal tracking-tight text-foreground/90">{$tx('sql.runAQuery', 'Run a query')}</p>
               <!-- Mod+Enter runs every statement; Mod+R is the one at the cursor.
                    This named Mod+Enter for the cursor's, which then ran all of them. -->
-              <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
-                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{comboTitle('Mod+R')}</kbd>
-                runs the statement at the cursor
-              </p>
-              <p class="flex items-center gap-1.5 text-ui-xs text-muted-foreground">
-                <kbd class="rounded bg-sidebar-accent px-1.5 py-0.5 font-sans text-ui-2xs">{comboTitle('Mod+Enter')}</kbd>
-                runs them all
-              </p>
+              <!-- Two columns, caps right-aligned against the text: centred one
+                   per line, the two hints started at different x and read as
+                   two unrelated notes. -->
+              <!-- Below ~18rem (results beside the editor in a narrow window)
+                   the two columns wrapped a word per line: each cap then sits
+                   centred above its text instead. -->
+              <div class="mt-1 grid grid-cols-1 justify-items-center gap-x-2 gap-y-1.5 text-ui-xs text-muted-foreground @[18rem]/runhint:grid-cols-[auto_auto] @[18rem]/runhint:items-center @[18rem]/runhint:justify-items-start">
+                <Kbd combo="Mod+R" class="@[18rem]/runhint:justify-self-end" />
+                <span class="text-center @[18rem]/runhint:text-left @[18rem]/runhint:whitespace-nowrap">runs the statement at the cursor</span>
+                <Kbd combo="Mod+Enter" class="mt-1.5 @[18rem]/runhint:mt-0 @[18rem]/runhint:justify-self-end" />
+                <span class="text-center @[18rem]/runhint:text-left @[18rem]/runhint:whitespace-nowrap">runs them all</span>
+              </div>
             </div>
           {/if}
         {/key}
@@ -1940,7 +2003,7 @@
       <Input
         id="save-query-name"
         bind:value={saveQueryName}
-        class="font-mono text-ui-sm"
+        class="text-ui-sm"
         placeholder={$tx('sql.queryName', 'Query name')}
         onkeydown={(e) => {
           if (e.key === 'Enter') void confirmSaveQuery()

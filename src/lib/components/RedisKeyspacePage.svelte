@@ -791,7 +791,7 @@
         {#if applying}<LoaderCircle class="animate-spin" />{:else}<Check />{/if}
         Apply
       </Button>
-      <span class="mx-0.5 h-4 w-px bg-border"></span>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
     {/if}
     <Button variant="ghost" size="icon-sm" onclick={reload} title="Reload keys" aria-label="Reload keys">
       <RefreshCw class={cn(loading && 'animate-spin')} />

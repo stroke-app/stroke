@@ -1,5 +1,6 @@
 <script>
   import { Button } from '$lib/components/ui/button/index.js'
+  import EmptyState from './EmptyState.svelte'
   import EChartPanel from "./EChartPanel.svelte";
   import AiChartRenderer from "./AiChartRenderer.svelte";
   import {
@@ -70,8 +71,6 @@
   /** @type {string | null} */
   let moveChartId = $state(null);
 
-  /** @type {string | null} */
-  let confirmDeleteId = $state(null);
 
   // Dashboard picker popover per chart
   /** @type {string | null} */
@@ -201,15 +200,15 @@
     renameChartInput = "";
   }
 
-  /** @param {string} id */
-  function handleDeleteChart(id) {
-    if (confirmDeleteId === id) {
-      deleteChart(id);
-      confirmDeleteId = null;
-      toast.success("Chart deleted");
-    } else {
-      confirmDeleteId = id;
-    }
+  /** No confirm: it goes at once and the toast offers Undo. @param {{ id: string, name: string }} chart */
+  function handleDeleteChart(chart) {
+    const undo = deleteChart(chart.id);
+    if (!undo) return;
+    toast.message("Chart deleted", {
+      description: chart.name,
+      duration: 8000,
+      action: { label: "Undo", onClick: () => { if (!undo()) toast.error("Couldn't undo: the charts changed since."); } },
+    });
   }
 
   /** @param {string} id @param {string} toGroup */
@@ -266,7 +265,7 @@
   <!-- ── Toolbar: what this is, search, group, new group ──────────────── -->
   <div class="studio-chrome flex h-12 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-4" data-studio-chrome>
     <h1 class="text-ui-sm font-medium text-foreground">Saved charts</h1>
-    <span class="text-ui-xs tabular-nums text-muted-foreground">{totalCharts}</span>
+    {#if totalCharts > 0}<span class="text-ui-xs tabular-nums text-muted-foreground">{totalCharts}</span>{/if}
     <span class="flex-1"></span>
     {#if totalCharts > 0}
       <SearchField bind:value={query} placeholder="Search charts" class="w-52" />
@@ -302,7 +301,8 @@
           <X class="size-3.5 shrink-0" />
         </button>
       </div>
-    {:else}
+    {:else if totalCharts > 0}
+      <!-- Nothing to group yet: the empty state's one action is Open SQL editor. -->
       <Button variant="outline" size="sm" class="gap-1.5" onclick={() => { newGroupOpen = true; newGroupInput = ""; }}>
         <FolderPlus class="size-3.5 shrink-0" />New group
       </Button>
@@ -311,11 +311,14 @@
 
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto px-4 py-4">
     {#if totalCharts === 0}
-      <div class="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 text-center">
-        <span class="flex size-10 items-center justify-center rounded-lg bg-muted/60"><BarChart2 class="size-5 shrink-0 text-muted-foreground" /></span>
-        <p class="text-ui-sm font-medium text-foreground">No saved charts yet</p>
-        <p class="max-w-72 text-ui-xs leading-relaxed text-muted-foreground">Run a query, switch its result to the chart view, and save it. It shows up here, ready to share or put on a dashboard.</p>
-      </div>
+      <EmptyState
+        class="h-full min-h-[280px] justify-center"
+        icon={BarChart2}
+        title="No saved charts yet"
+        description="Run a query, switch its result to the chart view, and save it. It shows up here, ready to share or put on a dashboard."
+      >
+        <Button size="sm" onclick={() => onrunsql('')}>Open SQL editor</Button>
+      </EmptyState>
     {:else if shownCount === 0}
       <p class="py-16 text-center text-ui-xs text-muted-foreground">No charts match.</p>
     {:else}
@@ -418,7 +421,7 @@
                             {/if}
                             <DropdownMenu.DropdownMenuItem onclick={() => startRenameChart(chart.id)}><Pencil class="size-3.5 shrink-0" />Rename</DropdownMenu.DropdownMenuItem>
                             <DropdownMenu.DropdownMenuSeparator />
-                            <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => { deleteChart(chart.id); toast.success("Chart deleted"); }}><Trash2 class="size-3.5 shrink-0" />Delete</DropdownMenu.DropdownMenuItem>
+                            <DropdownMenu.DropdownMenuItem variant="destructive" onclick={() => handleDeleteChart(chart)}><Trash2 class="size-3.5 shrink-0" />Delete</DropdownMenu.DropdownMenuItem>
                           </DropdownMenu.DropdownMenuContent>
                         </DropdownMenu.DropdownMenu>
                       </div>

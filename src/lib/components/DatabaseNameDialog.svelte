@@ -99,9 +99,7 @@
     <Dialog.Content showCloseButton={false} class="w-[min(28.75rem,calc(100vw-2rem))] gap-0 overflow-hidden p-0 sm:max-w-none">
 
       <div class="flex items-start gap-3.5 border-b border-border/25 px-5 pt-5 pb-4">
-        <div class="mt-px flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-          <Icon name={isRename ? 'pencil' : 'copy'} class="size-3.5 shrink-0 text-muted-foreground" />
-        </div>
+        <Icon name={isRename ? 'pencil' : 'copy'} class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div class="min-w-0 flex-1">
           <Dialog.Title class="text-ui-sm font-semibold text-foreground">{isRename ? 'Rename database' : 'Duplicate database'}</Dialog.Title>
           <p class="mt-0.5 text-ui-2xs break-all text-muted-foreground">
@@ -156,7 +154,7 @@
           class="inline-flex h-8 items-center rounded-md px-3.5 text-ui-sm text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
           onclick={() => (open = false)}>Cancel</button>
         <button type="button"
-          class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-foreground px-4 text-ui-sm font-medium text-background transition-opacity hover:opacity-85 disabled:opacity-40"
+          class="inline-flex h-8 items-center gap-1.5 rounded-lg bg-primary px-4 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80 disabled:opacity-40"
           disabled={!isValid || saving}
           onclick={() => void submit()}>
           {#if saving}<Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />{/if}

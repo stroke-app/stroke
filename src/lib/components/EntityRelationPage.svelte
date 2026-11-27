@@ -59,6 +59,7 @@
   import { routeEdges, routeToSvgPath, corridorPathOrtho, CLEAR, MAX_ROUTED_NODES } from '$lib/erd-routing.js'
   import { separateCards, wrapTallRanks, packOrphans } from '$lib/erd-layout.js'
   import { layoutWithElk } from '$lib/erd-elk.js'
+  import { layoutKey, loadLayout, saveLayout } from '$lib/erd-layout-cache.js'
   import { visibleTables, visibleRels, relatedTo, linkedTables, mergeParallelEdges, hubTables } from '$lib/erd-filter.js'
   import { cn, plural, errorText } from '$lib/utils.js'
 
@@ -948,8 +949,14 @@
   }
 
   // ── Build graph ───────────────────────────────────────────────────────────
-  /** @param {boolean} [forceLayout] */
-  async function buildGraph(forceLayout = false) {
+  /** The saved-layout key of the diagram on screen (erd-layout-cache.js). */
+  let _layoutKey = ''
+
+  /**
+   * @param {boolean} [forceLayout]
+   * @param {{ fresh?: boolean }} [opts] fresh: ignore a saved layout (Re-layout)
+   */
+  async function buildGraph(forceLayout = false, { fresh = false } = {}) {
     const all = [...tableMeta.values()]
     const { rawEdges } = buildEdgeData(all)
     allRels = rawEdges
@@ -1014,7 +1021,26 @@
     })
 
     const needsLayout = forceLayout || visible.some(t => !_posCache.has(t.name))
-    if (needsLayout) {
+    // A layout saved for this exact graph (same tables, row counts, lines and
+    // settings) skips ELK: four seconds on a 150-table schema, every start.
+    const key = layoutKey({
+      connectionId,
+      schema,
+      shape: `${shapeKey()}|${focusTable ?? ''}`,
+      // The rows by name, in order: lines attach to a row, so a renamed or
+      // moved column must miss even when the count is the same.
+      nodes: rawNodes.map((n) => ({ id: n.id, rows: n.data.columns.map((/** @type {any} */ c) => c.name).join(',') })),
+      edges: layoutEdges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+    })
+    _layoutKey = key
+    const saved = needsLayout && !fresh ? loadLayout(key, rawNodes.map((n) => n.id)) : null
+    if (saved) {
+      _layoutSeq++
+      layingOut = false
+      for (const [id, p] of saved.positions) _posCache.set(id, p)
+      nodes = rawNodes.map((n) => ({ ...n, position: saved.positions.get(n.id) ?? n.position }))
+      routeHints = saved.hints
+    } else if (needsLayout) {
       // The layout runs in a worker. The diagram on screen stays as it is until
       // the new one is whole - no cards at the origin, no lines moving as they
       // land - and a result that a later request has overtaken is dropped.
@@ -1030,6 +1056,7 @@
       for (const n of laid.nodes) _posCache.set(n.id, n.position)
       nodes = laid.nodes
       routeHints = laid.hints
+      saveLayout(key, new Map(laid.nodes.map((n) => [n.id, n.position])), laid.hints)
     } else {
       nodes = rawNodes
     }
@@ -1087,7 +1114,7 @@
 
   function reLayout() {
     _posCache.clear()
-    void buildGraph(true).then(() => tick()).then(() => erd?.reveal?.())
+    void buildGraph(true, { fresh: true }).then(() => tick()).then(() => erd?.reveal?.())
   }
 
   /** Persist a dragged node's new position so rebuilds and exports keep it. */
@@ -1104,6 +1131,8 @@
       for (const e of edges) if (e.source === id || e.target === id) next.delete(e.id)
       routeHints = next
     }
+    // A card moved by hand stays where it was put next time too.
+    if (_layoutKey) saveLayout(_layoutKey, new Map(nodes.map((n) => [n.id, n.position])), routeHints)
   }
 
   // ── Load ──────────────────────────────────────────────────────────────────
@@ -1878,7 +1907,7 @@
         <ChevronDown class="size-3.5 shrink-0 rotate-90" />
         Rows
       </button>
-      <span class="mx-0.5 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
     {/if}
     <Network class="size-3.5 shrink-0 text-muted-foreground" aria-label="Schema diagram" />
 
@@ -2226,7 +2255,7 @@
         </DropdownMenu.Content>
       </DropdownMenu.Root>
 
-      <div class="h-4 w-px shrink-0 bg-border/60"></div>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
 
       {#if erdView === 'canvas'}
       <!-- Diagram settings: cards, layout and lines, so the Diagram's alone. -->
@@ -2360,6 +2389,14 @@
   <!-- ── Canvas + docked inspector ─────────────────────────────────────────── -->
   <div class="flex min-h-0 flex-1">
   <div class="relative min-h-0 min-w-0 flex-1">
+    <!-- Tables known but no card placed yet (the first layout, or a reload):
+         the canvas sat empty for seconds with nothing saying work was going on. -->
+    {#if (loading || layingOut) && nodes.length === 0 && tableMeta.size > 0 && !error}
+      <div class="loading-reveal pointer-events-none absolute inset-0 z-10 flex flex-col items-center justify-center gap-3" role="status">
+        <Loader class="size-6 shrink-0 animate-spin text-muted-foreground" />
+        <p class="font-mono text-ui-xs text-muted-foreground">{layingOut ? 'Laying out the diagram…' : 'Loading schema structure…'}</p>
+      </div>
+    {/if}
     {#if loading && tableMeta.size === 0}
       <div class="loading-reveal absolute inset-0 flex flex-col items-center justify-center gap-3 bg-background">
         <Loader class="size-6 shrink-0 animate-spin text-muted-foreground" />
@@ -2395,7 +2432,7 @@
                 onclick={() => (mermaidCodeOpen = false)}
                 class="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
               ><PanelLeftClose class="size-3.5 shrink-0" /></button>
-              <span class="shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Mermaid</span>
+              <span class="shrink-0 text-ui-xs font-medium text-muted-foreground">Mermaid</span>
               <span class="min-w-0 truncate font-mono text-ui-3xs tabular-nums text-muted-foreground" title="{shownTables.length} tables, {mermaidRels.length} relationships">
                 {shownTables.length} {plural(shownTables.length, "table")} · {mermaidRels.length} {plural(mermaidRels.length, "link")}
               </span>
@@ -2445,7 +2482,7 @@
           {/if}
           <div class="flex min-w-0 flex-1 flex-col">
             <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/40 bg-panel px-2.5">
-              <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Preview</span>
+              <span class="text-ui-xs font-medium text-muted-foreground">Preview</span>
               <span class="ml-auto"></span>
               <button type="button" title="Zoom out" onclick={() => mermaidViewer?.dispatch('diagram:zoomout')} class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomOut class="size-3.5 shrink-0" /></button>
               <button type="button" title="Zoom in" onclick={() => mermaidViewer?.dispatch('diagram:zoomin')} class="flex size-7 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"><ZoomIn class="size-3.5 shrink-0" /></button>
@@ -2506,7 +2543,7 @@
               <thead class="sticky top-0 z-10 bg-panel">
                 <tr>
                   {#each ['Table', 'Column', 'Type', 'Null', 'Key', 'References'] as h (h)}
-                    <th class="border-b border-border/60 px-3 py-1.5 text-left text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">{h}</th>
+                    <th class="border-b border-border/60 px-3 py-1.5 text-left text-ui-xs font-medium text-muted-foreground">{h}</th>
                   {/each}
                 </tr>
               </thead>

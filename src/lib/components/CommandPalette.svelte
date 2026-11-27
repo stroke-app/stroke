@@ -1,5 +1,7 @@
 <script>
   import { tx } from '$lib/i18n.js'
+  import { cachedCommandFilter } from '$lib/command-filter.js'
+  import { loadRecentCommands, rememberCommand } from '$lib/stores/recent-commands.js'
   import { openTransfer } from '$lib/stores/transfer-ui.js'
   import { EXPORT_FORMATS } from '$lib/export.js'
   import Kbd from './Kbd.svelte'
@@ -7,8 +9,10 @@
   import { cn } from '$lib/utils.js'
   import { engineId, engineLabel } from '$lib/connection-provider.js'
   import * as Command from '$lib/components/ui/command/index.js'
-  import { formatTableRowCount } from '$lib/table-list.js'
+  import { formatTableRowCount, formatFullCount } from '$lib/table-list.js'
   import { get } from 'svelte/store'
+  import { tick, setContext, untrack } from 'svelte'
+  import { createLocalFilter, LOCAL_FILTER } from '$lib/command-local-filter.svelte.js'
   import { chatCompletionStream, buildSystemPrompt, AI_TOOLS, isDestructiveSql, classifyDbError } from '$lib/ai.js'
   import { aiSettings, isAiConfigured } from '$lib/stores/ai-settings.js'
   import { profileAgent } from '$lib/local-agents.js'
@@ -25,6 +29,28 @@
     onexporttable = null,
     /** The open table's name, for the export rows' labels. */
     exportTableName = '',
+    /** Switch the open table between its rows and its structure, or null when
+     *  the tab in front is not a table with a structure view.
+     *  @type {(() => void) | null} */
+    ontablestructure = null,
+    /** Whether that table is showing its structure now. */
+    tableStructureShown = false,
+    /** Tab commands that only had a shortcut or the tab's right-click menu:
+     *  each is null when it does not apply.
+     *  @type {{ reopen: (() => void) | null, close: (() => void) | null, closeOthers: (() => void) | null, togglePin: (() => void) | null, pinned: boolean, newTable: (() => void) | null } | null} */
+    tabActions = null,
+    /** The open table's toolbar, by name; null off a table tab.
+     *  @type {{ filter: () => void, sort: () => void, columns: () => void, addRow: (() => void) | null, findReplace: (() => void) | null, refresh: () => void, view: ((v: string) => void) | null, openInSql: () => void } | null} */
+    tableCommands = null,
+    /** Text to open with: a letter typed on the New tab page starts the search
+     *  with it. Read once as the menu opens, then cleared. */
+    seed = $bindable(''),
+    /** Zoom and full screen, which only the View menu and their keys reached.
+     *  @type {{ zoomIn: () => void, zoomOut: () => void, zoomReset: () => void, fullscreen: () => void } | null} */
+    viewCommands = null,
+    /** The SQL editor in front: run, format, save, begin.
+     *  @type {{ runAll: () => void, runStatement: () => void, format: () => void, save: () => void, begin: () => void } | null} */
+    sqlCommands = null,
     /** Explain the open editor's query, or null when no editor tab is in front.
      *  @type {(() => void) | null} */
     onexplainquery = null,
@@ -53,6 +79,8 @@
     onrefresh = () => {},
     onopenai = () => {},
     onopenaisidebar = () => {},
+    /** The docked AI sidebar exists (StudioShell's AI_SIDEBAR_ENABLED). Off, its row would open the same view as Open AI panel. */
+    aiSidebarEnabled = false,
     /** Whether the app is currently in AI mode (fullscreen chat) */
     aiMode = false,
     /** Toggle between AI mode and dev mode */
@@ -108,6 +136,12 @@
     onopenmyshares = () => {},
     /** Settings ▸ Keybindings, where shortcuts are remapped. */
     onopenkeybindings = () => {},
+    /** Show or hide the sidebar (Mod+B). @type {(() => void) | null} */
+    ontogglesidebar = null,
+    /** Back and forward through the tabs visited. @type {(() => void) | null} */
+    onback = null,
+    /** @type {(() => void) | null} */
+    onforward = null,
     /** Settings, on Appearance (where the theme builder is). */
     onopenappearance = () => {},
     onopenabout = () => {},
@@ -146,6 +180,9 @@
   /** @param {'docker' | 'connections' | 'tables' | 'ask' | 'pages'} target */
   function navigate(target) {
     page = target
+    // A sub-page starts with an empty search: the words that found its row
+    // ("all tables", "connections") filtered the page down to nothing.
+    paletteSearch = ''
   }
 
   // ── Theme page: live preview while the highlight moves ──────────────────────
@@ -229,11 +266,18 @@
       inner = requestAnimationFrame(() => {
         const t = origin ? getThemeDefinition(origin) : null
         const group = themePageGroups.find((g) => g.themes.some((x) => x.id === t?.id))
-        if (t && group) highlighted = themeRowValue(t, group.label)
+        const value = t && group ? themeRowValue(t, group.label) : null
+        if (value) highlighted = value
         themePreviewArmed = true
-        document
-          .querySelector('[data-slot="command-item"][data-selected]')
-          ?.scrollIntoView({ block: 'nearest' })
+        // After the row is marked: queried at once it found the first row,
+        // still selected, and the list stayed at the top with the current
+        // theme (often in the Light group, further down) out of sight.
+        void tick().then(() => {
+          const row = value
+            ? document.querySelector(`[data-slot="command-item"][data-value="${CSS.escape(value)}"]`)
+            : document.querySelector('[data-slot="command-item"][data-selected]')
+          row?.scrollIntoView({ block: 'center' })
+        })
       })
     })
     return () => {
@@ -242,15 +286,43 @@
     }
   })
 
-  // Arrow keys (held down included) and hover both move `highlighted`. At most
-  // one repaint per frame: key repeat can outrun the display, and painting a
-  // theme the next frame replaces anyway is the lag you would see.
+  // Arrow keys (held down included) and hover both move `highlighted`, and so
+  // does typing, which re-ranks the rows. Only the first two preview: typing
+  // "nord" repainted the whole app in Studio Dark at "n", and each repaint
+  // held up the next letter. `navAt` is when an arrow key or the pointer last
+  // moved the highlight; a typed key clears it.
+  let navAt = 0
+  $effect(() => {
+    if (!open || page !== 'theme') return
+    /** @param {KeyboardEvent} e */
+    const onKey = (e) => {
+      if (/^(Arrow(Up|Down)|Page(Up|Down)|Home|End)$/.test(e.key)) navAt = performance.now()
+      else if (e.key.length === 1 || e.key === 'Backspace' || e.key === 'Delete') navAt = 0
+    }
+    // Only a pointer that moved: rows re-ranking under a still one send a move too.
+    let px = NaN, py = NaN
+    /** @param {PointerEvent} e */
+    const onMove = (e) => {
+      if (e.clientX === px && e.clientY === py) return
+      px = e.clientX; py = e.clientY
+      navAt = performance.now()
+    }
+    window.addEventListener('keydown', onKey, true)
+    window.addEventListener('pointermove', onMove, { capture: true, passive: true })
+    return () => {
+      window.removeEventListener('keydown', onKey, true)
+      window.removeEventListener('pointermove', onMove, true)
+    }
+  })
+  // At most one repaint per frame: key repeat can outrun the display, and
+  // painting a theme the next frame replaces anyway is the lag you would see.
   let previewFrame = 0
   $effect(() => {
     const value = highlighted
     if (page !== 'theme' || !themePreviewArmed) return
     const id = themeIdFromValue(value)
     if (!id) return
+    if (performance.now() - navAt > 400) return
     cancelAnimationFrame(previewFrame)
     previewFrame = requestAnimationFrame(() => {
       if (page !== 'theme' || !themePreviewArmed) return
@@ -633,13 +705,30 @@
       // loop (which runs real queries), and the transcript is never shown
       // again - reopening always starts back at root.
       stopAsk()
-      page = 'root'
-      paletteSearch = ''  // clear search so it never persists between opens
       askTurns = []
       askApi = []
       askError = ''
+      // Clear the search so it never persists between opens, but after the
+      // frame that shows the picked page: cleared at once, the list re-ranked
+      // and re-scrolled every row while the menu was on its way out, ahead of
+      // the page the Enter asked for.
+      _resetPending = true
+      let raf = requestAnimationFrame(() => {
+        raf = 0
+        setTimeout(() => { if (!open) resetSearch() }, 0)
+      })
+      return () => { if (raf) cancelAnimationFrame(raf) }
     }
+    // Opened again before the deferred clear ran: clear now, before it shows.
+    if (_resetPending) resetSearch()
+    if (seed) { paletteSearch = seed; seed = '' }
   })
+  let _resetPending = false
+  function resetSearch() {
+    _resetPending = false
+    page = 'root'
+    paletteSearch = ''
+  }
 
   // Focus the search input when the dialog opens or navigates to a sub-page.
   // Command.Input is now first in DOM order so bits-ui's focus trap lands on it
@@ -668,7 +757,63 @@
   // all on each keystroke), which keeps the rendered list small and scrolling
   // smooth even with thousands of tables.
   let paletteSearch = $state('')
+  const paletteFilter = cachedCommandFilter()
+  // The root and theme pages filter their own rows: bits-ui's search stays
+  // empty there, so it never rebuilds or re-sorts the list (see
+  // command-local-filter.svelte.js). The theme page's first letter rebuilt 40
+  // rows of swatches, 160ms in a dev build.
+  // Not Connections: its current connection is a disabled row, and the best
+  // row picked here does not know to skip it.
+  const LOCAL_PAGES = new Set(['root', 'theme', 'pages', 'docker'])
+  const localFilter = createLocalFilter(() => (LOCAL_PAGES.has(page) ? paletteSearch.trim() : ''), paletteFilter)
+  setContext(LOCAL_FILTER, localFilter)
+  const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'table', 'sql', 'actions', 'tabs', 'view', 'switchdb', 'database', 'launch', 'appearance']
+  /** Root groups in page order, or best match first while searching. */
+  const rootOrder = $derived.by(() => {
+    if (!localFilter.search) return ROOT_GROUPS
+    const best = new Map(ROOT_GROUPS.map((g) => [g, localFilter.best(g)]))
+    return [...ROOT_GROUPS].sort((a, b) => (best.get(b) ?? 0) - (best.get(a) ?? 0))
+  })
+  // Page rows, best match first while searching, as bits-ui sorted them: Go to
+  // page is one flat list, and on the root page Views is the group whose rows
+  // differ most. Same value and keywords the row scores itself with (pageRow),
+  // so the order and the highlight agree.
+  const pagesRanked = $derived.by(() => {
+    const q = page === 'pages' || page === 'root' ? localFilter.search : ''
+    if (!q) return pageItems
+    const scoreOf = (/** @type {typeof pageItems[number]} */ it) => {
+      const shown = $tx('cmd.' + it.label, it.label)
+      return paletteFilter(shown === it.label ? it.value : `${it.value} ${shown}`, q, [shown])
+    }
+    return pageItems.map((it, i) => ({ it, i, s: scoreOf(it) })).sort((a, b) => b.s - a.s || a.i - b.i).map((x) => x.it)
+  })
+  // Highlight the best match as the search changes: bits-ui did this while it
+  // filtered, and with its search empty it no longer does.
+  let _wasSearching = false
+  $effect(() => {
+    if (!LOCAL_PAGES.has(page)) return
+    if (!localFilter.search) {
+      // Cleared: back to the first row, as a fresh menu opens.
+      if (!_wasSearching) return
+      _wasSearching = false
+      void tick().then(() => {
+        const first = document.querySelector('[data-command-dialog] [data-command-item]:not([aria-disabled="true"])')
+        const v = first?.getAttribute('data-value')
+        if (v) highlighted = v
+      })
+      return
+    }
+    _wasSearching = true
+    // Elsewhere groups keep their order, and a tie goes to the row mounted
+    // first, which is the first on the page.
+    const order = page === 'root' ? rootOrder : null
+    const top = localFilter.top(order ? (g) => order.indexOf(g ?? '') : undefined)
+    if (top && top !== untrack(() => highlighted)) highlighted = top
+  })
   const TABLES_PAGE_CAP = 100
+  // Fewer while searching: results are ranked, nobody reads past the first
+  // screens, and every row costs layout as the ranking changes per letter.
+  const TABLES_SEARCH_CAP = 40
 
   // Strip word separators so "-", "_", "." and spaces are all interchangeable:
   // "product likes", "product-likes", "productlikes" all match "product_likes".
@@ -748,12 +893,24 @@
     }
     // Higher score first; ties broken by shorter name (more relevant) then A-Z.
     scored.sort((a, b) => b.s - a.s || a.len - b.len || (a.t.name < b.t.name ? -1 : 1))
-    return { items: scored.slice(0, TABLES_PAGE_CAP).map((x) => x.t), total: scored.length }
+    return { items: scored.slice(0, TABLES_SEARCH_CAP).map((x) => x.t), total: scored.length }
   }
 
   const tablesPageRegular = $derived(filterAndCap(_loweredRegular))
   const tablesPageViews = $derived(filterAndCap(_loweredViews))
   const tablesPageMatViews = $derived(filterAndCap(_loweredMatViews))
+  // bits-ui's search stays empty on this page (it would rebuild every row on
+  // the first letter: 370ms for 100 rows), so it no longer moves the
+  // highlight as the results change. The best match is the first row.
+  $effect(() => {
+    if (page !== 'tables') return
+    void tablesPageRegular; void tablesPageViews; void tablesPageMatViews
+    void tick().then(() => {
+      const first = document.querySelector('[data-command-dialog] [data-command-item]:not([aria-disabled="true"])')
+      const v = first?.getAttribute('data-value')
+      if (v && v !== untrack(() => highlighted)) highlighted = v
+    })
+  })
 
   // On tables page: shouldFilter=false so bits-ui skips its sort/filter pass entirely
   // (no CSS `order` reordering, no keyboard-nav interference). We pre-filter in JS.
@@ -761,42 +918,25 @@
   const shouldFilter = $derived(page !== 'tables' && page !== 'ask')
 
   /**
-   * Ranks root-page matches; bits-ui sorts by the score. The visible label
-   * (passed as the first keyword) outranks the hidden search words, so "Map"
-   * puts Map above Schema diagram, whose keywords also mention maps. It used
-   * to return 1 for every match, which left results in declaration order.
-   * @type {(value: string, search: string, keywords?: string[]) => number}
+   * Rows mounted on the frame the menu opens: the ones that fit on screen.
+   * Mounting all ~80 root rows (each a bits-ui item, icon and keycaps) took
+   * ~110ms of script in a production build before the menu could paint, past
+   * the 100ms a menu has to open within to feel instant. The rest mount on
+   * the next frame, before anyone can scroll or press a key that needs them,
+   * and typing mounts everything at once so search always sees every row.
    */
-  const commandFilter = (value, search, keywords = []) => {
-    const s = search.trim().toLowerCase()
-    if (!s) return 1
-    const label = (keywords[0] ?? '').toLowerCase()
-    const v = value.toLowerCase()
-    const wordStart = (/** @type {string} */ text) => text.split(/[^a-z0-9]+/).some((w) => w.startsWith(s))
-    if (label) {
-      if (label === s) return 1
-      if (label.startsWith(s)) return 0.95
-      if (wordStart(label)) return 0.9
-    }
-    if (wordStart(v)) return 0.7
-    if (v.includes(s) || label.includes(s)) return 0.5
-    // Several words in any order, each the start of a word: "ai chat" finds
-    // Ask AI ("ask ai assistant chat query"), which as one phrase it never did.
-    const tokens = s.split(/\s+/).filter(Boolean)
-    if (tokens.length > 1) {
-      const all = `${label} ${v}`.split(/[^a-z0-9]+/).filter(Boolean)
-      if (tokens.every((t) => all.some((w) => w.startsWith(t)))) return 0.4
-    }
-    // Separator-insensitive fallback so "newtable"/"new-table" match "new table",
-    // anchored at a word start: unanchored, "map" matched "schema public"
-    // through "sche(ma p)ublic".
-    const words = `${label} ${v}`.split(/[^a-z0-9]+/).filter(Boolean)
-    const q = stripSep(s)
-    for (let i = 0; i < words.length; i++) {
-      if (words.slice(i).join('').startsWith(q)) return 0.3
-    }
-    return 0
-  }
+  const FIRST_PAINT_ROWS = 12
+
+  /** The last few page rows picked, newest first, shown above Views on an empty search. */
+  let recentCommands = $state(loadRecentCommands())
+  const recentRows = $derived(recentCommands.map((l) => pageItems.find((p) => p.label === l)).filter((p) => !!p))
+  let mountAll = $state(false)
+  const listAll = $derived(mountAll || !!paletteSearch.trim())
+  $effect(() => {
+    if (!open) { mountAll = false; return }
+    let raf = requestAnimationFrame(() => { raf = requestAnimationFrame(() => { mountAll = true }) })
+    return () => cancelAnimationFrame(raf)
+  })
 
   /** @param {() => void} action */
   function run(action) {
@@ -838,7 +978,7 @@
 <Command.Dialog
   bind:open
   bind:value={highlighted}
-  filter={commandFilter}
+  filter={paletteFilter}
   shouldFilter={shouldFilter}
   title="Command menu"
   description="Search tables, schemas, and commands"
@@ -854,6 +994,7 @@
     <div class="flex flex-col" onkeydown={handleKeydown}>
       <Command.Input
         bind:value={paletteSearch}
+        filterValue={LOCAL_PAGES.has(page) || page === 'tables' ? '' : undefined}
         oninput={(/** @type {Event} */ e) => { paletteSearch = /** @type {HTMLInputElement} */ (e.currentTarget).value }}
         placeholder={
           page === 'root' ? $tx('cmd.ph.root', 'Search tables, schemas, commands…')
@@ -889,16 +1030,17 @@
           ? 'h-[min(640px,74vh)] max-h-[min(640px,74vh)]'
           : 'show-scrollbar max-h-[min(420px,56vh)] pb-2 [mask-image:linear-gradient(to_bottom,black_calc(100%-16px),transparent)]'}
       >
-        {#if page !== 'ask'}
-          <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</Command.Empty>
+        {#if page !== 'ask' && !LOCAL_PAGES.has(page)}
+          <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results')}</Command.Empty>
         {/if}
 
         <!-- Shared page-destination row (root "Views" + "Go to page" navigator) -->
-        {#snippet pageRow(/** @type {typeof pageItems[number]} */ it)}
+        {#snippet pageRow(/** @type {typeof pageItems[number]} */ it, /** @type {boolean} */ recent = false)}
           {@const shown = $tx('cmd.' + it.label, it.label)}
           <!-- Translated name shown and searchable; the English words stay in
-               the value so either language finds it. -->
-          <Command.Item value={shown === it.label ? it.value : `${it.value} ${shown}`} keywords={[shown]} onSelect={() => run(it.action)}>
+               the value so either language finds it. A recent row repeats one
+               further down, so its value carries a prefix to stay unique. -->
+          <Command.Item value={(recent ? 'recent ' : '') + (shown === it.label ? it.value : `${it.value} ${shown}`)} keywords={[shown]} onSelect={() => { recentCommands = rememberCommand(it.label); run(it.action) }}>
             <Icon name={it.icon} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
             <span data-slot="command-label" class="truncate">{shown}</span>
             {#if it.keys}<Command.Shortcut keys={it.keys} />{/if}
@@ -989,8 +1131,12 @@
 
         <!-- ── ROOT PAGE ─────────────────────────────────────────────── -->
         {#if page === 'root'}
+          <!-- Each group is a snippet so a search can put the group with the
+               best match first: the keyed each below moves their DOM nodes
+               instead of bits-ui rebuilding the list (command-local-filter.svelte.js). -->
+          {#snippet group_ask()}
           {#if paletteSearch.trim() && $appCmdkAi}
-            <Command.Group heading={$tx('group.Ask', 'Ask')}>
+            <Command.Group value="ask" heading={$tx('group.Ask', 'Ask')}>
               <Command.Item value={"ask ai " + paletteSearch} onSelect={() => startAsk(paletteSearch)}>
                 <Icon name="sparkles" class="size-4 shrink-0 text-primary" />
                 <span data-slot="command-label" class="truncate">Ask AI: <span class="text-muted-foreground">"{paletteSearch}"</span></span>
@@ -998,18 +1144,33 @@
               </Command.Item>
             </Command.Group>
           {/if}
-
-          {#if connected}
-            <Command.Group heading={$tx('group.Views', 'Views')}>
-              {#each pageItems as it (it.label)}
+          {/snippet}
+          {#snippet group_recent()}
+            {#if connected}
+            {#if recentRows.length && !paletteSearch.trim()}
+              <Command.Group value="recent" heading={$tx('group.Recent', 'Recent')}>
+                {#each recentRows as it (it.label)}
+                  {@render pageRow(it, true)}
+                {/each}
+              </Command.Group>
+            {/if}
+            {/if}
+          {/snippet}
+          {#snippet group_views()}
+            {#if connected}
+            <Command.Group value="views" heading={$tx('group.Views', 'Views')}>
+              {#each listAll ? pagesRanked : pagesRanked.slice(0, FIRST_PAINT_ROWS) as it (it.label)}
                 {@render pageRow(it)}
               {/each}
             </Command.Group>
-
+            {/if}
+          {/snippet}
+          {#snippet group_schemas()}
+            {#if connected && listAll}
             {#if schemas.length > 0}
-              <Command.Group heading={$tx('group.Schemas', 'Schemas')}>
+              <Command.Group value="schemas" heading={$tx('group.Schemas', 'Schemas')}>
                 {#each schemas as schema (schema)}
-                  <Command.Item value="schema {schema}" onSelect={() => run(() => onschemachange(schema))}>
+                  <Command.Item value="schema {schema}" keywords={[schema]} onSelect={() => run(() => onschemachange(schema))}>
                     <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{schema}</span>
                     {#if schema === activeSchema}
@@ -1019,32 +1180,35 @@
                 {/each}
               </Command.Group>
             {/if}
-
+            {/if}
+          {/snippet}
+          {#snippet group_tables()}
+            {#if connected && listAll}
             {#if tables.length > 0}
-              <Command.Group heading={$tx('group.Tables', 'Tables')}>
+              <Command.Group value="tables" heading={$tx('group.Tables', 'Tables')}>
                 {#each regularTables.slice(0, 8) as table (table.name)}
-                  <Command.Item value="table {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
+                  <Command.Item value="table {activeSchema} {table.name}" keywords={[table.name]} onSelect={() => run(() => ontableselect(table.name))}>
                     <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 font-mono text-ui-xs tabular-nums text-muted-foreground">{formatTableRowCount(table.rowCount)}</span>
                   </Command.Item>
                 {/each}
                 {#each viewTables.slice(0, 4) as table (table.name)}
-                  <Command.Item value="view {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
+                  <Command.Item value="view {activeSchema} {table.name}" keywords={[table.name]} onSelect={() => run(() => ontableselect(table.name))}>
                     <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">view</span>
                   </Command.Item>
                 {/each}
                 {#each matViewTables.slice(0, 4) as table (table.name)}
-                  <Command.Item value="materialized view {activeSchema} {table.name}" onSelect={() => run(() => ontableselect(table.name))}>
+                  <Command.Item value="materialized view {activeSchema} {table.name}" keywords={[table.name]} onSelect={() => run(() => ontableselect(table.name))}>
                     <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="truncate font-mono">{table.name}</span>
                     <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">mat. view</span>
                   </Command.Item>
                 {/each}
                 {#if tables.length > 12}
-                  <Command.Item value="browse all tables views search" onSelect={() => navigate('tables')}>
+                  <Command.Item value="browse all tables views search" keywords={[`All ${tables.length} tables & views`]} onSelect={() => navigate('tables')}>
                     <Icon name="table-2" class="size-4 shrink-0 opacity-40" />
                     <span data-slot="command-label" class="truncate text-muted-foreground">All {tables.length} tables & views…</span>
                     <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
@@ -1052,61 +1216,81 @@
                 {/if}
               </Command.Group>
             {/if}
-
-            <Command.Group heading={$tx('group.AI', 'AI')}>
-              <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)}>
+            {/if}
+          {/snippet}
+          {#snippet group_ai()}
+            {#if connected && listAll}
+            <Command.Group value="ai" heading={$tx('group.AI', 'AI')}>
+              <Command.Item value="ask ai assistant chat query" onSelect={() => run(onopenai)} keywords={['Ask AI']}>
                 <Icon name="bot" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Ask AI</span>
                 <Command.Shortcut command="ai.panel" />
               </Command.Item>
-              <Command.Item value="toggle ai sidebar inline assistant context" onSelect={() => run(onopenaisidebar)}>
+              {#if aiSidebarEnabled}
+              <Command.Item value="toggle ai sidebar inline assistant context" onSelect={() => run(onopenaisidebar)} keywords={['AI sidebar']}>
                 <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">AI sidebar</span>
                 <Command.Shortcut command="ai.sidebar" />
               </Command.Item>
+              {/if}
               <Command.Item
                 value={aiMode ? "close ai panel hide assistant" : "open ai panel show assistant chat"}
+                keywords={[aiMode ? 'Close AI panel' : 'Open AI panel']}
                 onSelect={() => run(ontoggleaimode)}
               >
                 <Icon name="arrow-left-right" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">{aiMode ? 'Close AI panel' : 'Open AI panel'}</span>
               </Command.Item>
             </Command.Group>
-
-            <Command.Group heading={$tx('group.Queries', 'Queries')}>
-              <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)}>
+            {/if}
+          {/snippet}
+          {#snippet group_queries()}
+            {#if connected && listAll}
+            <Command.Group value="queries" heading={$tx('group.Queries', 'Queries')}>
+              <Command.Item value="open query history sql statements" onSelect={() => run(onopenqueryhistory)} keywords={['Query history']}>
                 <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Query history</span>
               </Command.Item>
             </Command.Group>
-
+            {/if}
+          {/snippet}
+          {#snippet group_saved()}
+            {#if connected && listAll}
             {#if savedQueries.length > 0}
-              <Command.Group heading={$tx('group.Saved queries', 'Saved queries')}>
+              <Command.Group value="saved" heading={$tx('group.Saved queries', 'Saved queries')}>
                 {#each savedQueries as entry (entry.id)}
-                  <Command.Item value="saved query {entry.name} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
+                  <Command.Item value="saved query {entry.name} {entry.sql}" keywords={[entry.name]} onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="min-w-0 truncate text-ui-xs">{entry.name}</span>
                   </Command.Item>
                 {/each}
               </Command.Group>
             {/if}
-
+            {/if}
+          {/snippet}
+          {#snippet group_recentq()}
+            {#if connected && listAll}
             {#if queryHistory.length > 0}
-              <Command.Group heading={$tx('group.Recent queries', 'Recent queries')}>
-                {#each queryHistory.slice(0, 20) as entry (entry.id)}
-                  <Command.Item value="recent query {entry.title} {entry.sql}" onSelect={() => run(() => onqueryselect(entry.sql))}>
+              <Command.Group value="recentq" heading={$tx('group.Recent queries', 'Recent queries')}>
+                <!-- Five on the empty menu, twenty to search: fourteen history rows
+                     made the root list longer than everything above them. -->
+                {#each queryHistory.slice(0, paletteSearch.trim() ? 20 : 5) as entry (entry.id)}
+                  <Command.Item value="recent query {entry.title} {entry.sql}" keywords={[entry.title ?? '']} onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="min-w-0 truncate font-mono text-ui-xs">{entry.title}</span>
                   </Command.Item>
                 {/each}
               </Command.Group>
             {/if}
-
+            {/if}
+          {/snippet}
+          {#snippet group_export()}
+            {#if connected && listAll}
             {#if (onexporttable || onimporttable) && paletteSearch.trim()}
               <!-- Export was only in the table toolbar's menu: "export" here
                    found Backup & restore and nothing else. Only while searching,
                    so eight format rows don't sit in the root list. -->
-              <Command.Group heading={$tx('group.Export and import', 'Export and import')}>
+              <Command.Group value="export" heading={$tx('group.Export and import', 'Export and import')}>
                 {#each onexporttable ? EXPORT_FORMATS : [] as fmt (fmt.id)}
                   <Command.Item value={`export download save table rows ${fmt.label} ${fmt.id} ${fmt.hint}`} keywords={[`Export as ${fmt.label}`]} onSelect={() => run(() => onexporttable?.(fmt.id))}>
                     <Icon name="file-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1122,7 +1306,177 @@
                 {/if}
               </Command.Group>
             {/if}
-            <Command.Group heading={$tx('group.Actions', 'Actions')}>
+            {/if}
+          {/snippet}
+          {#snippet group_table()}
+            <!-- The table toolbar by name, while searching: "filter", "sort" or
+                 "add row" found a table called audit_notification_log_filters,
+                 or nothing. -->
+            {#if tableCommands && paletteSearch.trim()}
+            <Command.Group value="table" heading={$tx('group.Table', 'Table')}>
+                <Command.Item minScore={0.3} value="filter rows where condition narrow" keywords={['Filter rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.filter))}>
+                  <Icon name="filter" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Filter rows</span>
+                  <Command.Shortcut command="table.filterMenu" />
+                </Command.Item>
+                <Command.Item minScore={0.3} value="sort rows order by ascending descending" keywords={['Sort rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.sort))}>
+                  <Icon name="arrow-up-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Sort rows</span>
+                  <Command.Shortcut command="table.sortMenu" />
+                </Command.Item>
+                <Command.Item minScore={0.3} value="show hide columns visible column picker" keywords={['Show or hide columns']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.columns))}>
+                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Show or hide columns</span>
+                  <Command.Shortcut command="table.columnsMenu" />
+                </Command.Item>
+              {#if tableCommands.addRow}
+                <Command.Item minScore={0.3} value="add row insert new record" keywords={['Add row']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.addRow))}>
+                  <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Add row</span>
+                  <Command.Shortcut command="table.addRow" />
+                </Command.Item>
+              {/if}
+              {#if tableCommands.findReplace}
+                <Command.Item minScore={0.3} value="find and replace in column search substitute" keywords={['Find and replace']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.findReplace))}>
+                  <Icon name="replace" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Find and replace</span>
+                  <Command.Shortcut command="table.findReplace" />
+                </Command.Item>
+              {/if}
+                <Command.Item minScore={0.3} value="refresh rows reload data table" keywords={['Refresh rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.refresh))}>
+                  <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Refresh rows</span>
+                </Command.Item>
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="table grid rows view" keywords={['Table view']} onSelect={() => run(() => tableCommands?.view?.('table'))}>
+                    <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Table view</span>
+                    <Command.Shortcut command="table.view.1" />
+                  </Command.Item>
+                {/if}
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="json view objects" keywords={['JSON view']} onSelect={() => run(() => tableCommands?.view?.('json'))}>
+                    <Icon name="braces" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">JSON view</span>
+                    <Command.Shortcut command="table.view.2" />
+                  </Command.Item>
+                {/if}
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="record view one row form card" keywords={['Record view']} onSelect={() => run(() => tableCommands?.view?.('record'))}>
+                    <Icon name="file-text" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Record view</span>
+                    <Command.Shortcut command="table.view.3" />
+                  </Command.Item>
+                {/if}
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="text view plain ascii" keywords={['Text view']} onSelect={() => run(() => tableCommands?.view?.('text'))}>
+                    <Icon name="wrap-text" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Text view</span>
+                    <Command.Shortcut command="table.view.4" />
+                  </Command.Item>
+                {/if}
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="chart view graph plot visualize" keywords={['Chart view']} onSelect={() => run(() => tableCommands?.view?.('chart'))}>
+                    <Icon name="bar-chart-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Chart view</span>
+                    <Command.Shortcut command="table.view.5" />
+                  </Command.Item>
+                {/if}
+                <Command.Item minScore={0.3} value="open table in sql editor select query" keywords={['Open in SQL editor']} onSelect={() => run(() => tableCommands?.openInSql())}>
+                  <Icon name="terminal" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Open in SQL editor</span>
+                </Command.Item>
+            </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_view()}
+            {#if viewCommands && paletteSearch.trim()}
+            <Command.Group value="view" heading={$tx('group.View', 'View')}>
+                <Command.Item minScore={0.3} value="zoom in bigger larger text scale" keywords={['Zoom in']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomIn))}>
+                  <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Zoom in</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="zoom out smaller text scale" keywords={['Zoom out']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomOut))}>
+                  <Icon name="minus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Zoom out</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="actual size reset zoom 100%" keywords={['Actual size']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomReset))}>
+                  <Icon name="square" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Actual size</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="full screen fullscreen window maximize" keywords={['Full screen']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.fullscreen))}>
+                  <Icon name="maximize-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Full screen</span>
+                </Command.Item>
+            </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_sql()}
+            <!-- The SQL editor's toolbar by name, while searching: "format" found
+                 the Extensions page, "run all" nothing. -->
+            {#if sqlCommands && paletteSearch.trim()}
+            <Command.Group value="sql" heading={$tx('group.SQL', 'SQL')}>
+                <Command.Item minScore={0.3} value="run all statements execute whole editor" keywords={['Run all']} onSelect={() => run(() => sqlCommands?.runAll())}>
+                  <Icon name="play" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Run all</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="run statement at cursor current selection execute" keywords={['Run statement']} onSelect={() => run(() => sqlCommands?.runStatement())}>
+                  <Icon name="play" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Run statement at cursor</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="format sql beautify indent prettify" keywords={['Format SQL']} onSelect={() => run(() => sqlCommands?.format())}>
+                  <Icon name="wrap-text" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Format SQL</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="save query store keep" keywords={['Save query']} onSelect={() => run(() => sqlCommands?.save())}>
+                  <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Save query</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="begin transaction start tx" keywords={['Begin transaction']} onSelect={() => run(() => sqlCommands?.begin())}>
+                  <Icon name="git-branch" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Begin transaction</span>
+                </Command.Item>
+            </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_tabs()}
+            <!-- Only while searching, as Export: "close", "reopen" or "pin"
+                 found nothing here, and four more rows in the root list
+                 would push the views down. -->
+            {#if tabActions && paletteSearch.trim()}
+            <Command.Group value="tabs" heading={$tx('group.Tabs', 'Tabs')}>
+              {#if tabActions.reopen}
+                <Command.Item minScore={0.3} value="reopen closed tab undo close restore last tab" keywords={['Reopen closed tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.reopen))}>
+                  <Icon name="rotate-ccw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Reopen closed tab</span>
+                  <Command.Shortcut command="tab.reopen" />
+                </Command.Item>
+              {/if}
+              {#if tabActions.close}
+                <Command.Item minScore={0.3} value="close tab current this" keywords={['Close tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.close))}>
+                  <Icon name="x" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Close tab</span>
+                  <Command.Shortcut command="tab.close" />
+                </Command.Item>
+              {/if}
+              {#if tabActions.closeOthers}
+                <Command.Item minScore={0.3} value="close other tabs all but this keep only" keywords={['Close other tabs']} onSelect={() => run(/** @type {() => void} */ (tabActions?.closeOthers))}>
+                  <Icon name="layers" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Close other tabs</span>
+                </Command.Item>
+              {/if}
+              {#if tabActions.togglePin}
+                <Command.Item minScore={0.3} value="pin unpin tab keep stick" keywords={[tabActions.pinned ? 'Unpin tab' : 'Pin tab']} onSelect={() => run(/** @type {() => void} */ (tabActions?.togglePin))}>
+                  <Icon name={tabActions.pinned ? 'pin-off' : 'pin'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">{tabActions.pinned ? 'Unpin tab' : 'Pin tab'}</span>
+                </Command.Item>
+              {/if}
+            </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_actions()}
+            {#if connected && listAll}
+            <Command.Group value="actions" heading={$tx('group.Actions', 'Actions')}>
               {#if onexplainquery}
                 <!-- Explain was only a button in the results bar. -->
                 <Command.Item value="explain query plan analyze cost why slow performance" keywords={['Explain query']} onSelect={() => run(onexplainquery)}>
@@ -1130,68 +1484,114 @@
                   <span data-slot="command-label" class="truncate">Explain query</span>
                 </Command.Item>
               {/if}
-              <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)}>
+              {#if ontablestructure}
+                <!-- The structure view was only in the table toolbar's overflow
+                     menu: "structure" here found nothing. -->
+                <Command.Item value="table structure columns types indexes foreign keys constraints edit columns alter schema ddl back to data rows" keywords={[tableStructureShown ? 'Back to data' : 'Table structure']} onSelect={() => run(ontablestructure)}>
+                  <Icon name={tableStructureShown ? 'table-2' : 'columns-3'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">{tableStructureShown ? `Back to the rows of ${exportTableName || 'the table'}` : `Structure of ${exportTableName || 'the table'}`}</span>
+                </Command.Item>
+              {/if}
+              {#if tabActions?.newTable}
+                <!-- Only the sidebar's + made a table. -->
+                <Command.Item value="new table create table add schema design columns" keywords={['New table']} onSelect={() => run(/** @type {() => void} */ (tabActions?.newTable))}>
+                  <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">New table…</span>
+                </Command.Item>
+              {/if}
+              <Command.Item value="refresh schema tables" onSelect={() => run(onrefresh)} keywords={['Refresh tables']}>
                 <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Refresh tables</span>
               </Command.Item>
-              <Command.Item value="read only read-only lock mode protect prevent edits writes inserts deletes writable" onSelect={() => run(onreadonlytoggle)}>
+              <Command.Item value="read only read-only lock mode protect prevent edits writes inserts deletes writable" keywords={[readonly ? 'Disable read-only mode' : 'Enable read-only mode']} onSelect={() => run(onreadonlytoggle)}>
                 <Icon name={readonly ? 'lock-open' : 'lock'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">{readonly ? 'Disable read-only mode' : 'Enable read-only mode'}</span>
               </Command.Item>
-              <Command.Item value="open settings preferences" onSelect={() => run(onopensettings)}>
+              <Command.Item value="open settings preferences" onSelect={() => run(onopensettings)} keywords={['Settings']}>
                 <Icon name="settings" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Settings</span>
+                <Command.Shortcut command="settings.open" />
               </Command.Item>
-              <Command.Item value="toggle tree sidebar beta explorer classic hierarchy folders" onSelect={() => run(() => updateSettings({ sidebarStyle: $appSidebarStyle === 'tree' ? 'classic' : 'tree' }))}>
+              {#if ontogglesidebar}
+                <Command.Item value="toggle sidebar hide show tables list panel" onSelect={() => run(() => ontogglesidebar?.())} keywords={['Toggle sidebar']}>
+                  <Icon name="panel-left-close" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Toggle sidebar</span>
+                  <Command.Shortcut command="view.sidebar" />
+                </Command.Item>
+              {/if}
+              {#if onback}
+                <Command.Item value="go back previous tab history" onSelect={() => run(() => onback?.())} keywords={['Go back']}>
+                  <Icon name="chevron-left" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Go back</span>
+                  <Command.Shortcut command="tab.back" />
+                </Command.Item>
+              {/if}
+              {#if onforward}
+                <Command.Item value="go forward next tab history" onSelect={() => run(() => onforward?.())} keywords={['Go forward']}>
+                  <Icon name="chevron-right" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Go forward</span>
+                  <Command.Shortcut command="tab.forward" />
+                </Command.Item>
+              {/if}
+              <Command.Item value="inset content panel layout linear rounded flat appearance" onSelect={() => run(() => updateSettings({ insetPanel: document.documentElement.dataset.layout !== 'inset' }))} keywords={['Toggle inset content panel']}>
+                <Icon name="layout-template" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                <span data-slot="command-label" class="truncate">Toggle inset content panel</span>
+              </Command.Item>
+              <Command.Item value="toggle tree sidebar beta explorer classic hierarchy folders" onSelect={() => run(() => updateSettings({ sidebarStyle: $appSidebarStyle === 'tree' ? 'classic' : 'tree' }))} keywords={['Toggle tree sidebar (Labs)']}>
                 <Icon name="list-tree" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Toggle tree sidebar (Labs)</span>
                 <span data-slot="command-trailing" class="shrink-0 text-ui-xs text-muted-foreground">{$appSidebarStyle === 'tree' ? 'on' : 'off'}</span>
               </Command.Item>
               {#if $pinEnabled}
-                <Command.Item value="lock app pin screen secure" onSelect={() => run(lockNow)}>
+                <Command.Item value="lock app pin screen secure" onSelect={() => run(lockNow)} keywords={['Lock Stroke']}>
                   <Icon name="lock" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Lock Stroke</span>
                 </Command.Item>
               {/if}
-              <Command.Item value="keyboard shortcuts keybindings remap customize change rebind hotkeys" onSelect={() => run(onopenkeybindings)}>
+              <Command.Item value="keyboard shortcuts keybindings remap customize change rebind hotkeys" onSelect={() => run(onopenkeybindings)} keywords={['Keyboard shortcuts']}>
                 <Icon name="keyboard" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Keyboard shortcuts</span>
               </Command.Item>
-              <Command.Item value="shortcut reference cheat sheet keys help" onSelect={() => run(onopenshortcuts)}>
+              <Command.Item value="shortcut reference cheat sheet keys help" onSelect={() => run(onopenshortcuts)} keywords={['Shortcut reference']}>
                 <Icon name="command" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Shortcut reference</span>
                 <Command.Shortcut command="help.shortcutsKey" />
               </Command.Item>
-              <Command.Item value="my shares share links shared revoke views encrypted link" onSelect={() => run(onopenmyshares)}>
+              <Command.Item value="my shares share links shared revoke views encrypted link" onSelect={() => run(onopenmyshares)} keywords={['My shares']}>
                 <Icon name="share-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">My shares</span>
               </Command.Item>
-              <Command.Item value="about license version info app" onSelect={() => run(onopenabout)}>
+              <Command.Item value="about license version info app" onSelect={() => run(onopenabout)} keywords={['About Stroke']}>
                 <Icon name="info" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">About Stroke</span>
               </Command.Item>
-              <Command.Item value="report issue bug crash problem feedback github" onSelect={() => run(onopenreport)}>
+              <Command.Item value="report issue bug crash problem feedback github" onSelect={() => run(onopenreport)} keywords={['Report an issue']}>
                 <Icon name="bug" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Report an issue</span>
               </Command.Item>
-              <Command.Item value="check for updates upgrade version" onSelect={() => run(oncheckupdate)}>
+              <Command.Item value="check for updates upgrade version" onSelect={() => run(oncheckupdate)} keywords={['Check for updates']}>
                 <Icon name="arrow-down-to-line" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Check for updates</span>
               </Command.Item>
-              <Command.Item value="disconnect database" onSelect={() => run(ondisconnect)}>
+              <Command.Item value="disconnect database" onSelect={() => run(ondisconnect)} keywords={['Disconnect']}>
                 <Icon name="unplug" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Disconnect</span>
+                <Command.Shortcut command="connection.disconnect" />
               </Command.Item>
             </Command.Group>
-          {/if}
+            {/if}
+          {/snippet}
+          {#snippet group_switchdb()}
+            {#if listAll || !connected}
 
           <!-- ── Switch database, other saved connections, right at root ── -->
           {@const otherConns = savedConnections.filter((c) => c.id !== activeConnectionId)}
           {#if otherConns.length > 0}
-            <Command.Group heading={$tx('group.Switch database', 'Switch database')}>
+            <Command.Group value="switchdb" heading={$tx('group.Switch database', 'Switch database')}>
               {#each otherConns.slice(0, 8) as conn (conn.id)}
                 <Command.Item
                   value="switch database connection {conn.name} {connSubtitle(conn)} {conn.type}"
+                  keywords={[conn.name]}
                   onSelect={() => run(() => onswitchdatabase(conn))}
                 >
                   <Icon name={driverIcon(conn.type ?? 'postgres')} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1206,11 +1606,16 @@
               {/each}
             </Command.Group>
           {/if}
+            {/if}
+          {/snippet}
+          {#snippet group_database()}
+            {#if listAll || !connected}
 
           <!-- ── Drill-in: Connections ───────────────────────────────── -->
-          <Command.Group heading={$tx('group.Database', 'Database')}>
+          <Command.Group value="database" heading={$tx('group.Database', 'Database')}>
             <Command.Item
               value="connections switch database connect postgres mysql sqlite saved {savedConnections.map(c => c.name).join(' ')}"
+              keywords={['Connections']}
               onSelect={() => navigate('connections')}
             >
               <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
@@ -1227,19 +1632,27 @@
               <span data-slot="command-label" class="truncate">New connection…</span>
             </Command.Item>
           </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_launch()}
+            {#if listAll || !connected}
 
           <!-- ── Drill-in: Docker ───────────────────────────────────── -->
-          <Command.Group heading={$tx('group.Launch', 'Launch')}>
-            <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')}>
+          <Command.Group value="launch" heading={$tx('group.Launch', 'Launch')}>
+            <Command.Item value="docker containers launch run postgresql mysql mariadb mongodb redis valkey sql server oracle cockroachdb clickhouse cassandra couchdb elasticsearch opensearch dynamodb libsql pgvector postgis timescale" onSelect={() => navigate('docker')} keywords={['Docker']}>
               <DbIcon id="docker" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Docker</span>
               <Icon name="chevron-right" class="size-3.5 shrink-0 text-muted-foreground" />
             </Command.Item>
           </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_appearance()}
+            {#if listAll || !connected}
 
           <!-- ── Drill-in: Theme ────────────────────────────────────── -->
-          <Command.Group heading={$tx('group.Appearance', 'Appearance')}>
-            <Command.Item value="theme appearance colour color scheme palette dark light mode switch change" onSelect={openThemePage}>
+          <Command.Group value="appearance" heading={$tx('group.Appearance', 'Appearance')}>
+            <Command.Item value="theme appearance colour color scheme palette dark light mode switch change" onSelect={openThemePage} keywords={['Theme…']}>
               <Icon name={getThemeDefinition($appThemeId)?.isDark ? 'moon' : 'sun'} class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Theme…</span>
               <span data-slot="command-trailing" class="flex shrink-0 items-center gap-2">
@@ -1250,13 +1663,35 @@
               </span>
             </Command.Item>
             <!-- The builder lives in Settings; "theme builder" found nothing here. -->
-            <Command.Item value="theme builder custom make your own colours colors grain intensity" onSelect={() => run(onopenappearance)}>
+            <Command.Item value="theme builder custom make your own colours colors grain intensity" onSelect={() => run(onopenappearance)} keywords={['Theme builder']}>
               <Icon name="sparkles" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">Theme builder</span>
             </Command.Item>
           </Command.Group>
-
-        <!-- ── TABLES PAGE ───────────────────────────────────────────── -->
+            {/if}
+          {/snippet}
+          {#each rootOrder as id (id)}
+            {#if id === 'ask'}{@render group_ask()}
+            {:else if id === 'recent'}{@render group_recent()}
+            {:else if id === 'views'}{@render group_views()}
+            {:else if id === 'schemas'}{@render group_schemas()}
+            {:else if id === 'tables'}{@render group_tables()}
+            {:else if id === 'ai'}{@render group_ai()}
+            {:else if id === 'queries'}{@render group_queries()}
+            {:else if id === 'saved'}{@render group_saved()}
+            {:else if id === 'recentq'}{@render group_recentq()}
+            {:else if id === 'export'}{@render group_export()}
+            {:else if id === 'actions'}{@render group_actions()}
+            {:else if id === 'tabs'}{@render group_tabs()}
+            {:else if id === 'table'}{@render group_table()}
+            {:else if id === 'sql'}{@render group_sql()}
+            {:else if id === 'view'}{@render group_view()}
+            {:else if id === 'switchdb'}{@render group_switchdb()}
+            {:else if id === 'database'}{@render group_database()}
+            {:else if id === 'launch'}{@render group_launch()}
+            {:else if id === 'appearance'}{@render group_appearance()}
+            {/if}
+          {/each}
         {:else if page === 'tables'}
           {#if tablesPageRegular.total > 0}
             <Command.Group heading={$tx('group.Tables', 'Tables')}>
@@ -1267,7 +1702,7 @@
                   <span
                     data-slot="command-trailing"
                     class="shrink-0 font-mono text-ui-xs tabular-nums text-muted-foreground"
-                    title={table.rowCount != null ? Number(table.rowCount).toLocaleString('en-US') : undefined}
+                    title={table.rowCount != null ? formatFullCount(table.rowCount) : undefined}
                   >{formatTableRowCount(table.rowCount)}</span>
                 </Command.Item>
               {/each}
@@ -1372,7 +1807,7 @@
             </Command.Group>
           {/if}
           <Command.Group heading={$tx('group.Add', 'Add')}>
-            <Command.Item value="new connection add connect database" onSelect={() => run(onopenconnection)}>
+            <Command.Item value="new connection add connect database" onSelect={() => run(onopenconnection)} keywords={['New connection…']}>
               <Icon name="database" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
               <span data-slot="command-label" class="truncate">New connection…</span>
             </Command.Item>
@@ -1381,7 +1816,7 @@
         {:else if page === 'pages'}
           <!-- Go to page, VSCode-style focused navigator (Ctrl/⌘+P) -->
           <Command.Group heading={$tx('group.Go to page', 'Go to page')}>
-            {#each pageItems as it (it.label)}
+            {#each pagesRanked as it (it.label)}
               {@render pageRow(it)}
             {/each}
           </Command.Group>
@@ -1405,6 +1840,11 @@
             </Command.Group>
           {/each}
         {/if}
+        <!-- A page that filters its own rows draws its own empty state: bits-ui's
+             search is empty there, so its Command.Empty never shows. -->
+        {#if LOCAL_PAGES.has(page) && localFilter.search && localFilter.count === 0}
+          <p class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results')}</p>
+        {/if}
 
       </Command.List>
 
@@ -1422,7 +1862,7 @@
             {#if lastAnswer}
               <button type="button" class={askBar} onclick={() => void copyAnswer()}>{answerCopied ? 'Copied' : 'Copy answer'} <Kbd combo="Mod+Shift+C" /></button>
             {/if}
-            <span class="h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+            <span class="w-2 shrink-0" aria-hidden="true"></span>
             <button type="button" class={cn(askBar, 'text-foreground')} onclick={continueInChat}>Continue in chat <Kbd combo="Mod+Enter" /></button>
           {/if}
         </div>

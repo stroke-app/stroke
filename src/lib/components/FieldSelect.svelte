@@ -58,6 +58,7 @@
      type list is long), the same rows and check. -->
 <SearchableMenu
   items={options.map((o) => ({ value: String(o.value), label: o.label ?? String(o.value), disabled: o.disabled, keywords: [String(o.value)] }))}
+  current={value == null ? undefined : String(value)}
   align="start"
   contentClass={cn('z-[130] w-[var(--bits-popover-anchor-width)] min-w-[10rem]', contentClass)}
   onselect={(it) => {

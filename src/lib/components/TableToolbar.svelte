@@ -5,6 +5,10 @@
   import Icon from "./Icon.svelte";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import Check from "@lucide/svelte/icons/check";
+  // Real arrows for sort direction: the icon registry draws arrow-up / arrow-down
+  // as chevrons, which in a list read as expand and collapse.
+  import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { Popover, PopoverTrigger, PopoverContent } from "$lib/components/ui/popover/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
@@ -84,6 +88,8 @@
     /** The database's complaint about the applied SQL condition, if any. */
     sqlFilterError = "",
     onrefresh = () => {},
+    /** While rows load, the refresh button stops the load instead. @type {(() => void) | null} */
+    onstopload = null,
     /** Auto-refresh interval for THIS tab, in ms (0 = off). */
     autoRefreshMs = 0,
     onautorefreshchange = /** @type {(ms: number) => void} */ (() => {}),
@@ -535,6 +541,9 @@
     { id: "erd", icon: "network", label: "Schema diagram", title: "Schema diagram: this table and its related tables" },
   ];
 
+  /** The Alt+1-5 view keys (`table.view.N`), printed beside their views in the menu. */
+  const VIEW_KEY = /** @type {Record<string, number>} */ ({ table: 1, json: 2, record: 3, text: 4, chart: 5 })
+
   /**
    * Map view is offered only when the table has something to map. Listing it
    * everywhere would make it the one view in the menu that opens onto nothing,
@@ -921,7 +930,7 @@
           bind:this={structureSearchEl}
           type="text"
           aria-label="Search column"
-          class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm"
+          class="search-box no-field-frame h-7 w-full min-w-0 pl-8 pr-7 font-mono text-ui-sm placeholder:font-sans"
           placeholder={$tx('tb.searchColumn', 'Search column…')}
           value={structureSearch}
           oninput={(e) =>
@@ -1047,7 +1056,7 @@
           </DropdownMenu.Trigger>
           <DropdownMenu.Content align="start" class="min-w-64 p-0 text-ui-sm">
             <div class="flex items-center border-b border-border/50 px-3 py-1.5">
-              <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.savedViews', 'Saved views')}</span>
+              <span class="text-ui-2xs font-medium text-muted-foreground">{$tx('tb.savedViews', 'Saved views')}</span>
               <button
                 type="button"
                 class="ml-auto rounded px-1.5 py-0.5 text-ui-2xs text-muted-foreground transition-[background-color,color] hover:bg-accent hover:text-foreground"
@@ -1174,10 +1183,10 @@
           {/if}
         {/snippet}
         {#snippet item(it)}
-          {#if it.dir === "asc"}<Icon name="arrow-up" class="size-3.5 shrink-0 text-muted-foreground" />{:else}<Icon name="arrow-down" class="size-3.5 shrink-0 text-muted-foreground" />{/if}
+          {#if it.dir === "asc"}<ArrowUp class="size-3.5 shrink-0 text-muted-foreground" />{:else}<ArrowDown class="size-3.5 shrink-0 text-muted-foreground" />{/if}
           <span class="min-w-0 flex-1 truncate">{it.label}</span>
           <span class="shrink-0 text-ui-3xs text-muted-foreground">{it.dir === "asc" ? "Asc" : "Desc"}</span>
-          {#if it.active}<span class="shrink-0 text-primary">✓</span>{/if}
+          {#if it.active}<Check class="size-3.5 shrink-0 text-primary" />{/if}
         {/snippet}
       </SearchableMenu>
 
@@ -1206,7 +1215,7 @@
         {/snippet}
         {#snippet header()}
           <div class="flex items-center justify-between border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.columns', 'Columns')}</span>
+            <span class="text-ui-2xs font-medium text-muted-foreground">{$tx('tb.columns', 'Columns')}</span>
             <!-- Both actions, whenever both mean something. One toggle that
                  flipped on "anything hidden" made "Hide all" unreachable as
                  soon as a single column was hidden. -->
@@ -1266,13 +1275,9 @@
             <Icon name="crosshair" class="size-3.5 shrink-0" />
           </button>
         {/snippet}
-        {#snippet header()}
-          <div class="border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{$tx('tb.jumpToHead', 'Jump to column')}</span>
-          </div>
-        {/snippet}
+        <!-- Column names only: the search already says Jump to column, and the
+             same crosshair on every row said it again. -->
         {#snippet item(it)}
-          <Icon name="crosshair" class="size-3.5 shrink-0 text-muted-foreground" />
           <span class="min-w-0 flex-1 truncate">{it.label}</span>
         {/snippet}
       </SearchableMenu>
@@ -1311,7 +1316,7 @@
         type="button"
         class={cn("inline-flex h-7 shrink-0 items-center gap-1 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-30", hideAt(12))}
         disabled={loading || columns.length === 0 || readonly}
-        title={readonly ? "Read-only mode" : `Stage a new row (${KEY.addRow}), again for another`}
+        title={readonly ? "Read-only mode" : `Stage a new row, one more each press (${KEY.addRow})`}
         onclick={onaddrow}
       >
         <Icon name="plus" class="size-3.5 shrink-0" />
@@ -1553,13 +1558,16 @@
          Armed state is carried by the caret's colour rather than a badge - there
          is no room for a dot at this size, and the tooltip states the interval. -->
     <div class="flex shrink-0 items-stretch">
+      <!-- While a load runs, the spinning icon is the way out of it: a dropped
+           connection left a refresh waiting minutes, with every control greyed
+           out and nothing to press. -->
       <button
         type="button"
         class={cn(iconBtn, "w-6 rounded-r-none")}
-        disabled={loading}
-        onclick={onrefresh}
-        title={autoRefreshMs > 0 ? `Refresh data (${comboTitle('Mod+R')}) · auto every ${autoRefreshLabel}` : `Refresh data (${comboTitle('Mod+R')})`}
-        aria-label="Refresh data"
+        disabled={loading && !onstopload}
+        onclick={() => (loading && onstopload ? onstopload() : onrefresh())}
+        title={loading && onstopload ? 'Stop loading' : autoRefreshMs > 0 ? `Refresh data (${comboTitle('Mod+R')}) · auto every ${autoRefreshLabel}` : `Refresh data (${comboTitle('Mod+R')})`}
+        aria-label={loading && onstopload ? 'Stop loading' : 'Refresh data'}
       >
         <Icon name="refresh-cw" class={cn("size-3.5", loading && "animate-spin")} />
       </button>
@@ -1728,9 +1736,11 @@
               onValueChange={(v) => (dataViewMode = /** @type {'table' | 'json' | 'record' | 'text' | 'chart' | 'erd'} */ (v))}
             >
               {#each dataViewModes as m (m.id)}
+                {@const viewKey = VIEW_KEY[m.id]}
                 <DropdownMenu.RadioItem value={m.id} disabled={columns.length === 0}>
                   <Icon name={m.icon} class="size-3.5 shrink-0" />
                   <span data-slot="menu-label">{m.label.replace(/ view$/, "")}</span>
+                  {#if viewKey}<DropdownMenu.Shortcut command={`table.view.${viewKey}`} />{/if}
                 </DropdownMenu.RadioItem>
               {/each}
             </DropdownMenu.RadioGroup>
@@ -1749,7 +1759,7 @@
             {#if findReplaceEnabled}
               <DropdownMenu.Item disabled={total === 0 || readonly || !hasPrimaryKey} onSelect={onfindreplace}>
                 <Icon name="replace" class="size-3.5 shrink-0" />
-                <span data-slot="menu-label">{$tx('tb.findReplace', 'Find and replace…')}</span>
+                <span data-slot="menu-label">{$tx('tb.findReplace', 'Find & replace…')}</span>
                 <DropdownMenu.Shortcut command={IS_MAC ? "table.findReplaceAlt" : "table.findReplace"} />
               </DropdownMenu.Item>
             {/if}
@@ -1785,7 +1795,6 @@
                   <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.diagram', 'Diagram')}</DropdownMenu.GroupHeading>
                   {#each DIAGRAM_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportdiagram(fmt.id)}>
-                      <Icon name={fmt.icon} class="size-3.5 shrink-0" />
                       {fmt.label}
                     </DropdownMenu.Item>
                   {/each}
@@ -1797,7 +1806,6 @@
                   <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.chart', 'Chart')}</DropdownMenu.GroupHeading>
                   {#each CHART_FORMATS as fmt (fmt.id)}
                     <DropdownMenu.Item onSelect={() => onexportchart(fmt.id)}>
-                      <Icon name={fmt.icon} class="size-3.5 shrink-0" />
                       {fmt.label}
                     </DropdownMenu.Item>
                   {/each}
@@ -1808,10 +1816,12 @@
                 {#if dataViewMode === 'erd' || dataViewMode === 'chart'}
                   <DropdownMenu.GroupHeading class={menuHeading}>{$tx('tb.rows', 'Rows')}</DropdownMenu.GroupHeading>
                 {/if}
+                <!-- Names only: eight rows with the same file icon said nothing
+                     the word Export above them had not. -->
                 {#each EXPORT_FORMATS as fmt (fmt.id)}
                   <DropdownMenu.Item disabled={total === 0} onSelect={() => onexport(fmt.id)}>
-                    <Icon name="file-down" class="size-3.5 shrink-0" />
-                    {fmt.label}
+                    <span data-slot="menu-label">{fmt.label}</span>
+                    {#if fmt.hint}<span class="ml-auto ps-4 text-ui-2xs text-muted-foreground">{fmt.hint}</span>{/if}
                   </DropdownMenu.Item>
                 {/each}
               </DropdownMenu.Group>

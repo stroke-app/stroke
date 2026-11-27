@@ -1,5 +1,6 @@
 <script>
   import { Button } from '$lib/components/ui/button/index.js'
+  import EmptyState from './EmptyState.svelte'
   import { savedDiagrams, saveDiagram, updateDiagram, deleteDiagram, switchDiagramsConnection } from '$lib/stores/saved-diagrams.js'
   import MermaidViewer from './MermaidViewer.svelte'
   import CodeEditor from './CodeEditor.svelte'
@@ -66,6 +67,8 @@
     switchDiagramsConnection(connection?.id ?? '')
   })
 
+  /** Names for the template chips; built from the keys they read "Erd" and "Mind Map". */
+  const TEMPLATE_LABELS = /** @type {Record<string, string>} */ ({ flowchart: 'Flowchart', class: 'Class', sequence: 'Sequence', erd: 'ERD', mindmap: 'Mind map' })
   const TEMPLATES = {
     flowchart: `flowchart TD\n    A[Start] --> B{Decision}\n    B -->|Yes| C[Action 1]\n    B -->|No| D[Action 2]\n    C --> E[End]\n    D --> E`,
     class: `classDiagram\n    class User {\n        +id: uuid\n        +name: string\n        +email: string\n    }\n    class Order {\n        +id: uuid\n        +userId: uuid\n        +status: string\n    }\n    User "1" --> "0..*" Order`,
@@ -106,7 +109,6 @@
   let draftCode = $state('')
   let draftName = $state('')
   let draftGroup = $state('Default')
-  let confirmingDelete = $state(false)
   let fullscreenCode = $state(/** @type {string | null} */ (null))
 
   // The diagram list folds away for a wide canvas; remembered across sessions.
@@ -136,10 +138,9 @@
     editing = true
     isNew = true
     draftCode = TEMPLATES.flowchart
-    draftName = 'Untitled Diagram'
+    draftName = 'Untitled diagram'
     draftGroup = 'Default'
     selectedId = null
-    confirmingDelete = false
   }
 
   function startEdit() {
@@ -152,7 +153,7 @@
   }
 
   function saveChanges() {
-    const name = draftName.trim() || 'Untitled Diagram'
+    const name = draftName.trim() || 'Untitled diagram'
     if (isNew) {
       const d = saveDiagram(name, draftCode, draftGroup || 'Default')
       selectedId = d.id
@@ -170,12 +171,25 @@
     isNew = false
   }
 
-  function confirmDelete() {
+  /** No confirm: it goes at once and the toast offers Undo. */
+  function removeSelected() {
     if (!selectedId) return
-    deleteDiagram(selectedId)
+    const id = selectedId
+    const name = selected?.name ?? ''
+    const undo = deleteDiagram(id)
     selectedId = null
-    confirmingDelete = false
-    toast.success('Diagram deleted')
+    if (!undo) return
+    toast.message('Diagram deleted', {
+      description: name,
+      duration: 8000,
+      action: {
+        label: 'Undo',
+        onClick: () => {
+          if (undo()) selectedId = id
+          else toast.error("Couldn't undo: the diagrams changed since.")
+        },
+      },
+    })
   }
 
   /** @param {KeyboardEvent} e */
@@ -193,8 +207,12 @@
 
 <div class="flex h-full min-h-0 flex-col overflow-hidden bg-background">
   <!-- Page header -->
-  <div class="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
+  <div class="flex min-h-13 shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3">
     <div class="flex min-w-0 items-center gap-1.5">
+      <!-- With no diagram yet there is no list to show, nothing to search and
+           no count beyond 0: the rail, its toggle and the second New diagram
+           button wait for the first one. -->
+      {#if all.length > 0}
       <button
         type="button"
         onclick={toggleList}
@@ -205,8 +223,10 @@
       >
         {#if listOpen}<PanelLeftClose class="size-3.5 shrink-0" />{:else}<PanelLeftOpen class="size-3.5 shrink-0" />{/if}
       </button>
+      {/if}
       <h2 class="text-ui-sm font-medium text-foreground">Diagrams</h2>
     </div>
+    {#if all.length > 0}
     <Button
       onclick={startNew}
        size="sm"
@@ -214,21 +234,23 @@
       <Plus class="size-3 shrink-0" />
       New diagram
     </Button>
+    {/if}
   </div>
 
   <!-- Body: sidebar + main -->
   <div class="flex min-h-0 flex-1 overflow-hidden">
     <!-- Left sidebar -->
-    <div class="flex w-56 shrink-0 flex-col overflow-hidden border-r border-border/50 bg-panel" style:display={listOpen ? null : 'none'}>
+    <div class="flex w-56 shrink-0 flex-col overflow-hidden border-r border-border/50 bg-panel" style:display={listOpen && all.length > 0 ? null : 'none'}>
       <!-- Search -->
       <div class="shrink-0 border-b border-border/40 px-2 py-2">
         <div class="relative flex items-center">
-          <Search class="absolute left-2 size-3 text-muted-foreground" />
+          <Search class="pointer-events-none absolute left-2.5 size-3.5 text-muted-foreground" />
           <input
             type="text"
-            placeholder="Search diagrams…"
+            placeholder="Search diagrams"
+            aria-label="Search diagrams"
             bind:value={searchQ}
-            class="search-box no-field-frame h-7 w-full pl-6 pr-2 text-ui-xs"
+            class="search-box no-field-frame h-7 w-full pl-8 pr-2 text-ui-xs"
           />
         </div>
       </div>
@@ -236,22 +258,21 @@
       <!-- List -->
       <div class="min-h-0 flex-1 overflow-y-auto px-1 py-1">
         {#if filtered.length === 0}
-          <div class="flex flex-col items-center gap-1.5 px-3 py-6 text-center">
-            <GitBranch class="size-5 shrink-0 text-muted-foreground" />
-            <p class="text-ui-2xs text-muted-foreground">
-              {searchQ ? 'No results' : 'No diagrams yet'}
-            </p>
-          </div>
+          <!-- With no diagrams at all the main area says so and offers New
+               diagram; the list repeating it was the same sentence twice. -->
+          {#if searchQ}
+            <p class="px-3 py-6 text-center text-ui-xs text-muted-foreground">No diagrams match.</p>
+          {/if}
         {:else}
           {#each Object.entries(grouped) as [group, items]}
-            <p class="px-2 pb-1 pt-3 text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground first:pt-1">
+            <p class="px-2 pb-1 pt-3 text-ui-xs font-medium text-muted-foreground first:pt-1">
               {group}
             </p>
             {#each items as d (d.id)}
               {@const Icon = diagramIcon(d.code)}
               <button
                 type="button"
-                onclick={() => { selectedId = d.id; editing = false; isNew = false; confirmingDelete = false }}
+                onclick={() => { selectedId = d.id; editing = false; isNew = false }}
                 class={cn(
                   'flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-left transition-colors cursor-pointer',
                   selectedId === d.id
@@ -324,7 +345,7 @@
                     : 'border-border/40 text-muted-foreground hover:border-border hover:text-foreground'
                 )}
               >
-                {key.charAt(0).toUpperCase() + key.slice(1).replace('map', ' Map')}
+                {TEMPLATE_LABELS[key] ?? key}
               </button>
             {/each}
           </div>
@@ -333,13 +354,13 @@
         <!-- Editor + preview -->
         <div class="flex min-h-0 flex-1 gap-0 overflow-hidden">
           <div class="flex w-1/2 min-w-0 flex-col border-r border-border/40 p-3">
-            <p class="mb-1.5 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Mermaid code</p>
+            <p class="mb-1.5 text-ui-xs font-medium text-muted-foreground">Mermaid code</p>
             <div class="field-surface flex min-h-0 flex-1 flex-col overflow-hidden bg-background/40">
               <CodeEditor bind:value={draftCode} ariaLabel="Mermaid code" placeholder="flowchart TD" />
             </div>
           </div>
           <div class="flex w-1/2 min-w-0 flex-col overflow-hidden">
-            <p class="shrink-0 px-3 pb-1.5 pt-3 text-ui-3xs font-medium uppercase tracking-[0.06em] text-muted-foreground">Preview</p>
+            <p class="shrink-0 px-3 pb-1.5 pt-3 text-ui-xs font-medium text-muted-foreground">Preview</p>
             <div class="min-h-0 flex-1 overflow-hidden">
               <MermaidViewer code={draftCode} class="h-full w-full" />
             </div>
@@ -358,26 +379,14 @@
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Edit"
             ><Pencil class="size-3.5 shrink-0" /></button>
-            {#if confirmingDelete}
-              <button
-                type="button"
-                onclick={confirmDelete}
-                class="inline-flex h-7 items-center gap-1 rounded-md bg-destructive px-2 text-ui-3xs text-destructive-foreground hover:opacity-90"
-              ><Check class="size-3 shrink-0" />Confirm</button>
-              <button aria-label="Cancel delete" title="Cancel delete"
-                type="button"
-                onclick={() => confirmingDelete = false}
-                class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
-              ><X class="size-3.5 shrink-0" /></button>
-            {:else}
-              <button
-                type="button"
-                onclick={() => confirmingDelete = true}
-                class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
-                title="Delete"
-              ><Trash2 class="size-3.5 shrink-0" /></button>
-            {/if}
-            <div class="mx-1 h-4 w-px bg-border/40"></div>
+            <button
+              type="button"
+              onclick={removeSelected}
+              class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-destructive"
+              title="Delete"
+              aria-label="Delete"
+            ><Trash2 class="size-3.5 shrink-0" /></button>
+            <span class="w-2 shrink-0" aria-hidden="true"></span>
             <button
               type="button"
               onclick={() => viewerRef?.dispatch('diagram:zoomin')}
@@ -396,7 +405,7 @@
               class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Reset view (double-click)"
             ><RefreshCw class="size-3.5 shrink-0" /></button>
-            <div class="mx-1 h-4 w-px bg-border/40"></div>
+            <span class="w-2 shrink-0" aria-hidden="true"></span>
             <button
               type="button"
               onclick={() => void copyDiagram()}
@@ -415,7 +424,7 @@
               class="inline-flex h-7 items-center gap-1 rounded-md px-2 text-ui-3xs text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Export PNG"
             ><Download class="size-3 shrink-0" />PNG</button>
-            <div class="mx-1 h-4 w-px bg-border/40"></div>
+            <span class="w-2 shrink-0" aria-hidden="true"></span>
             <button
               type="button"
               onclick={() => fullscreenCode = selected.code}
@@ -431,13 +440,14 @@
 
       {:else}
         <!-- State A: Empty state -->
-        <div class="flex flex-1 flex-col items-center justify-center gap-3 text-center">
-          <GitBranch class="size-8 shrink-0 text-muted-foreground" />
-          <div>
-            <p class="text-ui-sm font-medium text-muted-foreground">No diagram selected</p>
-            <p class="mt-0.5 text-ui-xs text-muted-foreground">Pick one from the list or create a new one</p>
-          </div>
-        </div>
+        <EmptyState
+          class="flex-1 justify-center"
+          icon={GitBranch}
+          title={filtered.length ? 'No diagram open' : 'No diagrams yet'}
+          description={filtered.length ? 'Pick one from the list, or start a new one.' : 'Draw how your tables relate, or anything else, with Mermaid. Diagrams are saved per connection.'}
+        >
+          <Button size="sm" onclick={startNew}><Plus class="size-3.5 shrink-0" />New diagram</Button>
+        </EmptyState>
       {/if}
     </div>
   </div>
@@ -457,7 +467,7 @@
       <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:zoomin')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Zoom in"><ZoomIn class="size-3.5 shrink-0" /></button>
       <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:zoomout')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Zoom out"><ZoomOut class="size-3.5 shrink-0" /></button>
       <button type="button" onclick={() => fullscreenViewerRef?.dispatch('diagram:reset')} class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" title="Reset"><RefreshCw class="size-3.5 shrink-0" /></button>
-      <div class="mx-1 h-4 w-px bg-border/40"></div>
+      <span class="w-2 shrink-0" aria-hidden="true"></span>
       <button
         type="button"
         onclick={() => fullscreenCode = null}

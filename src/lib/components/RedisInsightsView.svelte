@@ -413,7 +413,7 @@ return out`
               <Button type="button" variant="secondary" size="sm" class="rounded-md" onclick={() => void stopSubscription()}>Stop</Button>
             {:else}
               <input bind:value={subInput} placeholder="Channels or patterns to listen to, e.g. orders news.*" aria-label="Channels to subscribe to" spellcheck="false" autocomplete="off" class="field-surface h-8 min-w-0 flex-1 px-3 font-mono text-ui-xs text-foreground shadow-none outline-none placeholder:font-sans placeholder:text-muted-foreground" />
-              <button type="submit" class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-3.5 text-ui-xs font-medium text-background transition-opacity hover:opacity-90 disabled:opacity-40" disabled={!subInput.trim() || subscribing}>
+              <button type="submit" class="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md bg-primary px-3.5 text-ui-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80 disabled:opacity-40" disabled={!subInput.trim() || subscribing}>
                 {#if subscribing}<LoaderCircle class="size-3.5 shrink-0 animate-spin" />{/if}Listen
               </button>
             {/if}

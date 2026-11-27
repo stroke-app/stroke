@@ -11,6 +11,7 @@
    */
   import { onMount } from 'svelte'
   import Icon from './Icon.svelte'
+  import Shimmer from './Shimmer.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { cn } from '$lib/utils.js'
@@ -189,7 +190,7 @@
             {#if loading && !report}Scanning…{:else if report?.unsupported}No checks for this engine{:else if report}{health.label}{:else}Advisor{/if}
           </p>
           <p class="mt-0.5 text-ui-xs text-muted-foreground">
-            {reportSummary(report)}{checks.length ? ` · ${checks.length} checks in ${totalMs} ms` : ''}{scannedLabel ? ` · ${scannedLabel}` : ''}
+            {#if loading && !report}Reading the catalog{:else}{reportSummary(report)}{/if}{#if checks.length}{' · '}<span class="whitespace-nowrap">{checks.length} checks in {totalMs} ms</span>{/if}{#if scannedLabel}{' · '}<span class="whitespace-nowrap">{scannedLabel}</span>{/if}
           </p>
         </div>
         <div class="flex shrink-0 items-center gap-2">
@@ -278,14 +279,40 @@
               </button>
             {/if}
             <div class="relative">
-              <Icon name="search" class="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Icon name="search" class="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
               <input
                 bind:value={query}
                 placeholder="Filter by table, check…"
                 aria-label="Filter findings"
-                class="search-box no-field-frame h-7 w-52 pl-7 pr-2 text-ui-xs"
+                class="search-box no-field-frame h-7 w-52 pl-8 pr-2 text-ui-xs"
               />
             </div>
+          </div>
+        </div>
+      {:else if loading && !report && !error}
+        <!-- The first scan: the page's own shape (three area cards, then
+             findings) instead of a spinner where the findings will land.
+             Held back like the spinner was, so a fast scan never shows it. -->
+        <div class="loading-reveal flex flex-col gap-5" role="status" aria-label="Scanning">
+          <div class="grid grid-cols-1 gap-2.5 sm:grid-cols-3" aria-hidden="true">
+            {#each [0, 1, 2] as i (i)}
+              <div class="flex flex-col gap-3 rounded-lg border border-border/60 p-3">
+                <Shimmer class="h-3" style="width: {[45, 55, 40][i]}%" rounded="full" />
+                <Shimmer class="h-1" rounded="full" />
+                <Shimmer class="h-2.5" style="width: {[60, 70, 30][i]}%" rounded="full" />
+              </div>
+            {/each}
+          </div>
+          <div class="flex flex-col overflow-hidden rounded-lg border border-border/60" aria-hidden="true">
+            {#each [70, 55, 62, 48, 66] as w, i (i)}
+              <div class="flex items-center gap-3 border-b border-border/40 px-3 py-3 last:border-b-0">
+                <Shimmer class="size-3.5" rounded="full" />
+                <div class="flex min-w-0 flex-1 flex-col gap-2">
+                  <Shimmer class="h-2.5" style="width: {w}%" rounded="full" />
+                  <Shimmer class="h-2" style="width: {w - 20}%" rounded="full" />
+                </div>
+              </div>
+            {/each}
           </div>
         </div>
       {/if}
@@ -297,10 +324,7 @@
           <p class="mt-1 font-mono text-ui-xs leading-relaxed text-muted-foreground">{error}</p>
         </div>
       {:else if loading && !report}
-        <div class="loading-reveal flex flex-col items-center justify-center gap-2 py-16 text-center">
-          <Icon name="loader-2" class="size-5 shrink-0 animate-spin text-muted-foreground" />
-          <p class="text-ui-xs text-muted-foreground">Reading the catalog…</p>
-        </div>
+        <!-- The skeleton above stands for the findings. -->
       {:else if report?.unsupported}
         <div class="flex flex-col items-center justify-center gap-2 py-16 text-center">
           <Icon name="info" class="size-5 shrink-0 text-muted-foreground" />

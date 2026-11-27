@@ -51,9 +51,7 @@
       class="w-[min(20rem,calc(100vw-2rem))] gap-0 overflow-hidden p-0 sm:max-w-none"
     >
       <div class="flex flex-col items-center px-6 pt-6 pb-5 text-center">
-        <div class="grid size-9 place-items-center rounded-lg border border-border/50 bg-muted/30">
-          <Icon name="lock" class="size-4 shrink-0 text-muted-foreground" />
-        </div>
+        <Icon name="lock" class="size-6 shrink-0 text-muted-foreground" aria-hidden="true" />
 
         <Dialog.Title class="mt-3.5 text-ui-sm font-semibold text-foreground">Confirm your PIN</Dialog.Title>
         <Dialog.Description class="mt-1 text-ui-xs text-balance text-muted-foreground">

@@ -48,7 +48,21 @@ const KEYCAP = {
  * @returns {string[]}
  */
 export function keycaps(combo) {
-  return combo.split('+').map((part) => GLYPH[part] ?? KEYCAP[part] ?? part)
+  return parts(combo).map((part) => GLYPH[part] ?? KEYCAP[part] ?? part)
+}
+
+/** Symbols that are typed with Shift on a US layout, so Shift goes without saying. */
+const SHIFTED = new Set('?!@#$%^&*()_{}|:"<>~'.split(''))
+
+/**
+ * A combo's parts as they read. `Shift+?` is how the hotkey grammar has to
+ * spell "?" (the key always arrives with Shift held, and a bare `?` demands
+ * Shift be up, so it never fired), but nobody writes the Shift: it shows as `?`.
+ * @param {string} combo
+ */
+function parts(combo) {
+  const p = combo.split('+')
+  return SHIFTED.has(p[p.length - 1]) ? p.filter((k) => k !== 'Shift') : p
 }
 
 /** Keys a tooltip spells out in words off macOS, where the glyphs are not the convention. */
@@ -65,7 +79,7 @@ const TITLE_WORD = /** @type {Record<string, string>} */ ({
  */
 export function comboTitle(combo) {
   if (IS_MAC) return keycaps(combo).map((k) => TITLE_WORD[k] && k.startsWith('Arrow') ? TITLE_WORD[k] : k).join('')
-  return combo.split('+').map((part) => TITLE_WORD[part] ?? part).join('+')
+  return parts(combo).map((part) => TITLE_WORD[part] ?? part).join('+')
 }
 
 /**
@@ -105,6 +119,7 @@ export const SHORTCUT_GROUPS = [
     icon: 'navigation',
     shortcuts: [
       { combo: 'Mod+K', desc: 'Command menu', id: 'palette.open' },
+      { combo: 'A-Z', desc: 'On the New tab page: start a command menu search' },
       { combo: 'Mod+Shift+P', desc: 'Go to page', id: 'palette.pages' },
       { combo: 'Mod+Alt+1-9', desc: 'Switch to saved connection', id: 'connection.switchTo', items: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => `Switch to saved connection ${n}`) },
       { combo: 'Mod+P', desc: 'Search tables', id: 'palette.tables' },
@@ -118,6 +133,8 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Ctrl+Tab', desc: 'Next tab', id: 'tab.next' },
       { combo: 'Ctrl+Shift+Tab', desc: 'Previous tab', id: 'tab.prev' },
       { combo: 'Mod+Shift+T', desc: 'Reopen closed tab', id: 'tab.reopen' },
+      { combo: 'Mod+[', desc: 'Back in tab history', id: 'tab.back' },
+      { combo: 'Mod+]', desc: 'Forward in tab history', id: 'tab.forward' },
       { combo: 'Mod+1-9', desc: 'Go to tab (9 = last)', id: 'tab.goto', items: [1, 2, 3, 4, 5, 6, 7, 8].map((n) => `Go to tab ${n}`).concat('Go to last tab') },
       { combo: 'Alt+Shift+T', desc: 'Toggle tab bar', id: 'view.tabBar' },
       { combo: 'Mod+B', desc: 'Toggle sidebar', id: 'view.sidebar' },
@@ -147,7 +164,7 @@ export const SHORTCUT_GROUPS = [
       { combo: 'Control+Shift+`', desc: 'New terminal tab', id: 'view.terminalNew' },
       { combo: 'Mod+Shift+X', desc: 'Extensions', id: 'view.extensions' },
       { combo: 'Mod+I', desc: 'Toggle AI panel', id: 'ai.panel' },
-      { combo: 'Mod+Shift+E', desc: 'Toggle AI sidebar', id: 'ai.sidebar' },
+      { combo: 'Mod+Shift+E', desc: 'Toggle AI panel', id: 'ai.sidebar' },
       { combo: 'Mod+Shift+L', desc: 'Activity log', id: 'view.logs' },
       { combo: 'Mod+Shift+K', desc: 'Toggle query log', id: 'view.queryLog' },
       { combo: 'Mod+Shift+G', desc: 'Find in database', id: 'search.database' },
@@ -281,10 +298,22 @@ export const SHORTCUT_GROUPS = [
     label: 'General',
     icon: 'settings',
     shortcuts: [
-      { combo: 'Mod+?', desc: 'Keyboard shortcuts', id: 'help.shortcutsAlt' },
-      { combo: '?', desc: 'Keyboard shortcuts', id: 'help.shortcutsKey' },
+      { combo: 'Mod+Shift+?', desc: 'Keyboard shortcuts', id: 'help.shortcutsAlt' },
+      { combo: 'Shift+?', desc: 'Keyboard shortcuts', id: 'help.shortcutsKey' },
       { combo: 'Mod+,', desc: 'Settings', id: 'settings.open' },
       { combo: 'Escape', desc: 'Dismiss / close' },
+    ],
+  },
+  {
+    // Last on purpose: these keys act only on a focused sidebar row, so a
+    // conflict check for Mod+C should name the grid's Copy cell value first.
+    label: 'Sidebar table row',
+    icon: 'table-2',
+    shortcuts: [
+      { combo: 'Space', desc: "Peek at the table's columns" },
+      { combo: 'Mod+C', desc: "Copy the table's name" },
+      { combo: 'P', desc: 'Pin or unpin the table' },
+      { combo: 'X', desc: 'Select the table' },
     ],
   },
 ]

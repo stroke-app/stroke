@@ -17,7 +17,9 @@
 	bind:ref
 	data-slot="command"
 	class={cn(
-		"bg-background text-foreground flex size-full flex-col overflow-hidden rounded-2xl! p-0",
+		// Transparent: it always sits in a dialog or popover that paints the
+		// surface, and its own fill showed the page grey over the white menu.
+		"bg-transparent text-foreground flex size-full flex-col overflow-hidden rounded-2xl! p-0",
 		className,
 	)}
 	{...restProps}

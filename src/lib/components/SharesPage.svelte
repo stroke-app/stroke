@@ -7,6 +7,7 @@
   // Opens as a tab; SharesOverlay shows the same page when there is no
   // connection and so no tab bar.
   import { untrack } from 'svelte'
+  import EmptyState from './EmptyState.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import Icon from './Icon.svelte'
   import Kbd from './Kbd.svelte'
@@ -201,9 +202,11 @@
         {/each}
       </div>
     {/if}
+    {#if !signedOut}
     <Button variant="ghost" size="icon" class="size-8 shrink-0" aria-label="Refresh" title="Refresh" disabled={loading} onclick={() => void load()}>
       <Icon name="refresh-cw" class={cn('size-3.5 shrink-0', loading && 'animate-spin')} />
     </Button>
+    {/if}
     {#if onclose}
       <Button variant="ghost" size="icon" class="size-8 shrink-0" aria-label="Close" onclick={onclose}>
         <Icon name="x" class="size-4 shrink-0" />
@@ -212,14 +215,16 @@
   </div>
 
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto">
-    <div class="mx-auto flex w-full max-w-3xl flex-col px-4 pt-3 pb-8">
+    <div class="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 pt-3 pb-8">
       {#if signedOut && loaded}
-        <div class="flex flex-col items-center gap-3 py-24 text-center">
-          <span class="flex size-12 items-center justify-center rounded-lg bg-muted/60"><Icon name="lock" class="size-5 shrink-0 text-muted-foreground" /></span>
-          <p class="mt-1 text-ui-sm font-medium text-foreground">Sign in to share</p>
-          <p class="max-w-80 text-ui-xs leading-relaxed text-muted-foreground">Share links live on your Stroke account, so you can see who opened them and revoke them from any device.</p>
-          <Button size="sm" class="mt-2" onclick={() => void signInWithToast()}>Sign in</Button>
-        </div>
+        <EmptyState
+          class="flex-1 justify-center py-12"
+          iconName="lock"
+          title="Sign in to share"
+          description="Share links live on your Stroke account, so you can see who opened them and revoke them from any device."
+        >
+          <Button size="sm" onclick={() => void signInWithToast()}>Sign in</Button>
+        </EmptyState>
       {:else if !loaded}
         <div class="flex items-center justify-center gap-2 py-24 text-ui-xs text-muted-foreground">
           <Icon name="loader-2" class="size-3.5 shrink-0 animate-spin" />Loading
@@ -252,13 +257,11 @@
         {/if}
 
         {#if !rows.length}
-          <div class="flex flex-col items-center gap-3 py-20 text-center">
-            <span class="flex size-12 items-center justify-center rounded-lg bg-muted/60"><Icon name="share-2" class="size-5 shrink-0 text-muted-foreground" /></span>
-            <p class="mt-1 text-ui-sm font-medium text-foreground">No shared links yet</p>
-            <p class="max-w-96 text-ui-xs leading-relaxed text-muted-foreground">
+          <EmptyState class="flex-1 justify-center py-12" iconName="share-2" title="No shared links yet">
+            {#snippet body()}
               Press <span class="font-medium text-foreground">Share</span> above query results, a table, a chart or the schema diagram, or ask the AI to "share this chart". Everything is encrypted on this computer first.
-            </p>
-          </div>
+            {/snippet}
+          </EmptyState>
         {:else if !shown.length}
           <p class="py-16 text-center text-ui-xs text-muted-foreground">
             {query ? 'No links match your search.' : 'No active links.'}

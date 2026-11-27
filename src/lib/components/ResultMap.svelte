@@ -14,6 +14,7 @@
   import { formatLonLat, geometrySummary } from '$lib/geometry-cell.js'
   import { resultLayer, unplacedHint, insideRings } from '$lib/result-geo.js'
   import Icon from './Icon.svelte'
+  import SelectMenu from './SelectMenu.svelte'
   import { cn } from '$lib/utils.js'
 
   let {
@@ -434,16 +435,14 @@
   <div class="flex h-9 shrink-0 items-center gap-2 border-b border-border/50 px-2">
     <Icon name="globe" class="size-3.5 shrink-0 text-muted-foreground" />
     {#if spatial.length > 1}
-      <select
-        class="h-7 min-w-0 rounded-md border border-border/50 bg-background px-1.5 text-ui-xs text-foreground"
+      <SelectMenu
+        ariaLabel="Column to map"
+        triggerClass="h-7 w-auto min-w-0 max-w-48 font-mono text-ui-xs"
+        contentClass="min-w-[12rem]"
         value={col}
-        onchange={(e) => (colPick = Number(/** @type {HTMLSelectElement} */ (e.currentTarget).value))}
-        aria-label="Column to map"
-      >
-        {#each spatial as i (i)}
-          <option value={i}>{columns[i]?.name}</option>
-        {/each}
-      </select>
+        onValueChange={(v) => (colPick = Number(v))}
+        items={spatial.map((i) => ({ value: i, label: columns[i]?.name ?? String(i) }))}
+      />
     {:else}
       <span class="min-w-0 truncate font-mono text-ui-xs text-foreground">{columns[col]?.name ?? ''}</span>
     {/if}

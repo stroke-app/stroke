@@ -1,5 +1,7 @@
 <script>
+  import { offerUndo } from '$lib/undo-toast.js'
   import CollapsibleCode from './CollapsibleCode.svelte'
+  import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import Maximize2 from '@lucide/svelte/icons/maximize-2'
   import { Button } from '$lib/components/ui/button/index.js'
   import { withShortcut } from '$lib/stores/keybindings.js'
@@ -74,6 +76,7 @@
     updateConversation,
     deleteConversation,
     clearConversations,
+    restoreConversation,
   } from "$lib/stores/conversations.js";
 
   /**
@@ -394,9 +397,16 @@
     if (activeConvId === id) { activeConvId = null; items = []; apiHistory = []; rawApiHistory = []; error = '' }
   }
 
+  /** No confirm: the history goes at once and the toast offers Undo. */
   async function clearAllConversations() {
-    await clearConversations(chatMatch ?? (connectionId || undefined), 'sidebar')
+    const key = chatMatch ?? (connectionId || undefined)
+    const gone = await listConversations(key, 'sidebar')
+    await clearConversations(key, 'sidebar')
     convList = []; activeConvId = null; items = []; apiHistory = []; rawApiHistory = []; error = ''; historyOpen = false
+    offerUndo(`Cleared ${gone.length} ${gone.length === 1 ? 'chat' : 'chats'}`, 'Assistant history', async () => {
+      for (const c of gone) await restoreConversation(c)
+      await loadConvList()
+    })
   }
 
   // ── Resize ────────────────────────────────────────────────────────────────
@@ -473,7 +483,10 @@
     abortController?.abort(); abortController = null; loading = false
   }
   function stop() { flushStreamingContent(); abortController?.abort(); agentChat.interrupt() }
-  async function copyText(text) { await navigator.clipboard.writeText(text).catch(() => {}) }
+  async function copyText(text) {
+    try { await navigator.clipboard.writeText(text); toast.success('Copied', { duration: 1200 }) }
+    catch { toast.error("Couldn't copy to the clipboard") }
+  }
 
   /** @param {number} ts */
   function relTime(ts) {

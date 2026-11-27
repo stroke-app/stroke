@@ -1,8 +1,8 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import EmptyState from './EmptyState.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import GitCompare from '@lucide/svelte/icons/git-compare'
-  import { getAppScale } from '$lib/app-zoom.js'
   import { appZoom } from '$lib/stores/settings.js'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Loader2 from '@lucide/svelte/icons/loader-2'
@@ -10,7 +10,7 @@
   import Plus from '@lucide/svelte/icons/plus'
   import Minus from '@lucide/svelte/icons/minus'
   import X from '@lucide/svelte/icons/x'
-  import ChevronDown from '@lucide/svelte/icons/chevron-down'
+  import SelectMenu from './SelectMenu.svelte'
   import Search from '@lucide/svelte/icons/search'
   import { onMount, untrack } from 'svelte'
   import { cn } from '$lib/utils.js'
@@ -72,32 +72,6 @@
   // svelte-ignore state_referenced_locally
   let R = $state(makeSource(currentConnectionId, '', _init))
 
-  // ── Dropdown ──────────────────────────────────────────────────────────────────
-  let openDropdown = $state('')
-  let dropdownSearch = $state('')
-  let ddTop = $state(0)
-  let ddLeft = $state(0)
-  let ddFlipUp = $state(false)
-  const DD_HEIGHT = 280
-
-  /** @param {string} id @param {MouseEvent} e */
-  function openDd(id, e) {
-    const rect = /** @type {HTMLElement} */ (e.currentTarget).getBoundingClientRect()
-    // The menu is sized in rem (w-56), so its footprint grows with the zoom;
-    // the flip and edge clamps have to grow with it or it runs off-screen.
-    const scale = getAppScale()
-    const ddHeight = DD_HEIGHT * scale
-    const spaceBelow = window.innerHeight - rect.bottom
-    ddFlipUp = spaceBelow < ddHeight && rect.top > ddHeight
-    ddTop = ddFlipUp ? rect.top - 4 : rect.bottom + 4
-    ddLeft = Math.min(rect.left, window.innerWidth - 248 * scale)
-    openDropdown = id
-    dropdownSearch = ''
-  }
-  function closeDd() { openDropdown = ''; dropdownSearch = '' }
-
-  /** @param {HTMLElement} node */
-  function focusNode(node) { setTimeout(() => node.focus(), 0) }
 
   // ── Key columns ───────────────────────────────────────────────────────────────
   /** @type {string[]} */
@@ -477,129 +451,61 @@
   onmouseup={onResizeUp}
 />
 
-<!-- Dropdown backdrop -->
-{#if openDropdown}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="fixed inset-0 z-30" onpointerdown={closeDd}></div>
-{/if}
 
 <!-- ── Searchable select ──────────────────────────────────────────────────────── -->
 {#snippet SearchSelect({ id, value, options, loading, placeholder = 'select…', onchange })}
-  {@const isOpen = openDropdown === id}
-  {@const filtered = dropdownSearch ? options.filter((o) => o.toLowerCase().includes(dropdownSearch.toLowerCase())) : options}
-  <div class="relative inline-flex">
-    <button
-      type="button"
-      onclick={(e) => { e.stopPropagation(); if (isOpen) closeDd(); else if (!loading && options.length > 0) openDd(id, e) }}
-      disabled={loading || (!value && options.length === 0 && !loading)}
-      class={cn(
-        'flex h-7 items-center gap-1.5 rounded-md border px-2.5 text-ui-xs transition-colors select-none',
-        loading
-          ? 'border-border/30 bg-muted/15 text-muted-foreground'
-          : value
-            ? 'border-border/40 bg-muted/25 text-foreground/90 hover:bg-muted/45'
-            : options.length
-              ? 'border-dashed border-border/40 bg-transparent text-muted-foreground hover:border-border/60 hover:text-foreground'
-              : 'cursor-default border-border/20 bg-transparent text-muted-foreground pointer-events-none',
-        isOpen && 'border-border/70 bg-muted/50 text-foreground',
-      )}
-    >
-      {#if loading}
-        <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />
-        <span class="text-muted-foreground">{placeholder}</span>
-      {:else}
-        <span class={cn('max-w-[8.75rem] truncate', value && 'font-medium')}>{value || placeholder}</span>
-        {#if options.length > 0 || value}
-          <ChevronDown class={cn('ml-auto size-3 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
-        {/if}
-      {/if}
-    </button>
-    {#if isOpen}
-      <div
-        role="presentation"
-        class={cn('fixed z-40 w-56 overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim', ddFlipUp && '-translate-y-full')}
-        style="top:{ddTop}px;left:{ddLeft}px"
-        onpointerdown={(e) => e.stopPropagation()}
-      >
-        <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
-          <Search class="size-3 shrink-0 text-muted-foreground" />
-          <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search…"
-            class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
-          {#if dropdownSearch}<button aria-label="Clear search" title="Clear search" onclick={() => { dropdownSearch = '' }} class="text-muted-foreground hover:text-foreground"><X class="size-3 shrink-0" /></button>{/if}
-        </div>
-        <div class="max-h-52 overflow-y-auto py-1">
-          {#if filtered.length === 0}
-            <p class="px-3 py-2 text-ui-xs text-muted-foreground">No results</p>
-          {:else}
-            {#each filtered as opt}
-              <button type="button" onclick={() => { onchange(opt); closeDd() }}
-                class={cn('flex w-full items-center gap-2 px-3 py-1.5 text-ui-xs transition-colors hover:bg-muted/35', value === opt && 'text-primary')}
-              >
-                <span class={cn('w-3 shrink-0 text-center text-ui-3xs', value === opt ? 'text-primary' : 'opacity-0')}>✓</span>
-                {opt}
-              </button>
-            {/each}
-          {/if}
-        </div>
-      </div>
-    {/if}
-  </div>
+  <!-- The app's select menu (DESIGN_SYSTEM.md): arrow keys, a search, long
+       names cut short. A hand-built list here had none of those and scrolled
+       sideways on a long table name. -->
+  {#if loading}
+    <span class="flex h-7 items-center gap-1.5 rounded-md border border-border/30 bg-muted/15 px-2.5 text-ui-xs text-muted-foreground">
+      <Loader2 class="size-3 shrink-0 animate-spin text-muted-foreground" />{placeholder}
+    </span>
+  {:else}
+    <SelectMenu
+      ariaLabel={placeholder}
+      value={value || undefined}
+      onValueChange={(v) => onchange(v)}
+      items={options.map((o) => ({ value: o, label: o }))}
+      {placeholder}
+      disabled={!value && options.length === 0}
+      triggerClass={cn('h-7 w-auto min-w-24 max-w-[11rem] shrink-0', !value && 'text-muted-foreground')}
+      contentClass="min-w-[14rem] max-w-[20rem]"
+    />
+  {/if}
 {/snippet}
 
 <!-- ── Connection select ──────────────────────────────────────────────────────── -->
 {#snippet ConnSelect({ id, value, onchange })}
-  {@const isOpen = openDropdown === id}
-  {@const selected = connections.find((c) => c.id === value)}
-  {@const filtered = dropdownSearch ? connections.filter((c) => `${c.name} ${engineLabel(c.type)}`.toLowerCase().includes(dropdownSearch.toLowerCase())) : connections}
-  <div class="relative inline-flex">
-    <button type="button"
-      onclick={(e) => { e.stopPropagation(); if (isOpen) closeDd(); else openDd(id, e) }}
-      class={cn('flex h-7 max-w-[12.5rem] items-center gap-1.5 rounded-md border border-border/40 bg-muted/25 px-2.5 text-ui-xs font-medium text-foreground/90 transition-colors hover:bg-muted/45 select-none', isOpen && 'border-border/70 bg-muted/50 text-foreground')}
-    >
-      {#if value === currentConnectionId}<span class="size-1.5 shrink-0 rounded-full bg-info" title="Active connection"></span>{/if}
-      <span class="max-w-[8.75rem] truncate">{selected?.name ?? 'Connection'}</span>
-      <ChevronDown class={cn('ml-auto size-3 shrink-0 text-muted-foreground transition-transform', isOpen && 'rotate-180')} />
-    </button>
-    {#if isOpen}
-      <div
-        role="presentation"
-        class={cn('fixed z-40 w-64 overflow-hidden rounded-[10px] border border-border/60 bg-popover elevate-2-rim', ddFlipUp && '-translate-y-full')}
-        style="top:{ddTop}px;left:{ddLeft}px"
-        onpointerdown={(e) => e.stopPropagation()}
-      >
-        <div data-slot="menu-search" class="search-shell m-1.5 flex h-8 items-center gap-2 px-2.5">
-          <Search class="size-3 shrink-0 text-muted-foreground" />
-          <input use:focusNode type="text" bind:value={dropdownSearch} placeholder="Search connections…"
-            class="no-focus-ring flex-1 bg-transparent text-ui-xs outline-none placeholder:text-muted-foreground" />
-        </div>
-        <div class="max-h-52 overflow-y-auto py-1">
-          {#if filtered.length === 0}
-            <p class="px-3 py-2 text-ui-xs text-muted-foreground">No results</p>
-          {:else}
-            {#each filtered as conn}
-              <button type="button" onclick={() => { onchange(conn.id); closeDd() }}
-                class={cn('flex w-full items-center gap-2 px-3 py-2 text-ui-xs transition-colors hover:bg-muted/35', value === conn.id && 'text-primary')}
-              >
-                <span class={cn('w-3 shrink-0 text-center text-ui-3xs', value === conn.id ? 'text-primary' : 'opacity-0')}>✓</span>
-                <span class="flex-1 truncate text-left">{conn.name}</span>
-                {#if conn.id === currentConnectionId}<span class="shrink-0 text-ui-3xs text-info">active</span>
-                {:else}<span class="shrink-0 text-ui-3xs text-muted-foreground">{engineLabel(conn.type)}</span>{/if}
-              </button>
-            {/each}
-          {/if}
-        </div>
-      </div>
-    {/if}
-  </div>
+  <SelectMenu
+    ariaLabel="Connection"
+    {value}
+    onValueChange={(v) => onchange(v)}
+    items={connections.map((c) => ({ value: c.id, label: c.name, hint: c.id === currentConnectionId ? 'active' : engineLabel(c.type) }))}
+    placeholder="Connection"
+    searchPlaceholder="Search connections…"
+    triggerClass="h-7 w-auto min-w-28 max-w-[12.5rem] shrink-0"
+    contentClass="min-w-[16rem] max-w-[22rem]"
+  />
 {/snippet}
 
 <!-- ── Mode toggle ────────────────────────────────────────────────────────────── -->
 {#snippet ModeToggle({ mode, onset })}
-  <div class="flex shrink-0 items-center rounded-md border border-border/40 bg-muted/15 p-0.5 text-ui-2xs">
-    <button onclick={() => onset('table')}
-      class={cn('rounded px-2 py-0.5 font-medium transition-colors', mode === 'table' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}>Table</button>
-    <button onclick={() => onset('sql')}
-      class={cn('rounded px-2 py-0.5 font-medium transition-colors', mode === 'sql' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}>SQL</button>
+  <!-- The app's segmented control (TableTextView, QueriesPage): a radio group
+       whose chosen option sits raised on the track. -->
+  <div class="field-surface inline-flex h-7 shrink-0 items-center gap-0.5 bg-muted/20 p-0.5" role="radiogroup" aria-label="Source kind">
+    {#each [['table', 'Table'], ['sql', 'SQL']] as [id, label] (id)}
+      <button
+        type="button"
+        role="radio"
+        aria-checked={mode === id}
+        onclick={() => onset(/** @type {'table'|'sql'} */ (id))}
+        class={cn(
+          'inline-flex h-full items-center rounded-sm px-2.5 text-ui-xs font-medium transition-colors',
+          mode === id ? 'bg-background text-foreground elevate-1' : 'text-muted-foreground hover:text-foreground',
+        )}
+      >{label}</button>
+    {/each}
   </div>
 {/snippet}
 
@@ -616,7 +522,7 @@
         <div class="flex items-center gap-2.5 px-5 py-2.5">
           <span class="flex w-[4.625rem] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-info"></span>
-            <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-info">Source</span>
+            <span class="text-ui-xs font-medium text-info">Source</span>
           </span>
           {@render ConnSelect({ id: 'L.conn', value: L.connId, onchange: (v) => { L = { ...L, connId: v }; onConnChange('L') } })}
           {#if L.mode === 'table'}
@@ -653,7 +559,7 @@
         <div class="flex items-center gap-2.5 px-5 py-2.5">
           <span class="flex w-[4.625rem] shrink-0 items-center gap-1.5">
             <span class="size-1.5 shrink-0 rounded-full bg-success"></span>
-            <span class="text-ui-3xs font-semibold uppercase tracking-[0.06em] text-success">Target</span>
+            <span class="text-ui-xs font-medium text-success">Target</span>
           </span>
           {@render ConnSelect({ id: 'R.conn', value: R.connId, onchange: (v) => { R = { ...R, connId: v }; onConnChange('R') } })}
           {#if R.mode === 'table'}
@@ -683,7 +589,7 @@
 
     <!-- Key cols + compare -->
     <div class="flex items-center gap-2.5 border-t border-border/15 px-5 py-2.5">
-      <span class="w-[4.625rem] shrink-0 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
+      <span class="w-[4.625rem] shrink-0 text-ui-xs font-medium text-muted-foreground" title="Columns used to match rows between source and target">Key cols</span>
       <div class="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
         {#each [...selectedKeyCols] as col}
           <button onclick={() => toggleKeyCol(col)}
@@ -696,7 +602,7 @@
           ><Plus class="size-3 shrink-0" />{col}</button>
         {/each}
         {#if !keyColSuggestions.length && !selectedKeyCols.size}
-          <span class="text-ui-2xs italic text-muted-foreground">auto, uses first column</span>
+          <span class="text-ui-2xs text-muted-foreground">The first column is the key unless you choose one</span>
         {/if}
       </div>
       <!-- Beside Compare, not in the header: it re-lists what the pickers above
@@ -735,7 +641,10 @@
          button used to draw its own `border-b-2` and nothing drew the line
          between them, so the active tab's underline floated in a gap with no
          rule to belong to - six stubs rather than a tab strip. -->
-    <div class="flex shrink-0 items-end gap-0 border-b border-border/40 px-5">
+    <!-- The structure view's tabs: the active one on a filled pill. Weight and
+         colour alone left "Changed" with no count looking like every other
+         tab. -->
+    <div class="flex shrink-0 items-center gap-0.5 border-b border-border/40 px-5 py-1.5" role="group" aria-label="Show rows">
 
       {#each [
         { key: 'all',       label: 'All',       count: diffRows.length,                          badge: 'bg-muted/30 text-muted-foreground',           active: 'text-foreground' },
@@ -746,18 +655,14 @@
         { key: 'unchanged', label: 'Unchanged', count: stats.unchanged,                          badge: 'bg-muted/30 text-muted-foreground',           active: 'text-foreground' },
       ] as f}
         <button
+          type="button"
+          aria-pressed={activeFilter === f.key}
           onclick={() => { activeFilter = f.key }}
           class={cn(
-            // No underline marker. The active tab is carried by weight plus
-            // colour, which is still two cues rather than colour alone: the
-            // label goes medium AND takes its status colour, while every other
-            // tab stays regular-weight muted. The count badge behind it picks up
-            // the status tint too, so the selection reads at a glance without a
-            // rule under it.
-            'flex items-center gap-1.5 px-3 pb-2.5 pt-2 text-ui-xs transition-colors',
+            'flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors',
             activeFilter === f.key
-              ? cn('font-medium', f.active)
-              : 'text-muted-foreground hover:text-foreground'
+              ? cn('bg-sidebar-accent font-medium', f.active)
+              : 'text-muted-foreground hover:bg-sidebar-accent/50 hover:text-foreground'
           )}
         >
           {f.label}
@@ -775,7 +680,7 @@
            app-wide field rule framed the <input> alone, leaving the magnifier
            stranded outside a pill it clearly belonged to.
            `ps-4`, not `pl-4` - this strip mirrors under RTL. -->
-      <div class="ms-auto flex items-center gap-2 pb-2.5 ps-4">
+      <div class="ms-auto flex items-center gap-2 ps-4">
         <div class="search-shell flex h-7 items-center gap-1.5 px-2">
           <Search class="size-3 shrink-0 text-muted-foreground" />
           <input type="text" bind:value={searchQuery} placeholder="Search rows…"
@@ -792,7 +697,7 @@
              result of the search, so hiding it the moment you search is backwards -
              and a control that changes width as you type moves everything after it. -->
         <span class="shrink-0 text-ui-2xs tabular-nums text-muted-foreground">
-          {displayRows.length}{displayRows.length !== diffRows.length ? `/${diffRows.length}` : ''}
+          {displayRows.length !== diffRows.length ? `${displayRows.length} of ${diffRows.length}` : displayRows.length}
         </span>
       </div>
     </div>
@@ -921,14 +826,11 @@
       <Loader2 class="size-5 shrink-0 animate-spin text-muted-foreground" />
     </div>
   {:else}
-    <div class="flex flex-1 flex-col items-center justify-center gap-4">
-      <div class="flex size-14 items-center justify-center rounded-full border border-border/15 bg-muted/8">
-        <GitCompare class="size-6 shrink-0 opacity-20" />
-      </div>
-      <div class="text-center">
-        <p class="text-ui-sm font-medium text-foreground">Compare any two data sources</p>
-        <p class="mt-1 text-ui-xs text-muted-foreground">{bothReady ? 'Tables or SQL, even across different hosts' : 'Pick a table or write SQL for the source and the target'}</p>
-      </div>
-    </div>
+    <EmptyState
+      class="flex-1 justify-center"
+      icon={GitCompare}
+      title="Compare any two data sources"
+      description={bothReady ? 'Tables or SQL, even across different hosts. Press Compare to see what differs.' : 'Pick a table or write SQL for the source and the target, above.'}
+    />
   {/if}
 </div>

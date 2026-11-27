@@ -548,21 +548,81 @@ function closeParkedFor(id) {
   }
 }
 
-/** @param {string} id */
-export function removeConnection(id) {
+/** How long a deleted connection can be brought back with Undo. */
+export const UNDO_REMOVE_MS = 8000
+
+/**
+ * Deletions still inside their undo window: the row is gone from the list,
+ * but its charts, history and conversations are not purged and the sync
+ * tombstone is not written until the window closes.
+ * @type {Map<string, { conn: SavedConnection, wasLast: boolean, timer: ReturnType<typeof setTimeout> }>}
+ */
+const _undoable = new Map()
+
+/** Purge and tombstone a deletion whose undo window has closed. @param {string} id */
+function finalizeRemoval(id) {
+  const entry = _undoable.get(id)
+  if (!entry) return
+  clearTimeout(entry.timer)
+  _undoable.delete(id)
+  // Restored in the meantime by something other than Undo (sync, re-add).
+  if (!loadDeletedIds().has(id)) return
+  recordDeletion('connection', id)
+  purgeConnectionData(id)
+}
+
+/** Close every open undo window now, so a quit never strands a half-deleted row. */
+export function flushPendingRemovals() {
+  for (const id of [..._undoable.keys()]) finalizeRemoval(id)
+}
+if (typeof window !== 'undefined') window.addEventListener('pagehide', flushPendingRemovals)
+
+/**
+ * @param {string} id
+ * @param {{ undoable?: boolean }} [opts] `undoable` holds the purge and the sync
+ *   tombstone for UNDO_REMOVE_MS so `restoreConnection` can bring the row back.
+ *   A delete that arrives from sync is final at once.
+ */
+export function removeConnection(id, { undoable = false } = {}) {
+  const conn = loadSavedConnections().find((c) => c.id === id)
   closeParkedFor(id)
   const deleted = loadDeletedIds()
   deleted.add(id)
   _revived.delete(id)
   // Before saveConnections, so the disk copy it writes carries the id too.
   saveDeletedIds(deleted)
-  // Sync carries the delete to other devices (a no-op while sync applies one).
-  recordDeletion('connection', id)
   const list = loadSavedConnections().filter((c) => c.id !== id)
   saveConnections(list)
-  if (getLastConnectionId() === id) setLastConnectionId(null)
+  const wasLast = getLastConnectionId() === id
+  if (wasLast) setLastConnectionId(null)
+  if (undoable && conn) {
+    const prev = _undoable.get(id)
+    if (prev) clearTimeout(prev.timer)
+    _undoable.set(id, { conn, wasLast, timer: setTimeout(() => finalizeRemoval(id), UNDO_REMOVE_MS) })
+    return list
+  }
+  // Sync carries the delete to other devices (a no-op while sync applies one).
+  recordDeletion('connection', id)
   purgeConnectionData(id)
   return list
+}
+
+/**
+ * Undo an undoable `removeConnection` while its window is open: the row comes
+ * back with its secrets, nothing was purged and no tombstone was written.
+ * Lists that keep their own copy reload on `stroke:connections-synced`.
+ * @param {string} id
+ * @returns {boolean} false once the window has closed
+ */
+export function restoreConnection(id) {
+  const entry = _undoable.get(id)
+  if (!entry) return false
+  clearTimeout(entry.timer)
+  _undoable.delete(id)
+  upsertConnection(entry.conn, { revive: true, exact: true })
+  if (entry.wasLast) setLastConnectionId(id)
+  try { window.dispatchEvent(new CustomEvent('stroke:connections-synced')) } catch { /* no window in tests */ }
+  return true
 }
 
 /**

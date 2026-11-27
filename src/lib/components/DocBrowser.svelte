@@ -1,5 +1,6 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import { askConfirm } from '$lib/stores/confirm.js'
   import SelectMenu from './SelectMenu.svelte'
   // One page for document and wide-column databases (MongoDB, CouchDB,
   // Cassandra, Firestore). The collection comes from the app sidebar. Layout
@@ -562,7 +563,7 @@ GET products/_search
       return
     }
     const prev = creating ? null : editing
-    if (prev && adapter.idOf(next, info?.meta) !== adapter.idOf(prev, info?.meta) && !confirm(adapter.keyChangeWarning)) return
+    if (prev && adapter.idOf(next, info?.meta) !== adapter.idOf(prev, info?.meta) && !(await askConfirm({ title: 'Change the key?', description: adapter.keyChangeWarning, confirmLabel: 'Change key' }))) return
     // Optimistic for an existing document: the list shows the edit now, the
     // stored version replaces it when the database answers, and a failure
     // puts the original back. A new one waits: its id comes from the database.
@@ -793,7 +794,7 @@ GET products/_search
           <span class="text-ui-2xs text-warning" title="All stops at {ALL_CAP.toLocaleString()} so the grid stays fast. Filter to narrow it down.">first {ALL_CAP.toLocaleString()}</span>
         {/if}
       </div>
-      <span class={cn('mx-1 h-4 w-px shrink-0 bg-border/50', !dataView && 'hidden')} aria-hidden="true"></span>
+      <span class={cn('w-2 shrink-0', !dataView && 'hidden')} aria-hidden="true"></span>
       <!-- Views: one dropdown (the current view, its icon, a chevron), the
            same select the rest of the app uses. -->
       <SelectMenu
@@ -886,7 +887,7 @@ GET products/_search
               </button>
             {/if}
           {/each}
-          <span class="mx-0.5 h-4 w-px shrink-0 bg-border/60" aria-hidden="true"></span>
+          <span class="w-2 shrink-0" aria-hidden="true"></span>
           <button type="submit" disabled={!info || loading} class={cn('inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-2xs font-medium transition-[color,background-color,scale] duration-150 ease-out active:scale-[0.96] disabled:opacity-40', dirty ? 'bg-foreground text-background hover:bg-foreground/90' : 'text-foreground/80 hover:bg-accent hover:text-foreground')} title="Run the query (Enter)">
             {#if loading}<LoaderCircle class="size-3 shrink-0 animate-spin" />{/if}Run
             <span class={cn('text-ui-3xs', dirty ? 'text-background/60' : 'text-muted-foreground')} aria-hidden="true">↵</span>

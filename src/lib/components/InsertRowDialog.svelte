@@ -1,5 +1,5 @@
 <script>
-  import { comboTitle } from '$lib/shortcuts.js'
+  import Kbd from './Kbd.svelte'
   import FieldSelect from './FieldSelect.svelte';
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import CalendarClock from '@lucide/svelte/icons/calendar-clock'
@@ -293,9 +293,9 @@
     <Dialog.Footer
       class="mx-0 mb-0 flex shrink-0 items-center gap-2 border-t border-border/80 bg-muted/15 px-5 py-3"
     >
-      <p class="mr-auto hidden text-ui-2xs text-muted-foreground sm:block">
-        <kbd>{comboTitle('Mod+Enter')}</kbd>
-        insert
+      <p class="mr-auto hidden items-center gap-1.5 text-ui-xs text-muted-foreground sm:flex">
+        <Kbd combo="Mod+Enter" />
+        inserts
       </p>
       <Button variant="ghost" size="sm" class="h-8" disabled={saving} onclick={() => (open = false)}>
         Cancel

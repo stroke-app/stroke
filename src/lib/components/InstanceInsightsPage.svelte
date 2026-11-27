@@ -575,13 +575,22 @@
     return out
   }
 
-  const ACRONYMS = new Set(['id', 'ids', 'pid', 'pids', 'db', 'ip', 'addr', 'xid', 'lsn', 'wal', 'gid', 'sql', 'os', 'tcp', 'io'])
-  /** `blocking_pids` → `Blocking PIDs`. Raw catalog column names are not labels. */
+  const ACRONYMS = new Set(['id', 'ids', 'pid', 'pids', 'db', 'ip', 'xid', 'lsn', 'wal', 'gid', 'sql', 'os', 'tcp', 'io'])
+  /** Abbreviations spelled out. */
+  const WORDS = /** @type {Record<string, string>} */ ({ addr: 'address' })
+  /**
+   * `blocking_pids` → `Blocking PIDs`, `client_addr` → `Client address`. Raw
+   * catalog column names are not labels. Sentence case, as every other header
+   * in the app: Title Case read "Client ADDR", "Sync State".
+   */
   const humanize = (/** @type {string} */ k) => String(k).replace(/[_-]+/g, ' ').trim().split(' ')
-    // A plural acronym keeps its s small: "PIDs", not "PIDS".
-    .map((w) => (ACRONYMS.has(w.toLowerCase())
-      ? (/^(ids|pids)$/i.test(w) ? w.slice(0, -1).toUpperCase() + 's' : w.toUpperCase())
-      : w.charAt(0).toUpperCase() + w.slice(1)))
+    .map((w, i) => {
+      const low = w.toLowerCase()
+      // A plural acronym keeps its s small: "PIDs", not "PIDS".
+      if (ACRONYMS.has(low)) return /^(ids|pids)$/.test(low) ? low.slice(0, -1).toUpperCase() + 's' : low.toUpperCase()
+      const word = WORDS[low] ?? low
+      return i === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word
+    })
     .join(' ')
 
   /** Session state is the one column worth reading at a glance. */
@@ -815,7 +824,6 @@
           caption: 'Every client connection the server currently holds.',
           rows: stateData?.sessions ?? [],
           empty: 'No sessions reported.',
-          onRefresh: () => void withSpinner(refreshState),
         })}
         <div class="mt-5 grid grid-cols-1 gap-5 lg:grid-cols-2">
           <div>
@@ -857,7 +865,7 @@
                 <button
                   type="button"
                   aria-label="Clear search"
-                  class="absolute right-2 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  class="hit-area absolute right-2 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   onclick={() => (configSearch = '')}
                 >
                   <X class="size-3 shrink-0" />
@@ -917,16 +925,7 @@
               {/snippet}
             </SearchableMenu>
 
-            <button
-              type="button"
-              class={cn(cfgBtn, 'w-9 justify-center px-0')}
-              disabled={refreshing}
-              title="Reload settings"
-              aria-label="Reload settings"
-              onclick={() => void withSpinner(refreshConfig)}
-            >
-              <RefreshCw class={cn('size-4 shrink-0', refreshing && 'animate-spin')} />
-            </button>
+            <!-- No Reload here: the page's Refresh above reloads settings too. -->
           </div>
           {#if configFiltering}
             <div class="mt-2 flex items-center gap-2 px-1 text-ui-2xs tabular-nums text-muted-foreground">
@@ -1161,7 +1160,6 @@
           caption: 'Standbys currently streaming from this instance.',
           rows: replication?.stats ?? [],
           empty: 'No replicas are streaming from this instance.',
-          onRefresh: () => void withSpinner(refreshReplication),
         })}
         <div class="mt-5">
           {@render dataSection({

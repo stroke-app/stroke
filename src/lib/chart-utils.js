@@ -1299,6 +1299,7 @@ export function buildOption({ type, columns, rows, xCol, yCol, zCol, groupCol, i
         showBackground: xData.length <= 40,
         backgroundStyle: { color: isDark ? 'rgba(255,255,255,0.03)' : 'rgba(0,0,0,0.025)', borderRadius: [0, 4, 4, 0] },
         label: barValueLabel(isDark, 'right', xData.length),
+        labelLayout: { hideOverlap: true },
         emphasis: BAR_EMPHASIS,
         blur: BAR_BLUR,
       }],
@@ -1461,7 +1462,12 @@ export function buildOption({ type, columns, rows, xCol, yCol, zCol, groupCol, i
   } else {
     const dataMap = aggDataMap(rows, xi, yi)
     series = [makeSeries(type, yCol, xData.map((x) => dataMap[x] ?? null), PALETTE[0], n)]
-    if (type === 'bar') series[0].label = barValueLabel(isDark, 'top', xData.length > 24 ? Infinity : xData.length)
+    if (type === 'bar') {
+      series[0].label = barValueLabel(isDark, 'top', xData.length > 24 ? Infinity : xData.length)
+      // Twenty bars in a half-width results pane printed twenty values into
+      // one another; ECharts drops the ones that would overlap.
+      series[0].labelLayout = { hideOverlap: true }
+    }
   }
 
   // Add a scroll/zoom viewport when there are many x-axis categories so the

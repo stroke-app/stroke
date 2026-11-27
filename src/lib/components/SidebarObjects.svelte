@@ -523,9 +523,7 @@
   {#if settled && !error && flat.total === 0}
     <!-- Nothing at all in the schema: one place to start from. -->
     <div class="flex flex-col items-center gap-3 px-6 py-14 text-center">
-      <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-        <Icon name="shapes" class="size-5 shrink-0 text-muted-foreground" />
-      </div>
+      <Icon name="shapes" class="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} />
       <p class="max-w-[16rem] text-ui-xs font-medium text-foreground">No views or routines in “{schema}”</p>
       {#if family}{@render newMenu('empty')}{/if}
     </div>
@@ -642,7 +640,7 @@
                     <span class="w-4 shrink-0" aria-hidden="true"></span>
                     <Icon name={OBJECT_KIND_META[/** @type {ObjectKind} */ (item.kind)]?.icon ?? 'box'} class={cn('size-4 shrink-0', OBJECT_KIND_META[/** @type {ObjectKind} */ (item.kind)]?.tone)} />
                     <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
-                      <span class="min-w-0 shrink truncate text-ui-sm leading-4 -my-1 py-1">{#if hit}{hit[0]}<mark class="rounded-[2px] bg-primary/25 text-inherit">{hit[1]}</mark>{hit[2]}{:else}{item.name}{/if}</span>
+                      <span class="min-w-0 shrink truncate text-ui-sm leading-4 -my-1 py-1">{#if hit}{hit[0]}<mark class="search-hit">{hit[1]}</mark>{hit[2]}{:else}{item.name}{/if}</span>
                       {#if (item.kind === 'function' || item.kind === 'procedure') && item.args}
                         <span class="min-w-0 shrink-[2] truncate font-mono text-ui-2xs text-muted-foreground">({item.args})</span>
                       {/if}
@@ -754,7 +752,7 @@
   {/if}
   {#if dropSql}
     <div class="px-5 py-4">
-      <p class="mb-2 text-ui-3xs font-semibold uppercase tracking-[0.06em] text-muted-foreground">Will execute</p>
+      <p class="mb-2 text-ui-xs font-medium text-muted-foreground">Will execute</p>
       <div class="rounded-lg border border-border/20 bg-muted/[0.3] px-3.5 py-2.5">
         <code class="break-all font-mono text-ui-xs text-destructive">{dropSql}</code>
       </div>

@@ -90,10 +90,17 @@
     }
     if (fileInput) fileInput.value = ''
   }
+  /** @type {HTMLInputElement | null} */
+  let searchEl = $state(null)
 </script>
 
 <Dialog.Root bind:open>
-  <Dialog.Content class="flex max-h-[min(44rem,88vh)] max-w-xl flex-col gap-0 overflow-hidden p-0">
+  <!-- Open on the theme search: the first focusable thing was the
+       stroke.click link, which took the focus ring for no reason. -->
+  <Dialog.Content
+    class="flex max-h-[min(44rem,88vh)] max-w-xl flex-col gap-0 overflow-hidden p-0"
+    onOpenAutoFocus={(e) => { if (searchEl) { e.preventDefault(); searchEl.focus() } }}
+  >
     <Dialog.Header class="px-6 pt-6 pb-4">
       <Dialog.Title class="text-ui-xl font-semibold tracking-tight">Add a theme</Dialog.Title>
       <Dialog.Description class="text-ui-xs text-muted-foreground">From the community, a file, or pasted JSON.</Dialog.Description>
@@ -107,7 +114,7 @@
             stroke.click/themes ↗
           </button>
         </div>
-        <SearchField bind:value={query} placeholder="Search themes" rank={35} />
+        <SearchField bind:value={query} bind:ref={searchEl} placeholder="Search themes" rank={35} />
         {#if galleryLoading}
           <p class="py-4 text-center text-ui-xs text-muted-foreground"><Icon name="loader-2" class="me-1 inline size-3.5 animate-spin" />Loading themes</p>
         {:else if galleryError}

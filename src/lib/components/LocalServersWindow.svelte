@@ -6,6 +6,7 @@
   // (Postgres.app, Homebrew, docker compose), found by port, so they open in
   // one click too. Backend: src-tauri/src/local_servers.rs.
   import { onMount, onDestroy } from 'svelte'
+  import EmptyState from './EmptyState.svelte'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { Button } from '$lib/components/ui/button/index.js'
   import { Input } from '$lib/components/ui/input/index.js'
@@ -70,7 +71,7 @@
 
   onMount(() => {
     revealApp()
-    document.title = 'Local Servers'
+    document.title = 'Local servers'
     void refresh().then(() => {
       if (!selected) selected = servers[0]?.id ?? (found.length ? null : 'new')
     })
@@ -437,7 +438,7 @@
   <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-3" data-tauri-drag-region>
     <div class={cn('flex items-center gap-2', isMac && 'ps-[72px]')} data-tauri-drag-region>
       <Server class="size-4 shrink-0 text-muted-foreground" />
-      <h1 class="text-ui-sm font-medium" data-tauri-drag-region>Local Servers</h1>
+      <h1 class="text-ui-sm font-medium" data-tauri-drag-region>Local servers</h1>
     </div>
     <div class="flex-1 self-stretch" data-tauri-drag-region></div>
     <Button variant="ghost" size="icon-sm" class="text-muted-foreground" title="Refresh" aria-label="Refresh" onclick={() => { void refresh(); void scan() }}>
@@ -551,7 +552,7 @@
                   )}
                   onclick={() => pickEngine(e.id)}
                 >
-                  <span style="color: color-mix(in oklch, {e.color} {on ? 70 : 45}%, var(--foreground))"><DbIcon id={e.id} class="size-6" /></span>
+                  <span style="color: color-mix(in oklab, {e.color} {on ? 70 : 45}%, var(--foreground))"><DbIcon id={e.id} class="size-6" /></span>
                   <span class="truncate">{e.label}</span>
                 </button>
               {/each}
@@ -566,7 +567,7 @@
                   type="button"
                   aria-pressed={on}
                   disabled={creating}
-                  class={cn('h-7 min-w-11 rounded-md px-2.5 font-mono text-ui-xs transition-colors', on ? 'bg-foreground text-background' : 'bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground')}
+                  class={cn('h-7 min-w-11 rounded-md border px-2.5 font-mono text-ui-xs transition-colors', on ? 'border-primary/70 bg-primary/10 text-foreground' : 'border-transparent bg-muted/50 text-muted-foreground hover:bg-muted hover:text-foreground')}
                   onclick={() => pickVersion(v)}
                 >{v}</button>
               {/each}
@@ -759,14 +760,14 @@
           {@render connectionCard(f, `found:${f.port}`)}
         </div>
       {:else if loaded}
-        <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
-          <span class="flex size-10 items-center justify-center rounded-lg bg-muted/50 text-muted-foreground"><Server class="size-5 shrink-0" /></span>
-          <div class="flex max-w-sm flex-col gap-1">
-            <p class="text-ui-sm font-medium">Pick a server</p>
-            <p class="text-ui-xs text-muted-foreground">Or make one: Postgres, MySQL, MariaDB, Redis or MongoDB, any version, ready in a minute.</p>
-          </div>
+        <EmptyState
+          class="h-full justify-center"
+          icon={Server}
+          title="Pick a server"
+          description="Or make one: Postgres, MySQL, MariaDB, Redis or MongoDB, any version, ready in a minute."
+        >
           <Button size="sm" onclick={startNew}><Plus class="size-3.5 shrink-0" />New server</Button>
-        </div>
+        </EmptyState>
       {/if}
     </main>
   </div>

@@ -33,12 +33,34 @@ function create() {
         persist(next); return next
       })
     },
-    /** @param {string} tk @param {string} id */
+    /**
+     * @param {string} tk @param {string} id
+     * @returns {(() => boolean) | null} puts the column back in its place, for an Undo
+     */
     remove(tk, id) {
+      /** @type {VColDef | undefined} */
+      let gone
+      let index = -1
       update(d => {
-        const next = { ...d, [tk]: (d[tk] ?? []).filter(c => c.id !== id) }
+        const list = d[tk] ?? []
+        index = list.findIndex(c => c.id === id)
+        gone = list[index]
+        const next = { ...d, [tk]: list.filter(c => c.id !== id) }
         persist(next); return next
       })
+      if (!gone || index < 0) return null
+      const def = gone
+      return () => {
+        let put = false
+        update(d => {
+          const list = d[tk] ?? []
+          if (list.some(c => c.id === def.id)) return d
+          put = true
+          const next = { ...d, [tk]: [...list.slice(0, index), def, ...list.slice(index)] }
+          persist(next); return next
+        })
+        return put
+      }
     },
   }
 }

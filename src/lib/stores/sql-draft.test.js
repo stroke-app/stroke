@@ -34,3 +34,15 @@ describe('sql drafts per database', () => {
     expect(loadSqlTabs('conn::app')[0].sql).toBe('select 1')
   })
 })
+
+describe('renamed editor tabs', () => {
+  it('keep that they were renamed', async () => {
+    const map = new Map()
+    globalThis.localStorage = /** @type {any} */ ({ getItem: (k) => (map.has(k) ? map.get(k) : null), setItem: (k, v) => map.set(k, String(v)), removeItem: (k) => map.delete(k) })
+    const { saveSqlTabs, loadSqlTabs } = await import('./sql-draft.js')
+    saveSqlTabs('c', [{ title: 'Approvals report', sql: 'select 1', savedQueryId: null, active: true, renamed: true }, { title: 'Query Editor', sql: '', savedQueryId: null, active: false }])
+    const tabs = loadSqlTabs('c')
+    expect(tabs[0].renamed).toBe(true)
+    expect(tabs[1].renamed).toBeUndefined()
+  })
+})

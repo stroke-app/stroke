@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 
 // The store mirrors every change to disk through the backend; record those
 // writes instead of calling Tauri.
@@ -330,5 +330,63 @@ describe('workspace filing on save', () => {
     upsertConnection({ id: 'b', type: 'postgres', name: 'b' }, { exact: true })
     const [a, b] = loadSavedConnections()
     expect([a.workspaceId, a.color, b.workspaceId]).toEqual([undefined, undefined, undefined])
+  })
+})
+
+// Undo over confirm: a delete from the UI hides the row at once, but holds the
+// purge of its saved work until the undo window closes.
+describe('undoable delete', () => {
+  beforeEach(() => {
+    installLocalStorage()
+    vi.resetModules()
+    vi.useFakeTimers()
+  })
+  afterEach(() => vi.useRealTimers())
+
+  const conn = { id: 'u', type: 'postgres', name: 'prod', host: 'db', workspaceId: 'w' }
+
+  it('brings the row and its saved work back inside the window', async () => {
+    const store = await import('./connections.js')
+    store.upsertConnection(conn)
+    localStorage.setItem('stroke:saved-charts:u', '[1]')
+    store.removeConnection('u', { undoable: true })
+    expect(store.loadSavedConnections().map((c) => c.id)).toEqual([])
+    vi.advanceTimersByTime(store.UNDO_REMOVE_MS - 1)
+    expect(store.restoreConnection('u')).toBe(true)
+    expect(store.loadSavedConnections().map((c) => c.id)).toEqual(['u'])
+    expect(localStorage.getItem('stroke:saved-charts:u')).toBe('[1]')
+    // Undone means really back: a later write does not treat it as deleted.
+    store.upsertConnection({ ...conn, name: 'prod 2' })
+    expect(store.loadSavedConnections()[0].name).toBe('prod 2')
+  })
+
+  it('purges once the window closes, and Undo then does nothing', async () => {
+    const store = await import('./connections.js')
+    store.upsertConnection(conn)
+    localStorage.setItem('stroke:saved-charts:u', '[1]')
+    store.removeConnection('u', { undoable: true })
+    expect(localStorage.getItem('stroke:saved-charts:u')).toBe('[1]')
+    vi.advanceTimersByTime(store.UNDO_REMOVE_MS)
+    expect(localStorage.getItem('stroke:saved-charts:u')).toBeNull()
+    expect(store.restoreConnection('u')).toBe(false)
+    expect(store.loadSavedConnections()).toEqual([])
+  })
+
+  it('flushes an open window at once', async () => {
+    const store = await import('./connections.js')
+    store.upsertConnection(conn)
+    localStorage.setItem('stroke:saved-charts:u', '[1]')
+    store.removeConnection('u', { undoable: true })
+    store.flushPendingRemovals()
+    expect(localStorage.getItem('stroke:saved-charts:u')).toBeNull()
+  })
+
+  it('purges at once when not undoable (a delete from sync)', async () => {
+    const store = await import('./connections.js')
+    store.upsertConnection(conn)
+    localStorage.setItem('stroke:saved-charts:u', '[1]')
+    store.removeConnection('u')
+    expect(localStorage.getItem('stroke:saved-charts:u')).toBeNull()
+    expect(store.restoreConnection('u')).toBe(false)
   })
 })

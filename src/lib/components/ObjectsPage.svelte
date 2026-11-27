@@ -1,5 +1,7 @@
 <script>
   import { comboTitle } from '$lib/shortcuts.js'
+  import SkeletonRows from './SkeletonRows.svelte'
+  import EmptyState from './EmptyState.svelte'
   import { executeSql } from '$lib/api.js'
   import { cn } from '$lib/utils.js'
   import Boxes from '@lucide/svelte/icons/boxes'
@@ -45,6 +47,13 @@
 
   /** @type {SubTab} */
   let activeSub = $state('tables')
+  /** What each list would hold, for its empty state. */
+  const EMPTY_HINT = /** @type {Record<string, string>} */ ({
+    tables: 'Tables created in this database show up here.',
+    views: 'Views created with CREATE VIEW show up here.',
+    functions: 'Functions and procedures defined in this database show up here.',
+    triggers: 'Triggers attached to its tables show up here.',
+  })
 
   // One reactive slot per sub-tab. `data === null` means "not loaded yet".
   let slots = $state(
@@ -369,6 +378,22 @@
   })
   const totalCount = $derived(slots[activeSub].data?.length ?? 0)
   const emptyIcon = $derived(TABS.find((t) => t.id === activeSub)?.icon ?? Boxes)
+
+  /** The column aliases this page writes into its own queries, as words. */
+  const HEADER_LABELS = /** @type {Record<string, string>} */ ({
+    estimated_row: 'Rows (est.)',
+    total_size: 'Total size',
+    data_size: 'Data size',
+    index_size: 'Index size',
+    column_count: 'Columns',
+    index_count: 'Indexes',
+  })
+  /** @param {string} col */
+  function headerLabel(col) {
+    if (HEADER_LABELS[col]) return HEADER_LABELS[col]
+    const words = col.replace(/_/g, ' ')
+    return words.charAt(0).toUpperCase() + words.slice(1)
+  }
 </script>
 
 <svelte:window
@@ -411,7 +436,9 @@
     </button>
   </div>
 
-  <!-- Count strip + search -->
+  <!-- Count strip + search. Not over an empty list: "0 triggers" above
+       "No triggers yet" said it twice, and there is nothing to search. -->
+  {#if !(currentSupported && !isLoading && !slots[activeSub].error && totalCount === 0)}
   <div class="flex items-center justify-between gap-3 border-b border-border/40 px-3 py-2">
     <span class="shrink-0 font-mono text-ui-xs text-muted-foreground">
       {#if !currentSupported}
@@ -448,7 +475,7 @@
         {#if objQuery}
           <button
             type="button"
-            class="absolute right-1 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="hit-area absolute right-1 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             aria-label="Clear search"
             onclick={() => (objQuery = '')}
           >
@@ -458,20 +485,14 @@
       </div>
     {/if}
   </div>
+  {/if}
 
   <!-- Content -->
   <div class="app-scroll min-h-0 flex-1 overflow-auto [will-change:transform]">
     {#if !currentSupported}
-      <div class="flex h-full flex-col items-center justify-center gap-3 py-20 text-center">
-        <Boxes class="size-10 shrink-0 text-muted-foreground" />
-        <p class="font-mono text-ui text-muted-foreground">
-          {TABS.find((t) => t.id === activeSub)?.label} overview isn't available for {engineLabel} yet
-        </p>
-      </div>
+      <EmptyState class="h-full justify-center py-20" icon={Boxes} title={`No ${activeSub} overview for ${engineLabel} yet`} description="Browse them in the sidebar, or query the catalog from the SQL editor." />
     {:else if isLoading}
-      <div class="loading-reveal flex items-center justify-center gap-2 py-16 text-muted-foreground">
-        <RefreshCw class="size-4 shrink-0 animate-spin" /><span class="font-mono text-ui-sm">Loading…</span>
-      </div>
+      <SkeletonRows cols={[8, 40, 20, 20, 25, 15]} />
     {:else if slots[activeSub].error}
       <div class="px-4 py-8 text-center">
         <p class="font-mono text-ui-xs text-destructive">{slots[activeSub].error}</p>
@@ -480,25 +501,27 @@
           class="mt-2 font-mono text-ui-xs text-muted-foreground underline">Retry</button
         >
       </div>
+    {:else if rows.length === 0 && objQuery.trim()}
+      <p class="px-4 py-10 text-center text-ui-sm text-muted-foreground">No {activeSub} match <span class="text-foreground">{objQuery.trim()}</span></p>
     {:else if rows.length === 0}
-      {@const EmptyIcon = emptyIcon}
-      <div class="flex h-full flex-col items-center justify-center gap-3 py-20 text-center">
-        <EmptyIcon class="size-10 text-muted-foreground" />
-        <p class="font-mono text-ui text-muted-foreground">No {activeSub} found</p>
-      </div>
+      <!-- The strip above already says 0; this says what would be here. -->
+      <EmptyState class="h-full justify-center py-16" icon={emptyIcon} title={`No ${activeSub} yet`} description={EMPTY_HINT[activeSub]} />
     {:else}
       <table class="obj-table w-full text-ui-xs">
         <colgroup>
           <col style="width:3rem" />
           {#each columns as col (col)}
-            <col style={col === 'comment' || col === 'definition' || col === 'returns' ? '' : 'width:12rem'} />
+            <!-- Name a little wider than the rest: at 12rem it cut function names
+                 such as gin_extract_query_trgm short. A flexible width collapsed
+                 to nothing on the Tables tab, which is wider than the page. -->
+            <col style={col === 'name' ? 'width:16rem' : col === 'comment' || col === 'definition' || col === 'returns' ? '' : col === 'schema' || col === 'kind' ? 'width:9rem' : 'width:12rem'} />
           {/each}
         </colgroup>
         <thead class="studio-chrome sticky top-0 z-10 bg-panel text-left">
           <tr class="border-b border-border/50">
             <th class="px-3 py-2 font-mono font-normal text-muted-foreground">#</th>
             {#each columns as col (col)}
-              <th class="whitespace-nowrap px-3 py-2 font-mono font-normal text-muted-foreground">{col}</th>
+              <th class="whitespace-nowrap px-3 py-2 font-normal text-muted-foreground">{headerLabel(col)}</th>
             {/each}
           </tr>
         </thead>
@@ -526,6 +549,7 @@
                     : 'text-muted-foreground',
                   )}
                   title={col === 'name' && openable ? `Open ${fmt(col, row[col])}` : fmt(col, row[col])}
+                  data-tip-overflow={col === 'name' && openable ? undefined : true}
                 >
                   {#if col === 'name' && openable}
                     <!-- The row takes the click for the pointer; this button is

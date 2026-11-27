@@ -6,6 +6,7 @@
   // `storage` event); this window only switches dashboards, refreshes and goes
   // full screen.
   import { onMount, untrack } from 'svelte'
+  import EmptyState from './EmptyState.svelte'
   import EChartPanel from './EChartPanel.svelte'
   import WindowControls from './WindowControls.svelte'
   import FieldSelect from './FieldSelect.svelte'
@@ -258,28 +259,25 @@
 
   <main class={cn('app-scroll min-h-0 flex-1 overflow-y-auto', width < 720 ? 'p-4' : 'p-6 lg:p-8')}>
     {#if ready && !dash}
-      <div class="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <span class="flex size-10 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"><LayoutGrid class="size-5 shrink-0" /></span>
-        <div class="flex flex-col gap-1">
-          <p class="text-ui-sm font-medium">This dashboard isn't here anymore</p>
-          <p class="text-ui-xs text-muted-foreground">It was deleted, or it belongs to another connection.</p>
-        </div>
+      <EmptyState
+        class="h-full justify-center"
+        icon={LayoutGrid}
+        title="This dashboard isn't here anymore"
+        description="It was deleted, or it belongs to another connection."
+      >
         {#if dashOptions.length}
-          <div class="mt-2 flex max-w-md flex-wrap justify-center gap-2">
-            {#each dashOptions as o (o.value)}
-              <button type="button" class="h-8 rounded-md border border-border/60 px-3 text-ui-sm transition-colors hover:bg-muted/60" onclick={() => { currentId = o.value; live = {} }}>{o.label}</button>
-            {/each}
-          </div>
+          {#each dashOptions as o (o.value)}
+            <button type="button" class="h-8 rounded-md border border-border/60 px-3 text-ui-sm transition-colors hover:bg-muted/60" onclick={() => { currentId = o.value; live = {} }}>{o.label}</button>
+          {/each}
         {/if}
-      </div>
+      </EmptyState>
     {:else if dash && dash.items.length === 0}
-      <div class="flex h-full flex-col items-center justify-center gap-3 text-center">
-        <span class="flex size-10 items-center justify-center rounded-lg bg-muted/60 text-muted-foreground"><LayoutGrid class="size-5 shrink-0" /></span>
-        <div class="flex flex-col gap-1">
-          <p class="text-ui-sm font-medium">Nothing on {dash.name} yet</p>
-          <p class="text-ui-xs text-muted-foreground">Add charts or saved queries in the Dashboard tab. They show up here as you add them.</p>
-        </div>
-      </div>
+      <EmptyState
+        class="h-full justify-center"
+        icon={LayoutGrid}
+        title={`Nothing on ${dash.name} yet`}
+        description="Add charts or saved queries in the Dashboard tab. They show up here as you add them."
+      />
     {:else if dash}
       <div class="grid gap-4 lg:gap-5" style="grid-template-columns: repeat({cols}, minmax(0, 1fr))">
         {#each dash.items as item, i (item.id)}

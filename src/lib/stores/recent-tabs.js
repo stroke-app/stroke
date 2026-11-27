@@ -56,9 +56,18 @@ export function removeRecentTab(connectionId, schema, table) {
 /**
  * @param {string} connectionId
  */
+/**
+ * @param {string} connectionId
+ * @returns {(() => void) | null} puts the list back, for an Undo
+ */
 export function clearRecentTabs(connectionId) {
-  if (!connectionId) return
+  if (!connectionId) return null
+  let raw = null
   try {
+    raw = localStorage.getItem(storageKey(connectionId))
     localStorage.removeItem(storageKey(connectionId))
   } catch {}
+  if (!raw) return null
+  const kept = raw
+  return () => { try { localStorage.setItem(storageKey(connectionId), kept) } catch {} }
 }

@@ -265,7 +265,10 @@ export function lintSql(text) {
       const before = body.slice(0, m.index)
       if (parenDepth(before) !== 0) continue
       // Inside a routine body the statements before it end in their own `;`.
-      if (/(\(|,|;|\b(union|intersect|except|all|as|in|exists|begin|then|else|do|loop|repeat))\s*$/i.test(before)) continue
+      // Tested on the code, not a trailing comment: "-- all" or "-- as in"
+      // read as UNION ALL and hid the warning.
+      const code = before.replace(/(\s|--[^\n]*)+$/, '')
+      if (/(\(|,|;|\b(union|intersect|except|all|as|in|exists|begin|then|else|do|loop|repeat))\s*$/i.test(code)) continue
       const at = stmt.start + m.index + m[0].length - m[1].length
       // After the last word of the statement before the blank line.
       const prevEnd = stmt.start + before.replace(/(\s|--[^\n]*)+$/, '').length

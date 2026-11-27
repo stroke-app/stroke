@@ -558,7 +558,7 @@
           {/if}
           {#if !upList.length && !downList.length}<span class="text-muted-foreground">No foreign keys either way</span>{/if}
         </div>
-        <button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-foreground px-2.5 text-ui-xs font-medium text-background hover:opacity-90" onclick={() => onopen(selected)}>
+        <button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md bg-primary px-2.5 text-ui-xs font-medium text-primary-foreground hover:bg-primary/90 active:bg-primary/80" onclick={() => onopen(selected)}>
           <ExternalLink class="size-3.5 shrink-0" /> Open table
         </button>
         <button type="button" class="inline-flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Clear selection" onclick={() => (selected = null)}>

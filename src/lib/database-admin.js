@@ -250,7 +250,7 @@ WHERE s.SCHEMA_NAME = ${lit(name)}`
        d.datctype,
        d.datconnlimit,
        d.datallowconn,
-       pg_size_pretty(pg_database_size(d.datname)) AS size,
+       pg_database_size(d.datname) AS size,
        (SELECT count(*) FROM pg_stat_activity a WHERE a.datname = d.datname) AS sessions,
        shobj_description(d.oid, 'pg_database') AS comment
 FROM pg_database d
@@ -321,7 +321,9 @@ export function databaseInfoRows(kind, result) {
     { label: 'Character type', value: str(row[4]) },
     { label: 'Connection limit', value: Number(row[5]) === -1 ? 'Unlimited' : str(row[5]) },
     { label: 'Accepts connections', value: row[6] === false || row[6] === 'false' || row[6] === 0 ? 'No' : 'Yes' },
-    { label: 'Size on disk', value: str(row[7]) },
+    // Bytes, formatted here as for every other engine: pg_size_pretty only
+    // moves to GB at 10 GB, so a 1.4 GB database read "1444 MB".
+    { label: 'Size on disk', value: row[7] == null ? '-' : prettyBytes(Number(row[7])) },
     { label: 'Active sessions', value: str(row[8]) },
     { label: 'Comment', value: str(row[9]) },
   ]

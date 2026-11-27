@@ -1155,6 +1155,14 @@
       if (showTypes) {
         setFont(FONT_TYPE)
         typeW = Math.min(132, ctx.measureText(String(col.dataType ?? '')).width)
+        // The name is what you read the card for: when both do not fit, the
+        // type gives way first (down to a stub), then the name. The type took
+        // its width first, and "creditCycleStartDate" read "creditCycleStartD…"
+        // beside a whole "timestamp".
+        setFont(isPk ? FONT_ROW_PK : FONT_ROW)
+        const nameW = ctx.measureText(col.name ?? '').width
+        const room = typeRight - nameX - 10
+        if (nameW + typeW > room) typeW = Math.max(Math.min(typeW, 40), room - nameW)
       }
       const nameRight = showTypes ? typeRight - typeW - 10 : typeRight
 
@@ -1169,7 +1177,7 @@
         setFont(FONT_TYPE)
         setFill(c('mfg', 0.6))
         ctx.textAlign = 'right'
-        fillClipped(String(col.dataType ?? ''), typeRight, midY, 132, 11, true)
+        fillClipped(String(col.dataType ?? ''), typeRight, midY, Math.ceil(typeW) + 1, 11, true)
       }
 
       if (hubRef) {
@@ -1259,17 +1267,36 @@
   }
 
   /**
-   * Draw monospace text clipped to a max pixel width (ellipsis by char count).
+   * Draw text clipped to a max pixel width with an ellipsis, measured in the
+   * current font. It counted characters at 0.6 of the font size, a monospace
+   * guess, and column names are set in the sans face: "creditCycleStartDate"
+   * fit with room to spare and was cut anyway. Fitted strings are cached per
+   * font and width, since the canvas redraws every card on each pan.
    * @param {string} text @param {number} x @param {number} y @param {number} maxW @param {number} size @param {boolean} [rightAlign]
    */
   function fillClipped(text, x, y, maxW, size, rightAlign = false) {
-    const charW = size * 0.6
-    const max = Math.max(1, Math.floor(maxW / charW))
-    let s = text
-    if (s.length > max) s = s.slice(0, Math.max(1, max - 1)) + '…'
+    void size; void rightAlign
+    const key = `${_font}\u0000${Math.floor(maxW)}\u0000${text}`
+    let s = _clipCache.get(key)
+    if (s === undefined) {
+      s = text
+      if (ctx.measureText(text).width > maxW) {
+        // Longest prefix that fits with the ellipsis.
+        let lo = 0, hi = text.length
+        while (lo < hi) {
+          const mid = (lo + hi + 1) >> 1
+          if (ctx.measureText(text.slice(0, mid) + '…').width <= maxW) lo = mid
+          else hi = mid - 1
+        }
+        s = text.slice(0, Math.max(1, lo)) + '…'
+      }
+      if (_clipCache.size > 20000) _clipCache.clear()
+      _clipCache.set(key, s)
+    }
     ctx.fillText(s, x, y)
-    void rightAlign
   }
+  /** @type {Map<string, string>} */
+  const _clipCache = new Map()
 
   // ── Minimap ──────────────────────────────────────────────────────────────
   const MINI_W = 168, MINI_H = 116, MINI_PAD = 8
@@ -1555,7 +1582,7 @@
       cancelAnimationFrame(themeFrame)
       themeFrame = requestAnimationFrame(refreshTheme)
     })
-    themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style'] })
+    themeObs.observe(document.documentElement, { attributes: true, attributeFilter: ['class', 'data-theme', 'style', 'data-layout'] })
     // Fit once positions are in (nodes may already be present, or arrive later).
     requestAnimationFrame(ensureFit)
     // Webfonts (Geist) load async; redraw once ready so text isn't stuck on the

@@ -47,7 +47,7 @@
   ]
 
   const KEYS = [
-    { combo: 'Mod+K', label: 'Command palette' },
+    { combo: 'Mod+K', label: 'Command menu' },
     { combo: 'Mod+P', label: 'Find a table' },
     { combo: 'Mod+B', label: 'Toggle sidebar' },
   ]
@@ -163,7 +163,7 @@
               <div class="mt-9 flex items-center gap-2">
                 <button
                   type="button"
-                  class="inline-flex h-9 items-center gap-1.5 rounded-md bg-foreground px-4 text-ui-sm font-medium text-background transition-opacity hover:opacity-90"
+                  class="inline-flex h-9 items-center gap-1.5 rounded-md bg-primary px-4 text-ui-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80"
                   onclick={next}
                 >
                   Get started

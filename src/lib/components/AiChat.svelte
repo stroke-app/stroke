@@ -1,4 +1,5 @@
 <script>
+  import { offerUndo } from '$lib/undo-toast.js'
   import { comboTitle } from '$lib/shortcuts.js'
   import { errorText } from '$lib/utils.js'
   import Share2 from '@lucide/svelte/icons/share-2'
@@ -67,6 +68,7 @@
   import { extractPlan, sqlStepLabel, groupRetries, retryLabel, planProgress, summarizeSteps, formatStepDuration } from "$lib/ai-steps.js";
   import AgentComposerChips from "$lib/components/AgentComposerChips.svelte";
   import { isReadOnly, guardWrite, readOnlyMode } from "$lib/stores/read-only.js";
+  import { withShortcut } from "$lib/stores/keybindings.js";
   import { isWriteSql, isWriteFor, stripSqlComments } from "$lib/sql-write.js";
   import {
     rowsToCsv,
@@ -158,6 +160,8 @@
     createConversation,
     updateConversation,
     deleteConversation,
+    restoreConversation,
+    clearConversations,
   } from "$lib/stores/conversations.js";
   import { generateSuggestions } from "$lib/ai-suggestions.js";
   import { formatCompactCount } from "$lib/table-list.js";
@@ -510,7 +514,7 @@
       if (req.type === "delete") {
         // Replying in another instance: the parent ends that one too.
         if (backgroundBusy.includes(req.id)) onhandoff?.(req);
-        return removeConversation(req.id);
+        return removeConversation(req.id, { undoable: true });
       }
       if (req.type === "rename") {
         const title = req.title.trim();
@@ -665,9 +669,24 @@
     errorDetailOpen = false;
   });
 
-  async function removeConversation(/** @type {string} */ id) {
+  /**
+   * @param {string} id
+   * @param {{ undoable?: boolean }} [opts] a single delete asks nothing and
+   *   offers Undo in the toast; a bulk delete has already asked
+   */
+  async function removeConversation(id, { undoable = false } = {}) {
     closeContextMenu();
-    await deleteConversation(id);
+    const gone = await deleteConversation(id);
+    if (undoable && gone) {
+      toast.message("Chat deleted", {
+        description: gone.title || "New chat",
+        duration: 8000,
+        action: {
+          label: "Undo",
+          onClick: () => void restoreConversation($state.snapshot(gone)).then(loadConvList, (err) => toast.error(`Couldn't undo: ${errorText(err)}`)),
+        },
+      });
+    }
     convList = convList.filter((c) => c.id !== id);
     if (openTabIds.includes(id)) {
       openTabIds = openTabIds.filter((t) => t !== id);
@@ -785,8 +804,6 @@
   let convAnchor = null;
   /** @type {Set<string>} */
   let selectedConvs = $state(new Set());
-  /** Two-step "Clear all": the first click arms it, the second deletes. */
-  let confirmClearAll = $state(false);
   /** @param {string} id */
   function toggleConvSelected(id) {
     const next = new Set(selectedConvs);
@@ -797,7 +814,22 @@
   function endSelecting() {
     selecting = false;
     selectedConvs = new Set();
-    confirmClearAll = false;
+  }
+  /**
+   * Every chat for this connection, at once; the toast offers Undo. It asked
+   * first (a dialog in settings, a second click in the list), which charged
+   * every clear for the rare wrong one.
+   */
+  async function clearAllWithUndo() {
+    const key = chatMatch ?? (connectionId || undefined);
+    const gone = await listConversations(key);
+    await clearConversations(key);
+    convList = [];
+    await newConversation();
+    offerUndo(`Cleared ${gone.length} ${gone.length === 1 ? "chat" : "chats"}`, "Chat history", async () => {
+      for (const c of gone) await restoreConversation(c);
+      await loadConvList();
+    });
   }
   /** @param {string[]} ids */
   async function removeConversations(ids) {
@@ -4579,20 +4611,10 @@
             >Select</button>
             <button
               type="button"
-              class={cn(
-                "rounded-md px-1.5 py-0.5 transition-colors",
-                confirmClearAll ? "bg-destructive/10 text-destructive" : "hover:bg-accent hover:text-foreground",
-              )}
-              onclick={() => {
-                if (!confirmClearAll) {
-                  confirmClearAll = true;
-                  setTimeout(() => (confirmClearAll = false), 3000);
-                  return;
-                }
-                void removeConversations(convList.map((c) => c.id));
-              }}
-              title={confirmClearAll ? "Click again to delete every chat" : "Delete every chat"}
-            >{confirmClearAll ? "Confirm" : "Clear all"}</button>
+              class="rounded-md px-1.5 py-0.5 transition-colors hover:bg-accent hover:text-foreground"
+              onclick={() => { endSelecting(); void clearAllWithUndo(); }}
+              title="Delete every chat (Undo in the notification)"
+            >Clear all</button>
           {/if}
         </div>
       {/if}
@@ -4710,7 +4732,7 @@
                   title="Delete"
                   onclick={(e) => {
                     e.stopPropagation();
-                    void removeConversation(conv.id);
+                    void removeConversation(conv.id, { undoable: true });
                   }}
                 >
                   <Trash2 class="size-3 shrink-0" />
@@ -4724,11 +4746,11 @@
         {#if convList.length === 0 && !isDraftChat}
           <button
             type="button"
-            class="mx-1 flex h-8 items-center gap-2.5 rounded-md px-2 text-ui-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
+            class="mx-1 flex h-8 min-w-0 items-center gap-2.5 rounded-md px-2 text-left text-ui-sm text-muted-foreground transition-colors hover:bg-sidebar-accent/60 hover:text-foreground"
             onclick={() => void newConversation()}
           >
             <Plus class="size-4 shrink-0" />
-            Ask about this database
+            <span class="min-w-0 truncate">Ask about your data</span>
           </button>
         {/if}
       </div>
@@ -4738,11 +4760,11 @@
              right - here, back to the data. -->
         <div class="flex h-12 shrink-0 items-center gap-1 px-3">
           {#if onopensettings}
-            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Settings" aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
+            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={withShortcut('Settings', 'settings.open')} aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-4 shrink-0" /></button>
           {/if}
           <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? "Light theme" : "Dark theme"} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? "sun" : "moon"} class="size-4 shrink-0" /></button>
           {#if onopenshortcuts}
-            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
+            <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={withShortcut('Keyboard shortcuts', 'help.shortcuts')} aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-4 shrink-0" /></button>
           {/if}
           <button type="button" class="inline-flex size-8 items-center justify-center rounded-md text-muted-foreground transition-[background-color,color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.94] focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title="Hide chats ({comboTitle('Mod+B')})" aria-label="Hide chats" onclick={toggleAiSidebar}><PanelLeft class="size-4 shrink-0" /></button>
           <button
@@ -6319,7 +6341,7 @@
             </button>
 
             <p class="text-center text-ui-3xs text-muted-foreground">
-              Shared with AI sidebar · <kbd class="font-mono">{comboTitle('Mod+Shift+E')}</kbd>
+              Shared with the AI panel · <kbd class="font-mono">{comboTitle('Mod+Shift+E')}</kbd>
             </p>
           </div>
 
@@ -6462,23 +6484,12 @@
             <div class="flex flex-col gap-1.5">
               <p class="text-ui-xs font-medium text-foreground">Chat history</p>
               <p class="text-ui-3xs text-muted-foreground">
-                Permanently delete all saved conversations for this connection.
+                Delete all saved conversations for this connection. Undo brings them back for a few seconds.
               </p>
               <button
                 type="button"
                 class="mt-1 flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-destructive/40 bg-destructive/8 text-ui-xs text-destructive transition-colors hover:bg-destructive/15"
-                onclick={async () => {
-                  if (
-                    !confirm("Delete all conversations? This cannot be undone.")
-                  )
-                    return;
-                  const { clearConversations } = await import(
-                    "$lib/stores/conversations.js"
-                  );
-                  await clearConversations(chatMatch ?? (connectionId || undefined));
-                  convList = [];
-                  await newConversation();
-                }}
+                onclick={() => void clearAllWithUndo()}
               >
                 <Trash2 class="size-3.5 shrink-0" />
                 Clear all history
@@ -6550,7 +6561,7 @@
                   <textarea
                     id="skill-content"
                     class="min-h-[90px] w-full resize-y rounded-lg border-2 border-border bg-background px-2.5 py-2 font-mono text-ui-xs leading-relaxed text-foreground outline-none focus:border-ring/55 focus:ring-2 focus:ring-ring/15 placeholder:text-muted-foreground"
-                    placeholder="# My Skill&#10;&#10;Guidelines in Markdown..."
+                    placeholder="# My Skill&#10;&#10;Guidelines in Markdown…"
                     bind:value={newSkillContent}
                   ></textarea>
                 </div>
@@ -6771,7 +6782,7 @@
       <button
         type="button"
         class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-ui-sm text-destructive hover:bg-destructive/10"
-        onclick={() => void removeConversation(menu.id)}
+        onclick={() => void removeConversation(menu.id, { undoable: true })}
       >
         <Trash2 class="size-3 shrink-0" /> Delete
       </button>
@@ -6918,7 +6929,7 @@
         >
           <ZoomIn class="size-3 shrink-0" />
         </button>
-        <div class="mx-1 h-4 w-px bg-border"></div>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
         <!-- Export -->
         <button
           type="button"
@@ -6936,7 +6947,7 @@
         >
           <ArrowDownToLine class="size-3 shrink-0" />PNG
         </button>
-        <div class="mx-1 h-4 w-px bg-border"></div>
+        <span class="w-2 shrink-0" aria-hidden="true"></span>
         <!-- Close -->
         <button
           type="button"

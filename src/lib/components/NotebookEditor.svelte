@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   /**
    * SQL notebook: prose and queries in cells, saved as a .sqlnb file on disk.
    *
@@ -10,7 +11,7 @@
    * - {{name}} variables, filled from the bar under the toolbar before a run.
    * - Autosave once the notebook has a file; a recent list to come back to.
    */
-  import { onDestroy, tick } from 'svelte'
+  import { onDestroy, onMount, tick } from 'svelte'
   import { Button } from '$lib/components/ui/button/index.js'
   import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js'
   import { comboTitle } from '$lib/shortcuts.js'
@@ -167,6 +168,29 @@
       target?.focus()
     })
   }
+
+  // A new notebook is one empty SQL cell: put the caret in it, as a new SQL
+  // editor does, instead of leaving focus on nothing. Its editor mounts a few
+  // frames after the page, so look for it until it is there.
+  onMount(() => {
+    const only = notebook.cells.length === 1 ? notebook.cells[0] : null
+    if (!only || only.type !== 'sql' || only.content.trim()) return
+    let frames = 0
+    const tryFocus = () => {
+      const target = /** @type {HTMLElement | null} */ (document.getElementById(`nb-cell-${only.id}`)?.querySelector('.cm-content'))
+      // Opened from the command menu, the menu hands focus back to whatever had
+      // it as it closes: wait for that, then take it unless a text field has it.
+      const menuOpen = !!document.querySelector('[role=dialog]')
+      if (target && !menuOpen) {
+        const ae = /** @type {HTMLElement | null} */ (document.activeElement)
+        const typing = !!ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))
+        if (!typing) target.focus()
+        return
+      }
+      if (++frames < 60) requestAnimationFrame(tryFocus)
+    }
+    requestAnimationFrame(tryFocus)
+  })
 
   async function runAll() {
     for (const cell of notebook.cells) {
@@ -377,7 +401,7 @@
     <input
       value={notebook.title}
       oninput={onTitleInput}
-      class="min-w-0 flex-1 bg-transparent text-ui-sm font-medium text-foreground outline-none placeholder:text-muted-foreground"
+      class="no-field-frame -mx-1.5 h-7 min-w-0 flex-1 rounded-md bg-transparent px-1.5 text-ui-sm font-medium text-foreground outline-none transition-colors placeholder:text-muted-foreground hover:bg-muted/40 focus:bg-muted/50"
       placeholder="Untitled notebook"
       spellcheck="false"
       aria-label="Notebook title"
@@ -397,7 +421,7 @@
     <div class="ml-2 flex shrink-0 items-center gap-0.5">
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={toolBtn}><FolderOpen class="size-3.5 shrink-0" />Open<ChevronDown class="size-3 shrink-0 opacity-60" /></DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="w-72">
+        <DropdownMenu.Content align="end" class="min-w-72">
           <DropdownMenu.Item onSelect={() => void openFile()}>
             <FolderOpen class="size-3.5 shrink-0 text-muted-foreground" />Open a file…
             <span class="ml-auto text-ui-3xs text-muted-foreground">.sqlnb .ipynb .md .sql</span>
@@ -422,7 +446,7 @@
 
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={toolBtn}><Download class="size-3.5 shrink-0" />Export<ChevronDown class="size-3 shrink-0 opacity-60" /></DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="w-60">
+        <DropdownMenu.Content align="end" class="min-w-60">
           <DropdownMenu.Item onSelect={() => void exportAs('html')}>HTML report<span class="ml-auto text-ui-3xs text-muted-foreground">with results</span></DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => void exportAs('md')}>Markdown<span class="ml-auto text-ui-3xs text-muted-foreground">with results</span></DropdownMenu.Item>
           <DropdownMenu.Item onSelect={() => void exportAs('ipynb')}>Jupyter notebook<span class="ml-auto text-ui-3xs text-muted-foreground">%%sql</span></DropdownMenu.Item>
@@ -432,9 +456,9 @@
 
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={toolBtn} title={`Save (${comboTitle('Mod+S')})`}><Save class="size-3.5 shrink-0" />Save<ChevronDown class="size-3 shrink-0 opacity-60" /></DropdownMenu.Trigger>
-        <DropdownMenu.Content align="end" class="w-56">
-          <DropdownMenu.Item onSelect={() => void save()}>Save<span class="ml-auto text-ui-3xs text-muted-foreground">{comboTitle('Mod+S')}</span></DropdownMenu.Item>
-          <DropdownMenu.Item onSelect={() => void saveAs()}>Save as…<span class="ml-auto text-ui-3xs text-muted-foreground">{comboTitle('Mod+Shift+S')}</span></DropdownMenu.Item>
+        <DropdownMenu.Content align="end" class="min-w-56">
+          <DropdownMenu.Item onSelect={() => void save()}>Save<DropdownMenu.Shortcut combo="Mod+S" /></DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => void saveAs()}>Save as…<DropdownMenu.Shortcut combo="Mod+Shift+S" /></DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.CheckboxItem checked={autosave} onCheckedChange={toggleAutosave}>Autosave to the file</DropdownMenu.CheckboxItem>
         </DropdownMenu.Content>
@@ -453,10 +477,10 @@
       <span class="flex items-center gap-1 text-ui-3xs font-medium text-muted-foreground"><Braces class="size-3 shrink-0" />Variables</span>
       {#each vars as v, i (i)}
         <span class="flex h-6 items-center gap-1 rounded-md border border-border/60 bg-background pr-0.5 pl-1.5 font-mono text-ui-2xs">
-          <input class="w-20 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.name} placeholder="name" aria-label="Variable name" data-var={i} data-part="name" oninput={(e) => setVariable(i, { name: /** @type {HTMLInputElement} */ (e.target).value.replace(/[^\w]/g, '') })} />
+          <input class="no-focus-ring w-20 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.name} placeholder="name" aria-label="Variable name" data-var={i} data-part="name" oninput={(e) => setVariable(i, { name: /** @type {HTMLInputElement} */ (e.target).value.replace(/[^\w]/g, '') })} />
           <span class="text-muted-foreground">=</span>
-          <input class="w-28 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.value} placeholder="value" aria-label="Value of {v.name || 'variable'}" data-var={i} data-part="value" oninput={(e) => setVariable(i, { value: /** @type {HTMLInputElement} */ (e.target).value })} />
-          <button type="button" class="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Remove variable" onclick={() => removeVariable(i)}><X class="size-3 shrink-0" /></button>
+          <input class="no-focus-ring w-28 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.value} placeholder="value" aria-label="Value of {v.name || 'variable'}" data-var={i} data-part="value" oninput={(e) => setVariable(i, { value: /** @type {HTMLInputElement} */ (e.target).value })} />
+          <button type="button" class="hit-area inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Remove variable" onclick={() => removeVariable(i)}><X class="size-3 shrink-0" /></button>
         </span>
       {/each}
       {#each undefinedVars as n (n)}
@@ -530,9 +554,14 @@
           <button type="button" onclick={() => { const c = addCell(notebook.cells.length - 1, 'sql'); focusCell(c.id) }} class="flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-3 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"><Plus class="size-3.5 shrink-0" />SQL</button>
           <button type="button" onclick={() => { const c = addCell(notebook.cells.length - 1, 'markdown'); focusCell(c.id) }} class="flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-3 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"><Plus class="size-3.5 shrink-0" />Text</button>
         </div>
-        <p class="pb-16 text-center text-ui-3xs text-muted-foreground">
-          {comboTitle('Mod+Enter')} run · {comboTitle('Shift+Enter')} run and next · {comboTitle('Mod+Shift+Enter')} run all · write <span class="font-mono">{'{{name}}'}</span> in a query for a variable
-        </p>
+        <!-- Keycaps, as the SQL editor's hints are: a 10px run of "Ctrl+Enter run ·
+             Shift+Enter run and next ·" read as one sentence of key names. -->
+        <div class="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 pb-16 text-ui-xs text-muted-foreground">
+          <span class="inline-flex items-center gap-1.5"><Kbd combo="Mod+Enter" /> runs a cell</span>
+          <span class="inline-flex items-center gap-1.5"><Kbd combo="Shift+Enter" /> runs it and moves on</span>
+          <span class="inline-flex items-center gap-1.5"><Kbd combo="Mod+Shift+Enter" /> runs them all</span>
+          <span><span class="font-mono text-foreground">{'{{name}}'}</span> in a query asks for a value</span>
+        </div>
       </div>
     {/if}
   </div>

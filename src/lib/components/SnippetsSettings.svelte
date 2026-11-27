@@ -8,7 +8,6 @@
    * ones are listed read-only below; Duplicate makes an editable copy.
    */
   import { tick } from 'svelte'
-  import Search from '@lucide/svelte/icons/search'
   import Plus from '@lucide/svelte/icons/plus'
   import Copy from '@lucide/svelte/icons/copy'
   import Pencil from '@lucide/svelte/icons/pencil'
@@ -17,6 +16,8 @@
   import Upload from '@lucide/svelte/icons/upload'
   import ChevronRight from '@lucide/svelte/icons/chevron-right'
   import { Button } from '$lib/components/ui/button/index.js'
+  import SearchField from './SearchField.svelte'
+  import SelectMenu from './SelectMenu.svelte'
   import CodeEditor from './CodeEditor.svelte'
   import { toast } from '$lib/components/ui/sonner/toast.svelte.js'
   import { cn } from '$lib/utils.js'
@@ -111,7 +112,9 @@
   /** @param {UserSnippet} s */
   function remove(s) {
     removeSnippet(s.id)
-    toast.success(`Deleted "${s.name}"`, {
+    toast.message('Snippet deleted', {
+      description: s.name,
+      duration: 8000,
       action: { label: 'Undo', onClick: () => saveSnippet(s) },
     })
   }
@@ -194,14 +197,17 @@
   </p>
 
   <div class="flex flex-wrap items-center gap-2">
-    <label class="relative min-w-40 flex-1">
-      <Search class="pointer-events-none absolute top-1/2 left-2.5 size-3.5 -translate-y-1/2 text-muted-foreground" />
-      <input class={cn(field, 'ps-8')} placeholder="Search snippets" aria-label="Search snippets" bind:value={query} />
-    </label>
-    <select class={cn(field, 'w-auto min-w-36 pe-7')} aria-label="Engine" bind:value={scopeFilter}>
-      <option value="">Every engine</option>
-      {#each SNIPPET_SCOPES as s (s.id)}<option value={s.id}>{s.label}</option>{/each}
-    </select>
+    <!-- rank null: Settings' own search already answers `/`. -->
+    <SearchField bind:value={query} placeholder="Search snippets" label="Search snippets" rank={null} class="min-w-40 flex-1" />
+    <SelectMenu
+      ariaLabel="Engine"
+      triggerClass="h-8 w-40 shrink-0"
+      contentClass="w-[var(--bits-popover-anchor-width)] min-w-[10rem]"
+      align="end"
+      value={scopeFilter}
+      onValueChange={(v) => (scopeFilter = v)}
+      items={[{ value: '', label: 'Every engine' }, ...SNIPPET_SCOPES.map((s) => ({ value: s.id, label: s.label }))]}
+    />
   </div>
 
   {#if draft}

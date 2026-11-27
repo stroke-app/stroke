@@ -1,4 +1,6 @@
 <script>
+  import { lintSql, splitSqlStatements } from '$lib/sql-statements.js'
+  import { isPlainRead } from '$lib/sql-write.js'
   /**
    * A failed statement, the way an editor's problems view reports one: what
    * went wrong in plain words, the database's own message and where, the
@@ -36,11 +38,25 @@
      * @type {((name: string, replacement: string) => void) | undefined}
      */
     onsuggest = undefined,
+    /** Add the `;` the linter says is missing, then run again. @type {(() => void) | undefined} */
+    onaddsemicolon = undefined,
     /** Extra guidance under the message (timeouts). @type {import('svelte').Snippet | undefined} */
     children = undefined,
   } = $props()
 
   const message = $derived(cleanErrorMessage(error))
+  // Two statements with no `;` between them ran as one: the database says
+  // "syntax error near select" and the linter already knows the fix.
+  const semicolonFix = $derived.by(() => {
+    if (!onaddsemicolon || !sql) return null
+    const d = lintSql(sql).find((x) => x.message.startsWith("Missing ';' - this starts a new statement") && x.fix)
+    if (!d?.fix) return null
+    // Only promise a run when every statement it splits into just reads:
+    // a write waits for Run, as it does after "Did you mean".
+    const fixed = sql.slice(0, d.fix.from) + d.fix.insert + sql.slice(d.fix.to)
+    const reads = splitSqlStatements(fixed).every((st) => isPlainRead(fixed.slice(st.start, st.end)))
+    return { label: reads ? 'Add ; and run' : 'Add ;' }
+  })
   const explained = $derived(explainSqlError(message))
   const span = $derived(sql ? errorSpan(sql, position) : null)
   const where = $derived(sql && position ? lineColumn(sql, /** @type {{ from: number }} */ (span).from) : null)
@@ -167,6 +183,13 @@
           extensions={errorMark}
           ariaLabel="Failed statement"
         />
+      </div>
+    {/if}
+
+    {#if semicolonFix}
+      <div class="flex flex-wrap items-center gap-1.5">
+        <span class="me-0.5 text-ui-xs text-muted-foreground">Two statements ran as one: a <span class="font-mono text-foreground">;</span> is missing between them.</span>
+        <Button type="button" variant="outline" size="sm" onclick={onaddsemicolon}>{semicolonFix.label}</Button>
       </div>
     {/if}
 

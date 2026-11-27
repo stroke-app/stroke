@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   import FieldSelect from './FieldSelect.svelte';
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
@@ -523,11 +524,11 @@
             <div class={cn("group/field grid grid-cols-[minmax(8rem,13rem)_minmax(0,1fr)_3rem] items-start gap-x-4 rounded-md px-2.5 py-1 transition-colors [contain-intrinsic-size:auto_30px] [content-visibility:auto] hover:bg-muted/25", editing && "bg-muted/30")}>
               <!-- One line: name, key, and the type as a muted suffix. -->
               <dt class="flex min-w-0 items-baseline gap-1.5 py-1" title="{field.name} · {field.dataType || 'unknown'}{field.nullable ? '' : ' · not null'}">
-                <span class="min-w-0 truncate font-mono text-ui-xs text-foreground">{field.name}</span>
+                <span class="max-w-full shrink-0 truncate font-mono text-ui-xs text-foreground">{field.name}</span>
                 {#if field.isPk}
                   <Icon name="key-round" class="size-3 shrink-0 self-center text-warning" aria-label="Primary key" />
                 {/if}
-                <span class="ml-auto min-w-0 shrink truncate text-ui-2xs text-muted-foreground">{field.dataType}</span>
+                <span class="ml-auto min-w-0 truncate text-ui-2xs text-muted-foreground">{String(field.dataType).toLowerCase() === 'null' ? '' : field.dataType}</span>
               </dt>
 
               <dd class="relative min-w-0">
@@ -659,11 +660,11 @@
           {/if}
         </dl>
         <p class="mt-4 flex select-none flex-wrap items-center justify-center gap-x-3 gap-y-1 text-ui-xs text-muted-foreground">
-          <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">←</kbd> <kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">→</kbd> records</span>
+          <span class="inline-flex items-center gap-1.5"><Kbd combo="ArrowLeft" /><Kbd combo="ArrowRight" /> records</span>
           {#if onsave && !readonly}
             <span>Click a value to edit</span>
-            <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">Enter</kbd> saves</span>
-            <span><kbd class="rounded-sm border border-border/60 px-1 font-sans text-ui-2xs">Esc</kbd> reverts</span>
+            <span class="inline-flex items-center gap-1.5"><Kbd combo="Enter" /> saves</span>
+            <span class="inline-flex items-center gap-1.5"><Kbd combo="Escape" /> reverts</span>
           {/if}
         </p>
       </div>

@@ -3,6 +3,7 @@
    * Child listings that outlive the panel (switching sidebar tabs, toggling
    * the sidebar), keyed by connection + database so a reconnect draws at once.
    * @type {Map<string, { schemaData: Map<string, any>, cache: Map<string, import('$lib/sidebar-tree.js').ChildEntry> }>}
+  import { toastConnectionRemoved } from '$lib/connection-undo.js'
    */
   const places = new Map()
 
@@ -50,7 +51,6 @@
   import { appNativeScroll } from '$lib/stores/settings.js'
   import { workspaces, activeWorkspaceId, inWorkspace, colorOf } from '$lib/stores/workspaces.js'
   import { loadTreeExpanded, saveTreeExpanded, treeConnectionScope } from '$lib/stores/sidebar-tree.js'
-  import ConfirmDialog from './ConfirmDialog.svelte'
   import { smoothScroll } from '$lib/smooth-scroll.js'
   import {
     childId, ancestorIds, makeNode, filterTree, flattenTree, rowIndex,
@@ -335,15 +335,12 @@
       .sort((a, b) => Number(b.data.pinned) - Number(a.data.pinned)),
   )
 
-  // Removing deletes the connection's history and saved work, so it asks first.
-  /** @type {SavedConnection | null} */
-  let pendingRemove = $state(null)
-  let confirmRemoveOpen = $state(false)
+  // Deleting asks nothing: the row goes now and the toast offers Undo.
   /** @param {SavedConnection} c */
   function askRemove(c) {
     if (!c?.id) return
-    pendingRemove = c
-    confirmRemoveOpen = true
+    onremoveconnection(c.id)
+    toastConnectionRemoved(c)
   }
 
   /** @param {SavedConnection} c */
@@ -1398,7 +1395,7 @@
     {/if}
     <span class="flex min-w-0 flex-1 items-baseline gap-1.5">
       <span class={cn('min-w-0 shrink truncate text-ui-sm leading-4 -my-1 py-1', (n.kind === 'connection' && n.data?.live) || (n.kind === 'database' && n.data?.current) ? 'font-medium text-foreground' : '')}>
-        {#if hit}{hit[0]}<mark class="rounded-[2px] bg-primary/25 text-inherit">{hit[1]}</mark>{hit[2]}{:else}{n.label}{/if}
+        {#if hit}{hit[0]}<mark class="search-hit">{hit[1]}</mark>{hit[2]}{:else}{n.label}{/if}
       </span>
       {#if n.meta}
         <span class="min-w-0 shrink-[2] truncate text-ui-2xs text-muted-foreground">{n.meta}</span>
@@ -1436,9 +1433,7 @@
 <div class="flex min-h-0 flex-1 flex-col">
   {#if !connection && roots.length === 0}
     <div class="flex flex-col items-center gap-3 px-6 py-14 text-center">
-      <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-        <Icon name="list-tree" class="size-5 shrink-0 text-muted-foreground" />
-      </div>
+      <Icon name="list-tree" class="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} />
       <p class="max-w-[16rem] text-ui-xs font-medium text-foreground">No connections yet</p>
     </div>
   {:else}
@@ -1670,18 +1665,3 @@
   {/if}
 </div>
 
-<ConfirmDialog
-  bind:open={confirmRemoveOpen}
-  icon="trash-2"
-  title="Delete connection?"
-  description={`"${pendingRemove?.name || pendingRemove?.database || pendingRemove?.host || pendingRemove?.filePath || 'this connection'}" will be removed from your saved connections.`}
-  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
-  confirmLabel="Delete"
-  confirmIcon="trash-2"
-  variant="destructive"
-  onconfirm={() => {
-    if (pendingRemove?.id) onremoveconnection(pendingRemove.id)
-    pendingRemove = null
-  }}
-  oncancel={() => (pendingRemove = null)}
-/>

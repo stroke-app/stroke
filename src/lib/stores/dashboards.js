@@ -1,5 +1,5 @@
 import { notifyLocalChange } from '$lib/sync/changes.js'
-import { writable } from 'svelte/store'
+import { get, writable } from 'svelte/store'
 import { debounce } from '$lib/utils.js'
 
 /**
@@ -134,10 +134,26 @@ export function createDashboard(name) {
   return dash
 }
 
-/** @param {string} id */
+/**
+ * @param {string} id
+ * @returns {(() => boolean) | null} puts it back where it was, for an Undo; false
+ *   once the dashboards on screen belong to another connection
+ */
 export function deleteDashboard(id) {
+  const list = get(dashboards)
+  const index = list.findIndex(d => d.id === id)
+  if (index < 0) return null
+  const dash = list[index]
+  const wasActive = get(activeDashboardId) === id
+  const conn = _connId
   dashboards.update(ds => ds.filter(d => d.id !== id))
   activeDashboardId.update(cur => cur === id ? null : cur)
+  return () => {
+    if (_connId !== conn || get(dashboards).some(d => d.id === id)) return false
+    dashboards.update(ds => [...ds.slice(0, index), dash, ...ds.slice(index)])
+    if (wasActive) activeDashboardId.set(id)
+    return true
+  }
 }
 
 /** @param {string} id @param {Partial<Dashboard>} patch */
@@ -181,13 +197,29 @@ export function updateItem(dashId, itemId, patch) {
   ))
 }
 
-/** @param {string} dashId @param {string} itemId */
+/**
+ * @param {string} dashId @param {string} itemId
+ * @returns {(() => boolean) | null} puts the card back in its place, for an Undo
+ */
 export function removeChartFromDashboard(dashId, itemId) {
+  const dash = get(dashboards).find(d => d.id === dashId)
+  const index = dash?.items.findIndex(i => i.id === itemId) ?? -1
+  if (!dash || index < 0) return null
+  const item = dash.items[index]
+  const conn = _connId
   dashboards.update(ds => ds.map(d =>
     d.id === dashId
       ? { ...d, items: d.items.filter(i => i.id !== itemId) }
       : d
   ))
+  return () => {
+    const now = get(dashboards).find(d => d.id === dashId)
+    if (_connId !== conn || !now || now.items.some(i => i.id === itemId)) return false
+    dashboards.update(ds => ds.map(d =>
+      d.id === dashId ? { ...d, items: [...d.items.slice(0, index), item, ...d.items.slice(index)] } : d
+    ))
+    return true
+  }
 }
 
 /** @param {string} dashId @param {string} itemId @param {number} span */

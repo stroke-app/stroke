@@ -59,5 +59,6 @@ export function sqlTabsToStore(tabs, activeTabId, liveText) {
       sql: t.id === activeTabId ? liveText : String(t.state?.sqlText ?? ''),
       savedQueryId: t.savedQueryId ?? null,
       active: t.id === activeTabId,
+      ...(t.renamed ? { renamed: true } : {}),
     }))
 }

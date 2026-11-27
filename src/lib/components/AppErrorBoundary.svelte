@@ -54,7 +54,7 @@
         <button
           type="button"
           onclick={reset}
-          class="inline-flex h-8 items-center gap-1.5 rounded-md bg-foreground px-3 text-ui-xs font-medium text-background transition-opacity hover:opacity-85"
+          class="inline-flex h-8 items-center gap-1.5 rounded-md bg-primary px-3 text-ui-xs font-medium text-primary-foreground transition-colors hover:bg-primary/90 active:bg-primary/80"
         >
           <RotateCcw class="size-3.5 shrink-0" /> Try to recover
         </button>

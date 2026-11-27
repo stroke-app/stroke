@@ -1,5 +1,6 @@
 <script>
   import { errorText } from '$lib/utils.js'
+  import { toastConnectionRemoved } from "$lib/connection-undo.js";
   import { tick, untrack, onDestroy } from "svelte";
   import Icon from "./Icon.svelte";
   import CloudflareLogin from "./CloudflareLogin.svelte";
@@ -104,7 +105,6 @@
   import { PROVIDERS, providerBuildConnection, providerWarm, providerToSaved, AUTH_FAILURE } from "$lib/providers.js";
   import { appBoringConnectionBar } from "$lib/stores/settings.js";
   import { providerOf, engineLabel, engineId } from "$lib/connection-provider.js";
-  import ConfirmDialog from "./ConfirmDialog.svelte";
   import { engineTint } from "$lib/engine-tint.js";
   import { Textarea } from "$lib/components/ui/textarea/index.js";
   import { ODBC_PRESETS, GENERIC_ODBC, odbcPreset, presetOfDriverId, pickDriver, presetConnectionString } from "$lib/odbc-presets.js";
@@ -122,6 +122,8 @@
     initialEngine = $bindable(""),
     /** A saved connection to open straight into its form (sidebar Edit…). */
     initialEditId = $bindable(""),
+    /** Open on the New connection form (the sidebar's + on Connections). */
+    initialNew = $bindable(false),
     /**
      * A connection string handed over from outside (a stroke:// link or the
      * command line): read as if pasted, so the form opens filled in. Nothing
@@ -430,7 +432,9 @@
     /** @type {any[]} */
     const out = [];
     for (const [kind, conns] of byKind) {
-      const open = !!savedQuery.trim() || !closedFolders.has(kind);
+      // The folder holding the connection being edited shows it, whatever the
+      // folder's saved state: a closed one hid which row the form belongs to.
+      const open = !!savedQuery.trim() || !closedFolders.has(kind) || (!!editingId && conns.some((c) => c.id === editingId));
       const first = conns[0];
       const mark = first.filePath === ":memory:" && (first.type === "sqlite" || first.type === "duckdb") ? `${first.type}-memory` : engineId(first);
       out.push({ key: `folder:${kind}`, header: true, kind, mark, count: conns.length, open });
@@ -1047,6 +1051,11 @@
     // opening the picker and closing again doesn't ask about discarding changes
     // nobody made. Only editing a saved connection can be dirty.
     if (!editingId) baseline = snapshot();
+    // The form's first field takes the caret, its default selected so typing
+    // replaces it. Focus stayed in the picker's search, and the first key
+    // typed filtered the saved list instead. File engines have no host field;
+    // focusField does nothing there.
+    if (entryMode === "manual") void tick().then(() => focusField("cn-host"));
   }
 
   /** Back to the picker, keeping whatever has been typed so far. */
@@ -2138,6 +2147,15 @@
   );
 
   /** @param {string} id */
+  /** Focus the open form's first visible field. @returns {boolean} whether one took focus */
+  function focusFirstFormField() {
+    const el = [...document.querySelectorAll('[data-connection-modal] input[id^="cn-"], [data-connection-modal] textarea[id^="cn-"]')]
+      .find((x) => x instanceof HTMLElement && x.getClientRects().length > 0 && !(/** @type {HTMLInputElement} */ (x).disabled));
+    if (!(el instanceof HTMLElement)) return false;
+    el.focus();
+    return document.activeElement === el;
+  }
+
   function focusField(id) {
     // Some engine forms prefix their field ids (cn-ch-*, cn-mssql-*, cn-redis-*);
     // fall through to the visible engine's variant so the one-click error fixes
@@ -2339,6 +2357,8 @@
       clipboardDismissed = "";
       // Arriving from an engine chip skips the picker - that choice is already made.
       if (initialEngine) { pickEngine(initialEngine); initialEngine = ""; }
+      else if (initialNew) newConnectionForm();
+      initialNew = false;
       if (initialEditId) {
         const conn = saved.find((c) => c.id === initialEditId);
         initialEditId = "";
@@ -2362,24 +2382,26 @@
     });
   });
 
-  // Deleting also clears the connection's history, saved queries, charts and
-  // chats (purgeConnectionData), so it is asked first rather than done on click.
-  /** @type {{ id: string, name: string, fromKeyboard: boolean } | null} */
-  let pendingDelete = $state(null);
-  let confirmDeleteOpen = $state(false);
-
+  // Deleting asks nothing: the row goes now and the toast offers Undo. The
+  // purge of its history, saved queries, charts and chats waits out the undo
+  // window (removeConnection's `undoable`).
   /** @param {string} id @param {boolean} [fromKeyboard] */
   function handleDelete(id, fromKeyboard = false) {
     const conn = saved.find((c) => c.id === id);
-    pendingDelete = { id, name: conn?.name || conn?.database || conn?.host || conn?.filePath || "this connection", fromKeyboard };
-    confirmDeleteOpen = true;
+    if (!conn) return;
+    pendingDelete = { id, fromKeyboard };
+    confirmDelete();
+    toastConnectionRemoved(conn, () => { saved = loadSavedConnections().sort(byLastConnected); });
   }
+
+  /** @type {{ id: string, fromKeyboard: boolean } | null} */
+  let pendingDelete = null;
 
   function confirmDelete() {
     if (!pendingDelete) return;
     const { id, fromKeyboard } = pendingDelete;
     pendingDelete = null;
-    saved = removeConnection(id).sort(byLastConnected);
+    saved = removeConnection(id, { undoable: true }).sort(byLastConnected);
     if (id === lastId) {
       lastId = null;
       setLastConnectionId(null);
@@ -3968,6 +3990,9 @@
         // keyboard it drew a focus box around that icon in the header.
         if (!savedSearchEl) return;
         e.preventDefault();
+        // Opened onto one connection's form (Edit, from a failed connect):
+        // its first field, which is what is being fixed.
+        if (editingId && focusFirstFormField()) return;
         savedSearchEl.focus();
       }}
       onEscapeKeydown={(e) => {
@@ -6460,7 +6485,7 @@
                    buttons at a single gap, which is how "Resume" ends up looking like
                    a peer of "Connect". 4px inside a group against 20px between them
                    is the 1:5 ratio that makes the split legible without a divider. -->
-                <div class="ml-auto flex shrink-0 items-center gap-5">
+                <div class="ml-auto flex min-w-0 items-center gap-5">
                   {#if activeConnectionName || (lastId && saved.find((c) => c.id === lastId))}
                   <div class="flex min-w-0 items-center gap-1">
                   <!-- Ending the live session belongs next to resuming it: both act
@@ -6483,7 +6508,7 @@
                     {@const lastConn = saved.find((c) => c.id === lastId)}
                     <Button
                       variant="ghost"
-                      class="max-w-[12.5rem] text-muted-foreground"
+                      class="min-w-0 shrink max-w-[17.5rem] text-muted-foreground"
                       disabled={isBusy}
                       title={`Resume ${lastConn.name} (${comboTitle('Mod+Shift+Enter')})`}
                       aria-keyshortcuts="Control+Shift+Enter Meta+Shift+Enter"
@@ -6683,18 +6708,6 @@
   </DialogPrimitive.Portal>
 </DialogPrimitive.Root>
 
-<ConfirmDialog
-  bind:open={confirmDeleteOpen}
-  icon="trash-2"
-  title="Delete connection?"
-  description={`"${pendingDelete?.name ?? ''}" will be removed from your saved connections.`}
-  note="Its query history, saved queries, charts and AI chats are deleted with it. This can't be undone."
-  confirmLabel="Delete"
-  confirmIcon="trash-2"
-  variant="destructive"
-  onconfirm={confirmDelete}
-  oncancel={() => (pendingDelete = null)}
-/>
 
 <style>
   /* The modal is portalled to <body>, outside #app, so it never inherits the

@@ -13,12 +13,24 @@
 <script>
   import { tick } from 'svelte'
   import { cn } from '$lib/utils.js'
+  import { splitTipShortcut } from '$lib/tooltip-shortcut.js'
+  import Kbd from './Kbd.svelte'
 
   const DELAY = 450 // ms before showing (a touch slower so it doesn't flash on pass-through)
+  /**
+   * Once one tooltip has shown, the next one within this window shows at once.
+   * Running the pointer along a toolbar to read each button used to pay the
+   * full 450ms on every button; this is the skip-delay every native toolbar has.
+   */
+  const WARM_MS = 400
+  /** When the last tooltip went away; a show before WARM_MS after it skips DELAY. */
+  let cooledAt = 0
   const GAP = 6 // distance between trigger and tooltip
   const EDGE = 8 // min gap from the viewport edge
 
   let text = $state('')
+  /** The label and the shortcut caps split out of `text` (Refresh, [Ctrl, R]). */
+  const parts = $derived(splitTipShortcut(text))
   let shown = $state(false)
   let top = $state(0)
   let left = $state(0)
@@ -66,6 +78,8 @@
     clearTimeout(showTimer)
     restoreTitle(currentEl)
     currentEl = null
+    still = null
+    if (shown) cooledAt = performance.now()
     shown = false
   }
 
@@ -102,16 +116,29 @@
     shown = true
   }
 
+  /**
+   * Inside a trigger whose menu is showing (bits-ui marks it expanded): the
+   * trigger's own tip, or one on an icon inside it, would sit on the menu.
+   * Popup triggers only (bits-ui sets aria-haspopup on them): a disclosure
+   * toggle such as "Hide the diagram list" is expanded too, and keeps its tip.
+   */
+  function isOpenTrigger(/** @type {Element} */ el) {
+    return !!el.closest('[aria-haspopup]:not([aria-haspopup="false"])[aria-expanded="true"]')
+  }
+
   function onPointerOver(/** @type {PointerEvent} */ e) {
     const target = /** @type {Element | null} */ (e.target)
     const el = target?.closest?.(TIP_SELECTOR)
     if (el === currentEl) return
     if (currentEl) hide()
     if (!el || el.hasAttribute('data-no-tip')) return
+    // Its menu or popover is open: the tip would sit on top of it. Still take
+    // the title, or the native tooltip shows in our place.
+    if (isOpenTrigger(el)) { readTip(el); currentEl = el; return }
     // `data-tip-overflow`: the tip only repeats a label, so show it only when
     // that label is cut off (its `.truncate` text overflows).
     if (el.hasAttribute('data-tip-overflow')) {
-      const label = el.querySelector('.truncate')
+      const label = el.classList.contains('truncate') ? el : el.querySelector('.truncate')
       if (label && label.scrollWidth <= label.clientWidth) {
         // Still take the title, or the native tooltip shows in our place.
         readTip(el)
@@ -124,10 +151,32 @@
     if (!value) return
 
     currentEl = el
+    // The page moved under a still pointer (a panel opened, a list re-sorted):
+    // the browser reports an "over" at the spot the pointer last moved to. No
+    // tip until the pointer itself moves.
+    if (e.clientX === moveX && e.clientY === moveY) { still = { el, value }; return }
+    arm(el, value)
+  }
+
+  function arm(/** @type {Element} */ el, /** @type {string} */ value) {
+    still = null
     clearTimeout(showTimer)
+    const warm = performance.now() - cooledAt < WARM_MS
     showTimer = setTimeout(() => {
-      if (currentEl === el) show(el, value)
-    }, DELAY)
+      if (currentEl === el && !isOpenTrigger(el)) show(el, value)
+    }, warm ? 0 : DELAY)
+  }
+
+  /** Where the pointer last moved to, and the trigger it came to rest over without moving. */
+  let moveX = NaN
+  let moveY = NaN
+  /** @type {{ el: Element, value: string } | null} */
+  let still = null
+  function onPointerMove(/** @type {PointerEvent} */ e) {
+    if (e.clientX === moveX && e.clientY === moveY) return
+    moveX = e.clientX
+    moveY = e.clientY
+    if (still && still.el === currentEl) arm(still.el, still.value)
   }
 
   function onPointerOut(/** @type {PointerEvent} */ e) {
@@ -138,12 +187,23 @@
     hide()
   }
 
+  function onPointerDown() {
+    // Hide the tip but keep the title stashed while the pointer stays on the
+    // element: hide() put it back, and the browser's own tooltip then showed
+    // over the menu the click had just opened. Leaving the element restores it.
+    clearTimeout(showTimer)
+    shown = false
+    cooledAt = 0
+  }
+
   $effect(() => {
     // passive: hide() never preventDefaults, so scrolling must not wait on us.
     const opts = { capture: true, passive: true }
     document.addEventListener('pointerover', onPointerOver, true)
     document.addEventListener('pointerout', onPointerOut, true)
-    document.addEventListener('pointerdown', hide, true)
+    document.addEventListener('pointermove', onPointerMove, opts)
+    // A click is a decision: the next tooltip waits the full delay again.
+    document.addEventListener('pointerdown', onPointerDown, true)
     document.addEventListener('wheel', hide, opts)
     document.addEventListener('scroll', hide, opts)
     window.addEventListener('blur', hide)
@@ -152,7 +212,8 @@
       restoreTitle(currentEl)
       document.removeEventListener('pointerover', onPointerOver, true)
       document.removeEventListener('pointerout', onPointerOut, true)
-      document.removeEventListener('pointerdown', hide, true)
+      document.removeEventListener('pointermove', onPointerMove, opts)
+      document.removeEventListener('pointerdown', onPointerDown, true)
       document.removeEventListener('wheel', hide, opts)
       document.removeEventListener('scroll', hide, opts)
       window.removeEventListener('blur', hide)
@@ -167,12 +228,17 @@
   class={cn(
     'pointer-events-none fixed z-[300] max-w-xs rounded-md border border-border/70 bg-popover px-2 py-1',
     'text-ui-2xs leading-snug text-popover-foreground elevate-2-rim',
-    'transition-opacity duration-75 ease-out',
+    // A 2px drift as it fades in: it reads as coming from the trigger rather
+    // than switching on. Small enough to be cheap on any renderer.
+    'transition-[opacity,translate] duration-100 ease-out',
     'motion-reduce:transition-none',
-    shown ? 'opacity-100' : 'opacity-0',
+    shown ? 'translate-y-0 opacity-100' : '-translate-y-0.5 opacity-0',
   )}
   style="top:{top}px; left:{left}px;"
   style:visibility={text ? 'visible' : 'hidden'}
 >
-  <span class="whitespace-pre-line break-words">{text}</span>
+  <span class="flex items-center gap-2">
+    <span class="min-w-0 whitespace-pre-line break-words">{parts.label}</span>
+    {#if parts.keys}<Kbd keys={parts.keys} class="-my-px" />{/if}
+  </span>
 </div>
