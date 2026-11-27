@@ -177,8 +177,16 @@
     let frames = 0
     const tryFocus = () => {
       const target = /** @type {HTMLElement | null} */ (document.getElementById(`nb-cell-${only.id}`)?.querySelector('.cm-content'))
-      if (target) { if (!document.activeElement || document.activeElement === document.body) target.focus(); return }
-      if (++frames < 30) requestAnimationFrame(tryFocus)
+      // Opened from the command menu, the menu hands focus back to whatever had
+      // it as it closes: wait for that, then take it unless a text field has it.
+      const menuOpen = !!document.querySelector('[role=dialog]')
+      if (target && !menuOpen) {
+        const ae = /** @type {HTMLElement | null} */ (document.activeElement)
+        const typing = !!ae && (ae.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(ae.tagName))
+        if (!typing) target.focus()
+        return
+      }
+      if (++frames < 60) requestAnimationFrame(tryFocus)
     }
     requestAnimationFrame(tryFocus)
   })
