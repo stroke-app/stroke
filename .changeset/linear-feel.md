@@ -71,3 +71,4 @@
 - Menus and dialogs lost their leftover icon tiles and repeated row icons; the tab menu, Relations headers and Structure view's Unique column read like the rest of the app, and Structure says No default where a NOT NULL column has none.
 - Empty Dashboard, Policies and Charts pages show one way to add the first item instead of two.
 - Show / hide columns keeps the keyboard on the row just toggled.
+- The schema diagram remembers its layout: a schema laid out before opens at once after a restart instead of spending seconds on Laying out the diagram. Any change to its tables or settings lays it out again.
