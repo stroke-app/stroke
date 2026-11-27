@@ -670,7 +670,7 @@ pub async fn open_local_servers_window(app: AppHandle, from: String) -> Result<(
     let from: String = from.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_').take(64).collect();
     let url = format!("/?view=local-servers&from={from}");
     let mut builder = tauri::WebviewWindowBuilder::new(&app, label, tauri::WebviewUrl::App(url.into()))
-        .title("Local Servers")
+        .title("Local servers")
         .inner_size(980.0, 640.0)
         .min_inner_size(720.0, 460.0)
         .resizable(true)

@@ -71,7 +71,7 @@
 
   onMount(() => {
     revealApp()
-    document.title = 'Local Servers'
+    document.title = 'Local servers'
     void refresh().then(() => {
       if (!selected) selected = servers[0]?.id ?? (found.length ? null : 'new')
     })
@@ -438,7 +438,7 @@
   <header class="flex h-12 shrink-0 items-center gap-2 border-b border-border/60 px-3" data-tauri-drag-region>
     <div class={cn('flex items-center gap-2', isMac && 'ps-[72px]')} data-tauri-drag-region>
       <Server class="size-4 shrink-0 text-muted-foreground" />
-      <h1 class="text-ui-sm font-medium" data-tauri-drag-region>Local Servers</h1>
+      <h1 class="text-ui-sm font-medium" data-tauri-drag-region>Local servers</h1>
     </div>
     <div class="flex-1 self-stretch" data-tauri-drag-region></div>
     <Button variant="ghost" size="icon-sm" class="text-muted-foreground" title="Refresh" aria-label="Refresh" onclick={() => { void refresh(); void scan() }}>
