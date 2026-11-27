@@ -59,6 +59,7 @@
   import { routeEdges, routeToSvgPath, corridorPathOrtho, CLEAR, MAX_ROUTED_NODES } from '$lib/erd-routing.js'
   import { separateCards, wrapTallRanks, packOrphans } from '$lib/erd-layout.js'
   import { layoutWithElk } from '$lib/erd-elk.js'
+  import { layoutKey, loadLayout, saveLayout } from '$lib/erd-layout-cache.js'
   import { visibleTables, visibleRels, relatedTo, linkedTables, mergeParallelEdges, hubTables } from '$lib/erd-filter.js'
   import { cn, plural, errorText } from '$lib/utils.js'
 
@@ -948,8 +949,14 @@
   }
 
   // ── Build graph ───────────────────────────────────────────────────────────
-  /** @param {boolean} [forceLayout] */
-  async function buildGraph(forceLayout = false) {
+  /** The saved-layout key of the diagram on screen (erd-layout-cache.js). */
+  let _layoutKey = ''
+
+  /**
+   * @param {boolean} [forceLayout]
+   * @param {{ fresh?: boolean }} [opts] fresh: ignore a saved layout (Re-layout)
+   */
+  async function buildGraph(forceLayout = false, { fresh = false } = {}) {
     const all = [...tableMeta.values()]
     const { rawEdges } = buildEdgeData(all)
     allRels = rawEdges
@@ -1014,7 +1021,24 @@
     })
 
     const needsLayout = forceLayout || visible.some(t => !_posCache.has(t.name))
-    if (needsLayout) {
+    // A layout saved for this exact graph (same tables, row counts, lines and
+    // settings) skips ELK: four seconds on a 150-table schema, every start.
+    const key = layoutKey({
+      connectionId,
+      schema,
+      shape: `${shapeKey()}|${focusTable ?? ''}`,
+      nodes: rawNodes.map((n) => ({ id: n.id, rows: n.data.columns.length })),
+      edges: layoutEdges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+    })
+    _layoutKey = key
+    const saved = needsLayout && !fresh ? loadLayout(key, rawNodes.map((n) => n.id)) : null
+    if (saved) {
+      _layoutSeq++
+      layingOut = false
+      for (const [id, p] of saved.positions) _posCache.set(id, p)
+      nodes = rawNodes.map((n) => ({ ...n, position: saved.positions.get(n.id) ?? n.position }))
+      routeHints = saved.hints
+    } else if (needsLayout) {
       // The layout runs in a worker. The diagram on screen stays as it is until
       // the new one is whole - no cards at the origin, no lines moving as they
       // land - and a result that a later request has overtaken is dropped.
@@ -1030,6 +1054,7 @@
       for (const n of laid.nodes) _posCache.set(n.id, n.position)
       nodes = laid.nodes
       routeHints = laid.hints
+      saveLayout(key, new Map(laid.nodes.map((n) => [n.id, n.position])), laid.hints)
     } else {
       nodes = rawNodes
     }
@@ -1087,7 +1112,7 @@
 
   function reLayout() {
     _posCache.clear()
-    void buildGraph(true).then(() => tick()).then(() => erd?.reveal?.())
+    void buildGraph(true, { fresh: true }).then(() => tick()).then(() => erd?.reveal?.())
   }
 
   /** Persist a dragged node's new position so rebuilds and exports keep it. */
@@ -1104,6 +1129,8 @@
       for (const e of edges) if (e.source === id || e.target === id) next.delete(e.id)
       routeHints = next
     }
+    // A card moved by hand stays where it was put next time too.
+    if (_layoutKey) saveLayout(_layoutKey, new Map(nodes.map((n) => [n.id, n.position])), routeHints)
   }
 
   // ── Load ──────────────────────────────────────────────────────────────────
