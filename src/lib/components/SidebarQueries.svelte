@@ -322,8 +322,8 @@
         type="text"
         bind:value={filter}
         onkeydown={(e) => { if (e.key === 'Escape' && filter) { e.preventDefault(); e.stopPropagation(); filter = '' } }}
-        placeholder="Filter queries…"
-        aria-label="Filter saved queries"
+        placeholder="Search"
+        aria-label="Search saved queries"
         class="search-box no-field-frame w-full min-w-0 pl-8 pr-2 text-ui-sm"
       />
     </div>
