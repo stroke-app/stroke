@@ -2283,10 +2283,11 @@
               </DropdownMenu.Content>
             </DropdownMenu.Root>
           {:else}
-          <!-- These act on the table list only. On Queries and Find & replace
-               they did nothing for the panel below, so they keep their space
-               there (no shift between tabs) but are not shown or reachable. -->
-          <div class={cn("flex items-center gap-0.5", (sidebarTab === 'queries' || sidebarTab === 'search') && "invisible")}>
+          <!-- These act on the table list only. On Databases, Queries and Find &
+               replace they did nothing for the panel below (Databases has its
+               own + and refresh), so they keep their space there (no shift
+               between tabs) but are not shown or reachable. -->
+          <div class={cn("flex items-center gap-0.5", (sidebarTab === 'queries' || sidebarTab === 'search' || sidebarTab === 'databases') && "invisible")}>
           {@render displayOptions()}
           <button
             type="button"
