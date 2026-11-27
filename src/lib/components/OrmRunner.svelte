@@ -8,6 +8,7 @@
   import { keymap } from "@codemirror/view";
   import { commandKeys } from "$lib/editor-command-keys.js";
   import CodeEditor from "./CodeEditor.svelte";
+  import Kbd from "./Kbd.svelte";
   import { ormCompletionSource } from "$lib/cm-orm-complete.js";
   import { appVimMode } from "$lib/stores/settings.js";
   import { setVimSubMode } from "$lib/vim/vim.js";
@@ -409,7 +410,7 @@
       type="button"
       variant="ghost"
       size="sm"
-      class="h-7 shrink-0 px-2.5 font-mono text-ui-xs text-muted-foreground hover:text-foreground"
+      class="h-7 shrink-0 px-2.5 text-ui-xs text-muted-foreground hover:text-foreground"
       disabled={!code.trim()}
       title={`Format code (${comboTitle('Mod+S')})`}
       onclick={() => editor?.getAction("editor.action.formatDocument")?.run()}
@@ -419,16 +420,14 @@
 
     <span class="w-2 shrink-0" aria-hidden="true"></span>
 
-    <div
-    class= "field-surface inline-flex h-7 items-center bg-muted/20 p-0.5"
-      role="group"
-      aria-label="Copy actions"
-    >
+    <!-- Two plain buttons beside Format: the framed group around them was
+         the only box in the bar (DESIGN_SYSTEM.md §11). -->
+    <div class="inline-flex items-center gap-1" role="group" aria-label="Copy actions">
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        class="h-6 gap-1.5 rounded-[5px] px-2 text-ui-xs text-muted-foreground hover:bg-background/60 hover:text-foreground"
+        class="h-7 gap-1.5 px-2.5 text-ui-xs text-muted-foreground hover:text-foreground"
         disabled={!generatedSql}
         title="Copy generated SQL"
         onclick={handleCopySql}
@@ -439,15 +438,14 @@
           <Copy class="size-3.5 shrink-0" />
         {/if}
         <span class="text-ui-xs"
-          >{copied === "sql" ? "Copied!" : "Copy SQL"}</span
+          >{copied === "sql" ? "Copied" : "Copy SQL"}</span
         >
       </Button>
-      <span class="w-2 shrink-0" aria-hidden="true"></span>
       <Button
         type="button"
         variant="ghost"
         size="sm"
-        class="h-6 gap-1.5 rounded-[5px] px-2 text-ui-xs text-muted-foreground hover:bg-background/60 hover:text-foreground"
+        class="h-7 gap-1.5 px-2.5 text-ui-xs text-muted-foreground hover:text-foreground"
         disabled={!code.trim()}
         title="Copy ORM code"
         onclick={handleCopyCode}
@@ -458,18 +456,31 @@
           <Copy class="size-3.5 shrink-0" />
         {/if}
         <span class="text-ui-xs"
-          >{copied === "code" ? "Copied!" : "Copy Code"}</span
+          >{copied === "code" ? "Copied" : "Copy code"}</span
         >
       </Button>
     </div>
 
     <div class="ml-auto flex items-center gap-2">
       {#if queryMs > 0}
-        <span
-          class="shrink-0 rounded-md bg-muted/40 px-1.5 py-0.5 font-mono text-ui-2xs tabular-nums text-muted-foreground ring-1 ring-inset ring-border/40"
-        >
-          {queryMs}ms
+        <span class="shrink-0 font-mono text-ui-2xs tabular-nums text-muted-foreground">
+          {queryMs} ms
         </span>
+      {/if}
+      <!-- In the bar, not floating over the grid: there it covered the last
+           column's header. -->
+      {#if !loading && columns.length > 0 && outputView === "table"}
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          class="h-7 gap-1.5 px-2.5 text-ui-xs text-muted-foreground hover:text-foreground"
+          title="Show the rows as JSON"
+          onclick={() => (outputView = "json")}
+        >
+          <Braces class="size-3.5 shrink-0" />
+          JSON
+        </Button>
       {/if}
     </div>
   </div>
@@ -542,6 +553,7 @@
     <button
       type="button"
       class="flex w-full items-center gap-1.5 px-3 py-1.5 text-left transition-colors hover:bg-muted/30"
+      aria-expanded={sqlPreviewOpen}
       onclick={() => (sqlPreviewOpen = !sqlPreviewOpen)}
     >
       <ChevronDown
@@ -551,7 +563,7 @@
         )}
       />
       <span
-        class="font-mono text-ui-2xs font-medium tracking-[0.06em] text-muted-foreground uppercase"
+        class="text-ui-xs font-medium text-muted-foreground"
         >Generated SQL</span
       >
       {#if generatedSql && !sqlPreviewOpen}
@@ -586,19 +598,6 @@
           foreignKeys={[]}
           emptyText="The query returned no rows"
         />
-        <!-- JSON toggle overlay, top right, matching JsonViewer toolbar style -->
-        <div
-          class="pointer-events-none absolute inset-x-0 top-0 z-10 flex items-start justify-end p-2"
-        >
-          <button
-            type="button"
-            onclick={() => (outputView = "json")}
-            class="pointer-events-auto inline-flex items-center gap-1.5 rounded-md border border-border/50 bg-background px-2 py-1 font-mono text-ui-2xs text-muted-foreground elevate-2-rim transition-colors hover:text-foreground"
-          >
-            <Braces class="size-3 shrink-0" />
-            JSON
-          </button>
-        </div>
       {:else}
         <JsonViewer
           json={jsonText}
@@ -633,18 +632,16 @@
         </div>
       </div>
     {:else}
+      <!-- The SQL editor's empty results, one key: a play glyph and the
+           starter code repeated under it read as a second editor. -->
       <div
-        class="flex h-full flex-col items-center justify-center gap-2 text-center"
+        class="flex h-full flex-col items-center justify-center gap-1.5 px-4 text-center"
       >
-        <Play class="size-6 shrink-0 text-muted-foreground" />
-        <p class="text-ui-sm text-muted-foreground">
-          Run a query to see results
-        </p>
-        <!-- The starter for this database: the hint named a "users" table
-             that most databases don't have. -->
-        <p class="font-mono text-ui-xs text-muted-foreground">
-          {defaultCode()}
-        </p>
+        <p class="text-ui-lg font-normal tracking-tight text-foreground/90">Run a query</p>
+        <div class="mt-1 flex items-center gap-2 text-ui-xs text-muted-foreground">
+          <Kbd combo="Mod+Enter" />
+          <span>runs the code and shows its rows here</span>
+        </div>
       </div>
     {/if}
   </div>
