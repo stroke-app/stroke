@@ -644,7 +644,7 @@
     <!-- The structure view's tabs: the active one on a filled pill. Weight and
          colour alone left "Changed" with no count looking like every other
          tab. -->
-    <div class="flex shrink-0 items-center gap-0.5 border-b border-border/40 px-5 py-1.5" role="tablist" aria-label="Show rows">
+    <div class="flex shrink-0 items-center gap-0.5 border-b border-border/40 px-5 py-1.5" role="group" aria-label="Show rows">
 
       {#each [
         { key: 'all',       label: 'All',       count: diffRows.length,                          badge: 'bg-muted/30 text-muted-foreground',           active: 'text-foreground' },
@@ -656,8 +656,7 @@
       ] as f}
         <button
           type="button"
-          role="tab"
-          aria-selected={activeFilter === f.key}
+          aria-pressed={activeFilter === f.key}
           onclick={() => { activeFilter = f.key }}
           class={cn(
             'flex h-7 items-center gap-1.5 rounded-md px-2.5 text-ui-xs transition-colors',
