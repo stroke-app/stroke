@@ -679,7 +679,8 @@
               <section class="px-4 py-3">
                 <p class="mb-2 text-ui-xs font-medium text-muted-foreground">Database access</p>
                 {#if dbGrantsLoading || dbGrants === null}
-                  <div class="loading-reveal flex items-center gap-2 py-6 text-muted-foreground"><RefreshCw class="size-3.5 shrink-0 animate-spin" /><span class="text-ui-xs">Loading grants…</span></div>
+                  <!-- The grants table's three columns while they load. -->
+                  <SkeletonRows rows={3} cols={[50, 25, 25]} class="overflow-hidden rounded-md border border-border/40" />
                 {:else if dbGrantsError}
                   <p class="text-ui-2xs text-destructive">{dbGrantsError}</p>
                 {:else if dbGrants.length === 0}

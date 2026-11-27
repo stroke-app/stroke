@@ -1,11 +1,11 @@
 <script>
+  import TableListSkeleton from './TableListSkeleton.svelte'
   import EmptyState from './EmptyState.svelte'
   import { tick, untrack } from 'svelte'
   import { listTables, getTableColumnStructure, listIndexes, getTableRowCounts } from '$lib/api.js'
   import { formatTableRowCount } from '$lib/table-list.js'
   import RelationTreeNode from './RelationTreeNode.svelte'
   import { Button } from '$lib/components/ui/button/index.js'
-  import Loader from '@lucide/svelte/icons/loader'
   import RefreshCw from '@lucide/svelte/icons/refresh-cw'
   import Search from '@lucide/svelte/icons/search'
   import X from '@lucide/svelte/icons/x'
@@ -328,10 +328,9 @@
     <!-- Table list -->
     <div class="min-h-0 flex-1 overflow-y-auto">
       {#if loading && tableMeta.size === 0}
-        <div class="loading-reveal flex items-center gap-2 px-3 py-3">
-          <Loader class="size-3.5 shrink-0 animate-spin text-muted-foreground" />
-          <span class="font-mono text-ui-xs text-muted-foreground">Loading…</span>
-        </div>
+        <!-- The list's shape while it loads, as the sidebar's table list
+             does, instead of a spinner line the rows then replaced. -->
+        <TableListSkeleton rows={10} />
       {:else if error}
         <p class="px-3 py-3 font-mono text-ui-xs text-destructive">{error}</p>
       {:else}
