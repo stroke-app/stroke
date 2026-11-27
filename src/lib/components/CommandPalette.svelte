@@ -48,6 +48,9 @@
     /** Zoom and full screen, which only the View menu and their keys reached.
      *  @type {{ zoomIn: () => void, zoomOut: () => void, zoomReset: () => void, fullscreen: () => void } | null} */
     viewCommands = null,
+    /** The SQL editor in front: run, format, save, begin.
+     *  @type {{ runAll: () => void, runStatement: () => void, format: () => void, save: () => void, begin: () => void } | null} */
+    sqlCommands = null,
     /** Explain the open editor's query, or null when no editor tab is in front.
      *  @type {(() => void) | null} */
     onexplainquery = null,
@@ -764,7 +767,7 @@
   const LOCAL_PAGES = new Set(['root', 'theme', 'pages', 'docker'])
   const localFilter = createLocalFilter(() => (LOCAL_PAGES.has(page) ? paletteSearch.trim() : ''), paletteFilter)
   setContext(LOCAL_FILTER, localFilter)
-  const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'table', 'actions', 'tabs', 'view', 'switchdb', 'database', 'launch', 'appearance']
+  const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'table', 'sql', 'actions', 'tabs', 'view', 'switchdb', 'database', 'launch', 'appearance']
   /** Root groups in page order, or best match first while searching. */
   const rootOrder = $derived.by(() => {
     if (!localFilter.search) return ROOT_GROUPS
@@ -1406,6 +1409,34 @@
             </Command.Group>
             {/if}
           {/snippet}
+          {#snippet group_sql()}
+            <!-- The SQL editor's toolbar by name, while searching: "format" found
+                 the Extensions page, "run all" nothing. -->
+            {#if sqlCommands && paletteSearch.trim()}
+            <Command.Group value="sql" heading={$tx('group.SQL', 'SQL')}>
+                <Command.Item minScore={0.3} value="run all statements execute whole editor" keywords={['Run all']} onSelect={() => run(() => sqlCommands?.runAll())}>
+                  <Icon name="play" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Run all</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="run statement at cursor current selection execute" keywords={['Run statement']} onSelect={() => run(() => sqlCommands?.runStatement())}>
+                  <Icon name="play" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Run statement at cursor</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="format sql beautify indent prettify" keywords={['Format SQL']} onSelect={() => run(() => sqlCommands?.format())}>
+                  <Icon name="wrap-text" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Format SQL</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="save query store keep" keywords={['Save query']} onSelect={() => run(() => sqlCommands?.save())}>
+                  <Icon name="bookmark" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Save query</span>
+                </Command.Item>
+                <Command.Item minScore={0.3} value="begin transaction start tx" keywords={['Begin transaction']} onSelect={() => run(() => sqlCommands?.begin())}>
+                  <Icon name="git-branch" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Begin transaction</span>
+                </Command.Item>
+            </Command.Group>
+            {/if}
+          {/snippet}
           {#snippet group_tabs()}
             <!-- Only while searching, as Export: "close", "reopen" or "pin"
                  found nothing here, and four more rows in the root list
@@ -1651,6 +1682,7 @@
             {:else if id === 'actions'}{@render group_actions()}
             {:else if id === 'tabs'}{@render group_tabs()}
             {:else if id === 'table'}{@render group_table()}
+            {:else if id === 'sql'}{@render group_sql()}
             {:else if id === 'view'}{@render group_view()}
             {:else if id === 'switchdb'}{@render group_switchdb()}
             {:else if id === 'database'}{@render group_database()}

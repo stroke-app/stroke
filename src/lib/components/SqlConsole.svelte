@@ -210,6 +210,11 @@
     handleRun(undefined)
   }
 
+  /** Reformat the editor (the command palette's Format SQL). */
+  export function formatEditor() {
+    void formatSql?.()
+  }
+
   /** Explain the editor's query (the command palette's Explain query). */
   export function explainEditor() {
     void handleExplain()

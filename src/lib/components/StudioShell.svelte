@@ -11629,6 +11629,13 @@ let rowSearch = $state('')
     newTable: !isKV ? openNewTable : null,
   } : null}
   onexplainquery={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false && !aiMode ? () => sqlConsoleRef?.explainEditor?.() : null}
+  sqlCommands={activeTab?.kind === 'sql' && /** @type {any} */ (activeTab).draft !== false && !aiMode ? {
+    runAll: () => /** @type {any} */ (sqlConsoleRef)?.runEditor?.(),
+    runStatement: () => /** @type {any} */ (sqlConsoleRef)?.runStatementAtCursor?.(),
+    format: () => afterPalette(() => /** @type {any} */ (sqlConsoleRef)?.formatEditor?.()),
+    save: () => afterPalette(() => void /** @type {any} */ (sqlConsoleRef)?.saveQuery?.()),
+    begin: () => void beginSqlTransaction(),
+  } : null}
   onimporttable={activeTab?.kind === 'table' && activeTable && !aiMode && !tableReadonly ? () => (importDataOpen = true) : null}
   connected={!!connection}
   {schemas}
