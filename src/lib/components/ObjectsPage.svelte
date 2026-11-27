@@ -511,7 +511,10 @@
         <colgroup>
           <col style="width:3rem" />
           {#each columns as col (col)}
-            <col style={col === 'comment' || col === 'definition' || col === 'returns' ? '' : 'width:12rem'} />
+            <!-- Name a little wider than the rest: at 12rem it cut function names
+                 such as gin_extract_query_trgm short. A flexible width collapsed
+                 to nothing on the Tables tab, which is wider than the page. -->
+            <col style={col === 'name' ? 'width:16rem' : col === 'comment' || col === 'definition' || col === 'returns' ? '' : col === 'schema' || col === 'kind' ? 'width:9rem' : 'width:12rem'} />
           {/each}
         </colgroup>
         <thead class="studio-chrome sticky top-0 z-10 bg-panel text-left">
