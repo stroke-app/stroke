@@ -1,4 +1,5 @@
 <script>
+  import SearchField from "./SearchField.svelte";
   import { offerUndo } from '$lib/undo-toast.js'
   import { onMount } from "svelte";
   import { Button } from "$lib/components/ui/button/index.js";
@@ -13,9 +14,7 @@
   import FileDown from "@lucide/svelte/icons/file-down";
   import Unplug from "@lucide/svelte/icons/unplug";
   import Database from "@lucide/svelte/icons/database";
-  import Search from "@lucide/svelte/icons/search";
   import Bot from "@lucide/svelte/icons/bot";
-  import X from "@lucide/svelte/icons/x";
   import ChevronRight from "@lucide/svelte/icons/chevron-right";
   import CheckCircle2 from "@lucide/svelte/icons/check-circle-2";
   import XCircle from "@lucide/svelte/icons/x-circle";
@@ -191,39 +190,25 @@
   <div
     class="flex shrink-0 flex-wrap items-center gap-2 border-b border-border/60 bg-panel px-3 py-2"
   >
-    <!-- Search -->
-    <div class="relative min-w-0 flex-1">
-      <Search
-        class="pointer-events-none absolute top-1/2 left-2 size-3.5 -translate-y-1/2 text-muted-foreground"
-      />
-      <input
-        type="text"
-        placeholder="Search logs…"
-        class="search-box no-field-frame h-7 w-full pl-7 pr-2.5 text-ui-xs"
-        bind:this={searchEl}
-        bind:value={search}
-      />
-      {#if search}
-        <button
-          type="button"
-          class="hit-area absolute top-1/2 right-1.5 -translate-y-1/2 inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
-          onclick={() => {
-            search = "";
-          }}><X class="size-3 shrink-0" /></button
-        >
-      {/if}
-    </div>
+    <SearchField
+      bind:value={search}
+      bind:ref={searchEl}
+      placeholder="Search logs"
+      label="Search logs"
+      class="min-w-0 flex-1 basis-56"
+    />
     <!-- Type filter chips -->
-    <div
-    class= "field-surface inline-flex h-7 shrink-0 items-center bg-muted/40 p-0.5 ring-1 ring-inset ring-border/40"
-    >
+    <!-- The segmented control the Extensions page uses: same height as the
+         search beside it. -->
+    <div class="flex h-8 shrink-0 items-center gap-0.5 rounded-md bg-muted/50 p-0.5" role="group" aria-label="Show">
       {#each FILTERS as f (f.id)}
         <button
           type="button"
+          aria-pressed={typeFilter === f.id}
           class={cn(
-            "inline-flex h-6 items-center rounded-md px-2 text-ui-2xs transition-colors",
+            "inline-flex h-full items-center rounded-sm px-2.5 text-ui-xs transition-colors",
             typeFilter === f.id
-              ? "bg-card text-foreground ring-1 ring-border/50"
+              ? "bg-background text-foreground ring-1 ring-border/50"
               : "text-muted-foreground hover:text-foreground",
           )}
           onclick={() => {
