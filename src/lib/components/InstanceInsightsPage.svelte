@@ -575,13 +575,22 @@
     return out
   }
 
-  const ACRONYMS = new Set(['id', 'ids', 'pid', 'pids', 'db', 'ip', 'addr', 'xid', 'lsn', 'wal', 'gid', 'sql', 'os', 'tcp', 'io'])
-  /** `blocking_pids` → `Blocking PIDs`. Raw catalog column names are not labels. */
+  const ACRONYMS = new Set(['id', 'ids', 'pid', 'pids', 'db', 'ip', 'xid', 'lsn', 'wal', 'gid', 'sql', 'os', 'tcp', 'io'])
+  /** Abbreviations spelled out. */
+  const WORDS = /** @type {Record<string, string>} */ ({ addr: 'address' })
+  /**
+   * `blocking_pids` → `Blocking PIDs`, `client_addr` → `Client address`. Raw
+   * catalog column names are not labels. Sentence case, as every other header
+   * in the app: Title Case read "Client ADDR", "Sync State".
+   */
   const humanize = (/** @type {string} */ k) => String(k).replace(/[_-]+/g, ' ').trim().split(' ')
-    // A plural acronym keeps its s small: "PIDs", not "PIDS".
-    .map((w) => (ACRONYMS.has(w.toLowerCase())
-      ? (/^(ids|pids)$/i.test(w) ? w.slice(0, -1).toUpperCase() + 's' : w.toUpperCase())
-      : w.charAt(0).toUpperCase() + w.slice(1)))
+    .map((w, i) => {
+      const low = w.toLowerCase()
+      // A plural acronym keeps its s small: "PIDs", not "PIDS".
+      if (ACRONYMS.has(low)) return /^(ids|pids)$/.test(low) ? low.slice(0, -1).toUpperCase() + 's' : low.toUpperCase()
+      const word = WORDS[low] ?? low
+      return i === 0 ? word.charAt(0).toUpperCase() + word.slice(1) : word
+    })
     .join(' ')
 
   /** Session state is the one column worth reading at a glance. */
