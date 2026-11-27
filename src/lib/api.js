@@ -1837,6 +1837,16 @@ export async function advisorScan() {
  * other's query. Without an id, everything in flight is cancelled.
  * @param {string} [queryId]
  */
+/**
+ * Stop the row fetches tagged with a group starting with `prefix`, on the
+ * server too (Postgres). Find in database's Stop. Resolves to how many ran.
+ * @param {string} prefix
+ * @returns {Promise<number>}
+ */
+export async function cancelRowFetches(prefix) {
+  return inv('pg_cancel_row_fetches', { groupPrefix: prefix })
+}
+
 export async function cancelQuery(queryId) {
   return inv('cancel_query', { queryId: queryId ?? null })
 }

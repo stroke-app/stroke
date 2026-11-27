@@ -1,7 +1,7 @@
 <script>
   import Kbd from './Kbd.svelte'
   import EmptyState from './EmptyState.svelte'
-  import { getTableRows, listTables } from '$lib/api.js'
+  import { getTableRows, listTables, cancelRowFetches } from '$lib/api.js'
   import { isSystemSchema } from '$lib/system-schemas.js'
   import { buildSearchQuery, searchOptionsSupported, searchOptionHotkey, SEARCH_OPTION_KEYS } from '$lib/search-options.js'
   import Search from '@lucide/svelte/icons/search'
@@ -62,6 +62,10 @@
   let regexError = $state('')
   /** Tables whose query failed (permissions, a type the predicate can't read). */
   let failed = $state(0)
+  /** Tells this page's reads from another Find in database page's. */
+  const pageId = Math.random().toString(36).slice(2, 8)
+  /** The fetch-tag prefix for one search's reads. @param {number} gen */
+  const fetchPrefix = (gen) => `find-in-db:${pageId}:${gen}:`
   /** Tables being read right now, as "schema.name". */
   let inFlight = $state(/** @type {string[]} */ ([]))
   /** Tables left unread because the search was stopped. */
@@ -69,6 +73,9 @@
   /** Stop waiting: keep what was found, say how many tables were left. A big
    *  table over a slow link held the page at "184 of 185" with no way out. */
   function stopSearch() {
+    // Stop the reads on the server too: they ran on after Stop, holding
+    // connections and scanning tables nobody was waiting for any more.
+    void cancelRowFetches(fetchPrefix(searchGeneration)).catch(() => {})
     searchGeneration++
     skipped = progress.total - progress.done
     inFlight = []
@@ -184,6 +191,8 @@
     regexError = ''
     const searchParams = buildSearchQuery(q, { matchCase, wholeWord, regex: useRegex }, optionsSupported)
 
+    // A newer search supersedes the reads of the last one on the server.
+    if (searching) void cancelRowFetches(fetchPrefix(searchGeneration)).catch(() => {})
     const gen = ++searchGeneration
     searching = true
     searched = false
@@ -230,6 +239,8 @@
           const res = await getTableRows(t.schema, t.name, 1, 0, {
             ...searchParams,
             includeMeta: false,
+            // Tagged per search, so Stop can cancel this read on the server.
+            fetchTag: { group: fetchPrefix(gen) + key, generation: 1 },
           })
           if (searchGeneration !== gen) return
           if (res.total > 0) {
