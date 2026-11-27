@@ -2147,6 +2147,15 @@
   );
 
   /** @param {string} id */
+  /** Focus the open form's first visible field. @returns {boolean} whether one took focus */
+  function focusFirstFormField() {
+    const el = [...document.querySelectorAll('[data-connection-modal] input[id^="cn-"], [data-connection-modal] textarea[id^="cn-"]')]
+      .find((x) => x instanceof HTMLElement && x.getClientRects().length > 0 && !(/** @type {HTMLInputElement} */ (x).disabled));
+    if (!(el instanceof HTMLElement)) return false;
+    el.focus();
+    return document.activeElement === el;
+  }
+
   function focusField(id) {
     // Some engine forms prefix their field ids (cn-ch-*, cn-mssql-*, cn-redis-*);
     // fall through to the visible engine's variant so the one-click error fixes
@@ -3981,6 +3990,9 @@
         // keyboard it drew a focus box around that icon in the header.
         if (!savedSearchEl) return;
         e.preventDefault();
+        // Opened onto one connection's form (Edit, from a failed connect):
+        // its first field, which is what is being fixed.
+        if (editingId && focusFirstFormField()) return;
         savedSearchEl.focus();
       }}
       onEscapeKeydown={(e) => {

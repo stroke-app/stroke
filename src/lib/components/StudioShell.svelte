@@ -10334,7 +10334,13 @@ let rowSearch = $state('')
       switchingTo = ''
       // Say why, then put the user back where they were instead of leaving
       // them disconnected behind a dialog with no message in it.
-      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, { description: connectFailureText(/** @type {any} */ (conn), e) })
+      // The fix is nearly always in the connection's settings (host, port, a
+      // password), so the error offers them rather than leaving a hunt for
+      // the row and its menu.
+      toast.error(`Could not connect to ${conn.name ?? conn.database ?? conn.host ?? 'the database'}`, {
+        description: connectFailureText(/** @type {any} */ (conn), e),
+        ...(conn.id ? { action: { label: 'Edit', onClick: () => { connectionModalEditId = conn.id; showConnectionModal = true } } } : {}),
+      })
       const back = kept ? _sessions.get(kept) : undefined
       if (back && (await resumeKept(kept, back, null))) return
       let restored = false
