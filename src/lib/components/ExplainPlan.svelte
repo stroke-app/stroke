@@ -39,6 +39,13 @@
   const insights = $derived(read.insights)
   const byId = $derived(new Map(a.nodes.map((n) => [n.id, n])))
   const hasCost = $derived(a.nodes.some((n) => n.totalCost != null && n.totalCost > 0))
+  // SQLite's plan has neither row estimates nor costs: every card read
+  // "rows 0, own cost 0.00 <1%", numbers the database never gave.
+  const hasRows = $derived(a.nodes.some((n) => n.actualRows != null || (n.planRows ?? 0) > 0))
+  /** @param {any} n */
+  const showRows = (n) => hasRows && (n.actualRows != null || n.planRows != null)
+  /** @param {any} n */
+  const showOwn = (n) => n.selfTime != null || (hasCost && n.selfCost != null)
   const isPg = $derived(result?.driver === 'postgres')
   const rowsOut = $derived(a.root?.actualRows ?? null)
 
@@ -66,7 +73,7 @@
   let lineSmall = $state(16)
   /** Card height, from what the card shows. @param {PlanNode} n */
   const cardH = (n) => {
-    const stats = (n.actualRows != null || n.planRows != null ? 1 : 0) + (n.selfTime != null || n.selfCost != null ? 1 : 0)
+    const stats = (showRows(n) ? 1 : 0) + (showOwn(n) ? 1 : 0)
     // 10 top + title + relation + (8 gap + stats) + 10 bottom
     return Math.ceil(10 + lineTitle + lineSmall + (stats ? 8 + stats * (lineSmall + 2) : 0) + 10)
   }
@@ -412,15 +419,15 @@
                     <span class="mt-1.5 size-1.5 shrink-0 rounded-full bg-warning" title={n.warnings.join('\n')} aria-label={n.warnings.join('; ')}></span>
                   {/if}
                 </div>
-                {#if n.actualRows != null || n.planRows != null || n.selfTime != null || n.selfCost != null}
+                {#if showRows(n) || showOwn(n)}
                   <div class="mt-2 flex flex-col gap-0.5 px-3 pb-2.5 text-ui-2xs tabular-nums">
-                    {#if n.actualRows != null || n.planRows != null}
+                    {#if showRows(n)}
                       <div class="flex items-center justify-between gap-2 text-muted-foreground">
                         <span>rows</span>
                         <span class="truncate text-foreground">{fmtCount(n.actualRows ?? n.planRows)}{#if n.actualRows != null && n.planRows != null}<span class="text-muted-foreground">&nbsp;/ est {fmtCount(n.planRows)}</span>{/if}{#if misText(n.misestimate)}<span class={cn('ms-1', Math.abs(n.misestimate ?? 0) >= 10 ? 'text-foreground' : 'text-muted-foreground')}>{misText(n.misestimate)}</span>{/if}</span>
                       </div>
                     {/if}
-                    {#if n.selfTime != null || n.selfCost != null}
+                    {#if showOwn(n)}
                       <!-- The step's share of the plan as a small meter beside its
                            number, instead of a bar along the card's edge that read
                            as a border (and sat over this row when it overflowed). -->
