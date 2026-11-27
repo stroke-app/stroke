@@ -5,6 +5,8 @@
   // Shift+Tab also move the highlight, Esc closes. Used by the table toolbar's
   // Sort / Columns / Filter menus.
   import { Command, Popover } from "bits-ui";
+  // Rows moving under a resting pointer must not take the highlight: see command-item.svelte.
+  import { pointerReallyMoved } from "$lib/command-local-filter.svelte.js";
   import { cn } from "$lib/utils.js";
   import SearchIcon from "@lucide/svelte/icons/search";
 
@@ -238,6 +240,7 @@
               disabled={it.disabled}
               onSelect={() => handleSelect(it)}
               onpointerenter={onhover ? () => onhover?.(it) : undefined}
+              onpointermove={(e) => { if (!pointerReallyMoved(e)) e.preventDefault() }}
               class={cn(
                 "flex min-h-7 w-full min-w-0 cursor-default items-center gap-2 rounded-menu-item px-2 py-1 text-ui-xs outline-hidden select-none",
                 "text-foreground/85 hover:bg-accent hover:text-foreground data-selected:bg-accent data-selected:text-foreground",
