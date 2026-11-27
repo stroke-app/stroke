@@ -432,7 +432,9 @@
     /** @type {any[]} */
     const out = [];
     for (const [kind, conns] of byKind) {
-      const open = !!savedQuery.trim() || !closedFolders.has(kind);
+      // The folder holding the connection being edited shows it, whatever the
+      // folder's saved state: a closed one hid which row the form belongs to.
+      const open = !!savedQuery.trim() || !closedFolders.has(kind) || (!!editingId && conns.some((c) => c.id === editingId));
       const first = conns[0];
       const mark = first.filePath === ":memory:" && (first.type === "sqlite" || first.type === "duckdb") ? `${first.type}-memory` : engineId(first);
       out.push({ key: `folder:${kind}`, header: true, kind, mark, count: conns.length, open });
