@@ -2531,12 +2531,13 @@
             <button
               type="button"
               tabindex="-1"
-              class="hit-area absolute top-1/2 right-1.5 inline-flex size-4 -translate-y-1/2 items-center justify-center rounded-full bg-muted-foreground/25 text-sidebar transition-colors hover:bg-muted-foreground/45"
+              class="absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Clear"
               aria-label="Clear filter"
               onclick={() => { handleFilterInput(''); flushFilter(); filterEl?.focus() }}
             >
-              <Icon name="x" class="size-2.5 shrink-0" strokeWidth={3} />
+              <!-- The same plain × as every other search field (SearchField.svelte). -->
+              <Icon name="x" class="size-3 shrink-0" />
             </button>
           {/if}
           </div>
