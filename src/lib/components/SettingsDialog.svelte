@@ -131,7 +131,7 @@
     { id: 'database',     label: 'Database',     icon: 'database' },
     { id: 'appearance',   label: 'Appearance',   icon: 'sparkles' },
     { id: 'agent',        label: 'Agent',        icon: 'bot' },
-    { id: 'account',      label: 'Account & Sync', icon: 'cloud' },
+    { id: 'account',      label: 'Account & sync', icon: 'cloud' },
     { id: 'integrations', label: 'Integrations', icon: 'blocks' },
     { id: 'keybindings',  label: 'Keybindings',  icon: 'keyboard' },
     { id: 'snippets',     label: 'Snippets',     icon: 'braces' },

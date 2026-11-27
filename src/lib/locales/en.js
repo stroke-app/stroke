@@ -6,7 +6,7 @@ export default {
   "settings.nav.appearance": "Appearance",
   "settings.nav.agent": "Agent",
   "settings.nav.integrations": "Integrations",
-  "settings.nav.account": "Account & Sync",
+  "settings.nav.account": "Account & sync",
   "settings.nav.keybindings": "Keybindings",
   "settings.nav.snippets": "Snippets",
   "settings.nav.network": "Network",
