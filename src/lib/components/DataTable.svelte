@@ -7081,6 +7081,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   // frame. Only the values fade: the row's background, gutter and grid were
   // already drawn by the skeleton and stay put.
   const ROW_FADE_MS = 180
+  const ROWS_FADE_IN = false
   /** Rows painted as skeletons in the previous / current frame. */
   let _skelPrev = new Set()
   let _skelCur = new Set()
@@ -7405,6 +7406,10 @@ import FilterX from "@lucide/svelte/icons/filter-x";
 
   /** Opacity for a row's values: below 1 while it eases in from a skeleton. */
   function rowFade(idx) {
+    // Off: while any row faded, blits were off and every scroll frame
+    // redrew the whole grid, so scrolling into rows still loading stuttered.
+    // Rows land in one frame instead.
+    if (!ROWS_FADE_IN) return 1
     if (_skelPrev.has(idx) && !_fadeAt.has(idx)) _fadeAt.set(idx, _frameNow)
     const at = _fadeAt.get(idx)
     if (at === undefined) return 1

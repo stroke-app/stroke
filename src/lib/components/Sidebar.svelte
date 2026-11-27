@@ -3511,9 +3511,9 @@
       {#await import('./ExtensionsSidebarPanel.svelte') then { default: ExtensionsSidebarPanel }}<ExtensionsSidebarPanel onopendetail={onopenextensiondetail} />{/await}
     {/if}
 
-    <!-- Footer: app-wide controls as plain icons, the same 36px row as the
-         status bar beside it, so the two share one centre line. -->
-    <div class="flex h-9 shrink-0 items-center gap-0.5 border-t border-sidebar-border/50 px-2">
+    <!-- Footer: app-wide controls as plain icons, the same row height as the
+         status bar beside it (h-8), so the two share one centre line. -->
+    <div class="flex h-8 shrink-0 items-center gap-0.5 border-t border-sidebar-border/50 px-2">
       <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={withShortcut('Settings', 'settings.open')} aria-label="Settings" onclick={onopensettings}><Icon name="settings" class="size-3.5 shrink-0" /></button>
       <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={$isCurrentThemeDark ? 'Light theme' : 'Dark theme'} aria-label="Toggle theme" onclick={() => toggleLightDark()}><Icon name={$isCurrentThemeDark ? 'sun' : 'moon'} class="size-3.5 shrink-0" /></button>
       <button type="button" class="inline-flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-sidebar-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-ring" title={withShortcut('Keyboard shortcuts', 'help.shortcuts')} aria-label="Keyboard shortcuts" onclick={onopenshortcuts}><Icon name="keyboard" class="size-3.5 shrink-0" /></button>
