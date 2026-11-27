@@ -54,6 +54,7 @@
 - Security's roles header said 0 roles while they loaded.
 - Two queries separated only by a blank line ran as one and failed with a syntax error; the error now offers Add ;, which splits them and runs the one at the caret. A trailing comment ending in all, as or in no longer hides the missing ; warning.
 - A table opened from the command menu takes the keyboard in its grid, and the ORM runner puts the caret in its code when it comes to the front, as the SQL editor does.
+- Ctrl+Shift+G opened the code editor's own search bar inside the SQL editor and the ORM runner instead of Find in database, the command the menus list on it.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
