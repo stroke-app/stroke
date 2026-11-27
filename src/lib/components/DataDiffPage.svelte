@@ -491,11 +491,21 @@
 
 <!-- ── Mode toggle ────────────────────────────────────────────────────────────── -->
 {#snippet ModeToggle({ mode, onset })}
-  <div class="flex shrink-0 items-center rounded-md border border-border/40 bg-muted/15 p-0.5 text-ui-2xs">
-    <button onclick={() => onset('table')}
-      class={cn('rounded px-2 py-0.5 font-medium transition-colors', mode === 'table' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}>Table</button>
-    <button onclick={() => onset('sql')}
-      class={cn('rounded px-2 py-0.5 font-medium transition-colors', mode === 'sql' ? 'bg-muted text-foreground' : 'text-muted-foreground hover:text-foreground')}>SQL</button>
+  <!-- The app's segmented control (TableTextView, QueriesPage): a radio group
+       whose chosen option sits raised on the track. -->
+  <div class="field-surface inline-flex h-7 shrink-0 items-center gap-0.5 bg-muted/20 p-0.5" role="radiogroup" aria-label="Source kind">
+    {#each [['table', 'Table'], ['sql', 'SQL']] as [id, label] (id)}
+      <button
+        type="button"
+        role="radio"
+        aria-checked={mode === id}
+        onclick={() => onset(/** @type {'table'|'sql'} */ (id))}
+        class={cn(
+          'inline-flex h-full items-center rounded-sm px-2.5 text-ui-xs font-medium transition-colors',
+          mode === id ? 'bg-background text-foreground elevate-1' : 'text-muted-foreground hover:text-foreground',
+        )}
+      >{label}</button>
+    {/each}
   </div>
 {/snippet}
 
