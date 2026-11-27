@@ -27,6 +27,14 @@
 		 * scrolls (html is overflow-hidden), so the lock guards nothing.
 		 */
 		preventScroll = false,
+		/** Classes for this dialog's overlay (the command menu's is clear). */
+		overlayClass = '',
+		/**
+		 * Mark <html> while open, so Linux hides the scrollbars behind the
+		 * dialog. A small centred dialog that covers no scrollbar skips it: the
+		 * flip restyles every scroll area in the app on open and close.
+		 */
+		markOpen = true,
 		/** @type {((e: Event) => void) | undefined} */
 		onCloseAutoFocus,
 		...restProps
@@ -41,7 +49,7 @@
 	// follows the content element instead: bits-ui sets `ref` while the dialog
 	// is drawn and back to null when it closes.
 	$effect(() => {
-		if (!ref) return;
+		if (!ref || !markOpen) return;
 		beginDialogOpen();
 		return () => endDialogOpen();
 	});
@@ -60,7 +68,7 @@
 </script>
 
 <DialogPortal {...portalProps}>
-	<Dialog.Overlay />
+	<Dialog.Overlay class={overlayClass} />
 	<DialogPrimitive.Content
 		bind:ref
 		{preventScroll}

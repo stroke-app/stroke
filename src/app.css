@@ -2023,9 +2023,13 @@ html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-state="ope
 html[data-os="linux"] [data-slot="dialog-content"] {
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent), 0 12px 24px -10px oklch(0 0 0 / 0.22);
 }
-/* The command menu opens many times an hour: the shorter, smaller motion. */
-html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-command-dialog][data-state="open"] {
-  animation: stroke-surface-in 120ms cubic-bezier(0.2, 0, 0, 1);
+/* The command menu opens many times an hour, and opens drawn: no motion, no
+   dimmed page behind it. On WebKitGTK's software renderer the fade, the scale
+   and a dimming overlay over the whole window each cost a repaint of the
+   first frame; together they put the menu at ~125 ms to show, past the
+   100 ms it has to appear within. */
+html:not([data-panel-motion="off"]) [data-slot="dialog-content"][data-command-dialog][data-state] {
+  animation: none;
 }
 html:not([data-panel-motion="off"]) [data-slot="button"] {
   transition: transform 80ms cubic-bezier(0.2, 0, 0, 1);
