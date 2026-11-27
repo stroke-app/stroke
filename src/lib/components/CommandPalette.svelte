@@ -39,6 +39,12 @@
      *  each is null when it does not apply.
      *  @type {{ reopen: (() => void) | null, close: (() => void) | null, closeOthers: (() => void) | null, togglePin: (() => void) | null, pinned: boolean, newTable: (() => void) | null } | null} */
     tabActions = null,
+    /** The open table's toolbar, by name; null off a table tab.
+     *  @type {{ filter: () => void, sort: () => void, columns: () => void, addRow: (() => void) | null, findReplace: (() => void) | null, refresh: () => void } | null} */
+    tableCommands = null,
+    /** Zoom and full screen, which only the View menu and their keys reached.
+     *  @type {{ zoomIn: () => void, zoomOut: () => void, zoomReset: () => void, fullscreen: () => void } | null} */
+    viewCommands = null,
     /** Explain the open editor's query, or null when no editor tab is in front.
      *  @type {(() => void) | null} */
     onexplainquery = null,
@@ -754,7 +760,7 @@
   const LOCAL_PAGES = new Set(['root', 'theme', 'pages', 'docker'])
   const localFilter = createLocalFilter(() => (LOCAL_PAGES.has(page) ? paletteSearch.trim() : ''), paletteFilter)
   setContext(LOCAL_FILTER, localFilter)
-  const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'actions', 'tabs', 'switchdb', 'database', 'launch', 'appearance']
+  const ROOT_GROUPS = ['ask', 'recent', 'views', 'schemas', 'tables', 'ai', 'queries', 'saved', 'recentq', 'export', 'table', 'actions', 'tabs', 'view', 'switchdb', 'database', 'launch', 'appearance']
   /** Root groups in page order, or best match first while searching. */
   const rootOrder = $derived.by(() => {
     if (!localFilter.search) return ROOT_GROUPS
@@ -1293,6 +1299,70 @@
             {/if}
             {/if}
           {/snippet}
+          {#snippet group_table()}
+            <!-- The table toolbar by name, while searching: "filter", "sort" or
+                 "add row" found a table called audit_notification_log_filters,
+                 or nothing. -->
+            {#if tableCommands && paletteSearch.trim()}
+            <Command.Group value="table" heading={$tx('group.Table', 'Table')}>
+                <Command.Item value="filter rows where condition narrow" keywords={['Filter rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.filter))}>
+                  <Icon name="filter" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Filter rows</span>
+                  <Command.Shortcut command="table.filterMenu" />
+                </Command.Item>
+                <Command.Item value="sort rows order by ascending descending" keywords={['Sort rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.sort))}>
+                  <Icon name="arrow-up-down" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Sort rows</span>
+                  <Command.Shortcut command="table.sortMenu" />
+                </Command.Item>
+                <Command.Item value="show hide columns visible column picker" keywords={['Show or hide columns']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.columns))}>
+                  <Icon name="eye" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Show or hide columns</span>
+                  <Command.Shortcut command="table.columnsMenu" />
+                </Command.Item>
+              {#if tableCommands.addRow}
+                <Command.Item value="add row insert new record" keywords={['Add row']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.addRow))}>
+                  <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Add row</span>
+                  <Command.Shortcut command="table.addRow" />
+                </Command.Item>
+              {/if}
+              {#if tableCommands.findReplace}
+                <Command.Item value="find and replace in column search substitute" keywords={['Find and replace']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.findReplace))}>
+                  <Icon name="replace" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Find and replace</span>
+                  <Command.Shortcut command="table.findReplace" />
+                </Command.Item>
+              {/if}
+                <Command.Item value="refresh rows reload data table" keywords={['Refresh rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.refresh))}>
+                  <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Refresh rows</span>
+                </Command.Item>
+            </Command.Group>
+            {/if}
+          {/snippet}
+          {#snippet group_view()}
+            {#if viewCommands && paletteSearch.trim()}
+            <Command.Group value="view" heading={$tx('group.View', 'View')}>
+                <Command.Item value="zoom in bigger larger text scale" keywords={['Zoom in']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomIn))}>
+                  <Icon name="plus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Zoom in</span>
+                </Command.Item>
+                <Command.Item value="zoom out smaller text scale" keywords={['Zoom out']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomOut))}>
+                  <Icon name="minus" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Zoom out</span>
+                </Command.Item>
+                <Command.Item value="actual size reset zoom 100%" keywords={['Actual size']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.zoomReset))}>
+                  <Icon name="square" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Actual size</span>
+                </Command.Item>
+                <Command.Item value="full screen fullscreen window maximize" keywords={['Full screen']} onSelect={() => run(/** @type {() => void} */ (viewCommands?.fullscreen))}>
+                  <Icon name="maximize-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Full screen</span>
+                </Command.Item>
+            </Command.Group>
+            {/if}
+          {/snippet}
           {#snippet group_tabs()}
             <!-- Only while searching, as Export: "close", "reopen" or "pin"
                  found nothing here, and four more rows in the root list
@@ -1537,6 +1607,8 @@
             {:else if id === 'export'}{@render group_export()}
             {:else if id === 'actions'}{@render group_actions()}
             {:else if id === 'tabs'}{@render group_tabs()}
+            {:else if id === 'table'}{@render group_table()}
+            {:else if id === 'view'}{@render group_view()}
             {:else if id === 'switchdb'}{@render group_switchdb()}
             {:else if id === 'database'}{@render group_database()}
             {:else if id === 'launch'}{@render group_launch()}

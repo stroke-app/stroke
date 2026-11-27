@@ -4257,6 +4257,11 @@ let rowSearch = $state('')
     })
   }
 
+  /** Run `fn` once the command menu has closed and returned focus. @param {() => void} fn */
+  function afterPalette(fn) {
+    requestAnimationFrame(() => requestAnimationFrame(fn))
+  }
+
   /** Flip the window in or out of full screen. Shared by F11 and the View menu. */
   async function toggleFullscreen() {
     try {
@@ -11563,6 +11568,17 @@ let rowSearch = $state('')
       }
     : null}
   tableStructureShown={tableViewMode === 'structure'}
+  tableCommands={activeTab?.kind === 'table' && activeTable && !aiMode && tableViewMode !== 'structure' ? {
+    // Toolbar menus open after the command menu has closed and handed focus
+    // back, or the focus return closes them again at once.
+    filter: () => afterPalette(() => tableToolbar?.openFilterMenu?.()),
+    sort: () => afterPalette(() => tableToolbar?.openSortMenu?.()),
+    columns: () => afterPalette(() => tableToolbar?.openColumnsMenu?.()),
+    addRow: tableReadonly ? null : () => afterPalette(() => dtBeginInsertRow?.()),
+    findReplace: findReplaceEnabled && !tableReadonly ? () => afterPalette(() => openFindReplacePanel()) : null,
+    refresh: () => void loadRows(),
+  } : null}
+  viewCommands={{ zoomIn: increaseZoom, zoomOut: decreaseZoom, zoomReset: resetZoom, fullscreen: () => void toggleFullscreen() }}
   tabActions={connection && !aiMode ? {
     reopen: closedTabStack.length ? reopenLastClosedTab : null,
     close: activeTabId && tabs.length > 0 ? () => void closeTab(activeTabId) : null,

@@ -210,6 +210,8 @@ export default {
   "group.AI": "IA",
   "group.Actions": "Acciones",
   "group.Tabs": "Pestañas",
+  "group.View": "Ver",
+  "group.Table": "Tabla",
   "group.Add": "Añadir",
   "group.Appearance": "Apariencia",
   "group.Ask": "Preguntar",

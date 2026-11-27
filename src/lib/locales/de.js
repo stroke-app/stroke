@@ -210,6 +210,8 @@ export default {
   "group.AI": "KI",
   "group.Actions": "Aktionen",
   "group.Tabs": "Tabs",
+  "group.View": "Ansicht",
+  "group.Table": "Tabelle",
   "group.Add": "Hinzufügen",
   "group.Appearance": "Darstellung",
   "group.Ask": "Fragen",
