@@ -45,6 +45,7 @@
 - The Enums tab and Database info: enum values read as one run of words, and a 1.4 GB database said 1444 MB.
 - The New snapshot window had no focus, Escape or dialog role, and Enter in its title did nothing.
 - After choosing an engine, the first key typed filtered the saved connections instead of going into Host.
+- With the pointer resting over the command menu or a select menu, typing moved the highlight to whatever row slid under the pointer, and Enter picked that row. The best match keeps the highlight until the pointer moves.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
