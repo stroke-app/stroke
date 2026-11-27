@@ -42,6 +42,9 @@
     /** The open table's toolbar, by name; null off a table tab.
      *  @type {{ filter: () => void, sort: () => void, columns: () => void, addRow: (() => void) | null, findReplace: (() => void) | null, refresh: () => void } | null} */
     tableCommands = null,
+    /** Text to open with: a letter typed on the New tab page starts the search
+     *  with it. Read once as the menu opens, then cleared. */
+    seed = $bindable(''),
     /** Zoom and full screen, which only the View menu and their keys reached.
      *  @type {{ zoomIn: () => void, zoomOut: () => void, zoomReset: () => void, fullscreen: () => void } | null} */
     viewCommands = null,
@@ -715,6 +718,7 @@
     }
     // Opened again before the deferred clear ran: clear now, before it shows.
     if (_resetPending) resetSearch()
+    if (seed) { paletteSearch = seed; seed = '' }
   })
   let _resetPending = false
   function resetSearch() {

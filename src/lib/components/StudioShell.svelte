@@ -4272,6 +4272,29 @@ let rowSearch = $state('')
     })
   }
 
+  /** A letter typed on the New tab page, for the command menu to open with. */
+  let commandSeed = $state('')
+  // The New tab page is a launcher: typing on it starts a search, as its
+  // search bar says, instead of the letters going nowhere. Only with nothing
+  // focused that takes text, and not for the keys that mean something on
+  // their own here (/ focuses a search, ? lists the shortcuts, Space).
+  $effect(() => {
+    /** @param {KeyboardEvent} e */
+    const onKey = (e) => {
+      if (activeTab?.kind !== 'welcome' || commandOpen || e.defaultPrevented) return
+      if (e.ctrlKey || e.metaKey || e.altKey || e.key.length !== 1 || '/? '.includes(e.key)) return
+      const el = document.activeElement
+      if (isTypingTarget(el) || (el && el !== document.body && !el.closest('[data-studio-region="main"]'))) return
+      if (document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]')) return
+      e.preventDefault()
+      commandSeed = e.key
+      commandPage = 'root'
+      commandOpen = true
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  })
+
   /** Run `fn` once the command menu has closed and returned focus. @param {() => void} fn */
   function afterPalette(fn) {
     requestAnimationFrame(() => requestAnimationFrame(fn))
@@ -11574,6 +11597,7 @@ let rowSearch = $state('')
 <CommandPalette
   bind:open={commandOpen}
   bind:page={commandPage}
+  bind:seed={commandSeed}
   onexporttable={activeTab?.kind === 'table' && activeTable && !aiMode && total > 0 ? (/** @type {string} */ f) => void handleExport(f) : null}
   exportTableName={activeTable ?? ''}
   ontablestructure={activeTab?.kind === 'table' && activeTable && canShowStructure && !aiMode
