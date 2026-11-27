@@ -723,25 +723,13 @@
 </div>
 
 <!-- ── Capture modal ─────────────────────────────────────────────────────── -->
-{#if captureOpen}
-  <div
-    class="fixed inset-0 z-50 flex items-center justify-center bg-black/65"
-    role="presentation"
-    onclick={(e) => { if (e.target === e.currentTarget) captureOpen = false }}
-  >
-    <div class="flex w-[28.75rem] flex-col overflow-hidden rounded-2xl border border-border/60 bg-popover elevate-3-rim">
-
-      <!-- Modal header -->
-      <div class="flex shrink-0 items-center gap-2.5 px-5 pt-5 pb-4">
-        <Camera class="size-4 shrink-0 text-foreground/40" />
-        <p class="flex-1 text-ui-sm font-semibold text-foreground/85">New snapshot</p>
-        <button aria-label="Close" title="Close"
-          onclick={() => { captureOpen = false }}
-          class="rounded p-1 text-muted-foreground hover:text-foreground"
-        >
-          <X class="size-3.5 shrink-0" />
-        </button>
-      </div>
+<!-- The shared dialog: it was a hand-built overlay with no dialog role,
+     no focus inside it and no Escape. -->
+<Dialog.Root bind:open={captureOpen}>
+  <Dialog.Content class="flex max-h-[85vh] max-w-[28.75rem] flex-col gap-0 overflow-hidden p-0">
+      <Dialog.Header class="px-5 pt-5 pb-4">
+        <Dialog.Title class="text-ui-sm font-semibold">New snapshot</Dialog.Title>
+      </Dialog.Header>
 
       <div class="overflow-y-auto">
         <!-- Title input -->
@@ -750,6 +738,7 @@
           <input
             bind:value={captureTitle}
             placeholder="Optional, e.g. Before migration v2"
+            onkeydown={(e) => { if (e.key === 'Enter' && !(captureLoadingSchemas || captureLoadingDbs || (!connectionId && !captureConn))) { e.preventDefault(); void doCapture() } }}
             class="no-field-frame h-9 w-full rounded-lg border-0 bg-muted/55 px-3 text-ui-sm text-foreground outline-none placeholder:text-muted-foreground focus:bg-muted/80"
           />
         </div>
@@ -870,23 +859,15 @@
           {/if}
         </p>
         <div class="flex items-center gap-2">
-          <button
-            onclick={() => { captureOpen = false }}
-            class="rounded px-3 py-1.5 text-ui-xs text-muted-foreground hover:text-foreground/80"
-          >Cancel</button>
-          <button
-            onclick={doCapture}
-            disabled={captureLoadingSchemas || captureLoadingDbs || (!connectionId && !captureConn)}
-            class="flex items-center gap-1.5 rounded-lg bg-primary px-4 py-1.5 text-ui-xs font-medium text-primary-foreground hover:bg-primary/90 active:bg-primary/80 disabled:opacity-30"
-          >
-            <Camera class="size-3 shrink-0" />
+          <Button variant="ghost" size="sm" onclick={() => { captureOpen = false }}>Cancel</Button>
+          <Button size="sm" onclick={doCapture} disabled={captureLoadingSchemas || captureLoadingDbs || (!connectionId && !captureConn)}>
+            <Camera class="size-3.5 shrink-0" />
             Capture
-          </button>
+          </Button>
         </div>
       </div>
-    </div>
-  </div>
-{/if}
+  </Dialog.Content>
+</Dialog.Root>
 
 <Dialog.Root bind:open={migrationOpen}>
   <Dialog.Content class="flex h-[min(44rem,85vh)] max-w-3xl flex-col gap-0 overflow-hidden p-0">
