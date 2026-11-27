@@ -2182,8 +2182,50 @@ import FilterX from "@lucide/svelte/icons/filter-x";
   /** Open the DML review for all staged changes (edits + deletes + a pending insert). */
   function applyPendingEdits() {
     if ((!hasPendingChanges && !pendingInsertValues()) || saving) return;
+    const one = singleCellEdit();
+    if (one) { void applyOneCell(one); return; }
     const review = pendingChangesReview();
     if (review) requestWrite(review);
+  }
+
+  /** Set while a one-cell save runs: its Undo toast replaces "Changes applied". */
+  let _quietApply = false;
+
+  /** The one staged cell edit, when that is all there is and the row has a key. */
+  function singleCellEdit() {
+    if (pendingEdits.size !== 1 || pendingDeletes.size || newRowDrafts || !primaryKey.length) return null;
+    return [...pendingEdits.values()][0];
+  }
+
+  /**
+   * One cell: saved at once and put back with Undo, instead of a review panel
+   * for a single UPDATE. Undo finds the row again by its primary key, never by
+   * its position, and writes the old value back the same way.
+   * @param {{ rowIdx: number, colIdx: number, value: unknown, original: unknown }} edit
+   */
+  async function applyOneCell(edit) {
+    const pkIdx = primaryKey.map((n) => columns.findIndex((c) => c.name === n));
+    if (pkIdx.some((i) => i < 0)) {
+      const review = pendingChangesReview();
+      if (review) requestWrite(review);
+      return;
+    }
+    const pkVals = pkIdx.map((i) => rows[edit.rowIdx]?.[i]);
+    const col = edit.colIdx;
+    const before = edit.original;
+    _quietApply = true;
+    try { await executePendingChanges(); } finally { _quietApply = false; }
+    // Failed: the error toast said why and the edit is still staged.
+    if (pendingEdits.size) return;
+    const name = columns[col]?.name ?? "cell";
+    offerUndo(`Saved ${name}`, tableName || "", async () => {
+      const idx = rows.findIndex((r) => pkIdx.every((i, k) => String(r?.[i]) === String(pkVals[k])));
+      if (idx < 0 || pendingEdits.size || pendingDeletes.size || newRowDrafts) return false;
+      pendingEdits = new Map([[editKey(idx, col), { rowIdx: idx, colIdx: col, value: before, original: rows[idx]?.[col] }]]);
+      _quietApply = true;
+      try { await executePendingChanges(); } finally { _quietApply = false; }
+      if (!pendingEdits.size) toast.message(`Put back ${name}`);
+    });
   }
 
   /**
@@ -2246,7 +2288,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     if (editedRows) parts.push(`${editedRows} row${editedRows === 1 ? "" : "s"} updated`);
     if (deleteRowIndices.length) parts.push(`${deleteRowIndices.length} row${deleteRowIndices.length === 1 ? "" : "s"} deleted`);
     if (insertValues) parts.push("1 row inserted");
-    toast.success("Changes applied", { description: parts.join(", ") });
+    if (!_quietApply) toast.success("Changes applied", { description: parts.join(", ") });
     return true;
   }
 
@@ -2320,7 +2362,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
       const parts = [];
       if (okCount > 0) parts.push(`${okCount} cell${okCount === 1 ? "" : "s"} updated`);
       if (deletedCount > 0) parts.push(`${deletedCount} row${deletedCount === 1 ? "" : "s"} deleted`);
-      toast.success(failed.length > 0 ? "Some changes applied" : "Changes applied", { description: parts.join(", ") });
+      if (!_quietApply || failed.length > 0) toast.success(failed.length > 0 ? "Some changes applied" : "Changes applied", { description: parts.join(", ") });
     }
   }
 
