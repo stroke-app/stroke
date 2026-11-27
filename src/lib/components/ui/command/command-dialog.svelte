@@ -31,6 +31,8 @@
 		)}
 		{showCloseButton}
 		{portalProps}
+		overlayClass="bg-transparent data-open:animate-none data-closed:animate-none"
+		markOpen={false}
 		data-command-dialog
 	>
 		<Command filter={filter} shouldFilter={shouldFilter} {...restProps} bind:value bind:ref {children} />

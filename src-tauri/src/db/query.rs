@@ -2013,6 +2013,43 @@ impl RowFetches {
         Some(rx)
     }
 
+    /// Stop every running fetch whose group starts with `prefix` (Find in
+    /// database's Stop): each drops its connection and its statement is
+    /// cancelled on the server. Their groups are retired, so a fetch of those
+    /// groups that has not started yet skips its query. Returns how many ran.
+    fn cancel_prefix(&self, pool: &sqlx::PgPool, prefix: &str) -> usize {
+        let mut pids: Vec<u32> = Vec::new();
+        if let Ok(mut map) = self.running.lock() {
+            for (group, (generation, list)) in map.iter_mut() {
+                if !group.starts_with(prefix) {
+                    continue;
+                }
+                *generation = u64::MAX;
+                for f in list.iter_mut() {
+                    if let Some(stop) = f.stop.take() {
+                        let _ = stop.send(());
+                    }
+                    pids.push(f.pid);
+                }
+                list.clear();
+            }
+        }
+        let n = pids.len();
+        for pid in pids {
+            let pool = pool.clone();
+            tokio::spawn(async move {
+                let _ = sqlx::query(
+                    "SELECT pg_cancel_backend(pid) FROM pg_stat_activity \
+                     WHERE pid = $1 AND usename = current_user AND datname = current_database() AND state = 'active'",
+                )
+                .bind(pid as i32)
+                .execute(&pool)
+                .await;
+            });
+        }
+        n
+    }
+
     fn end(&self, tag: &FetchTag, pid: u32) {
         if let Ok(mut map) = self.running.lock() {
             if let Some((_, list)) = map.get_mut(&tag.group) {
@@ -2022,6 +2059,11 @@ impl RowFetches {
             }
         }
     }
+}
+
+/// Stop the row fetches whose tag group starts with `prefix`; how many ran.
+pub fn cancel_row_fetches(pool: &sqlx::PgPool, prefix: &str) -> usize {
+    ROW_FETCHES.cancel_prefix(pool, prefix)
 }
 
 /// The page query, stoppable by a newer load of the same tab when tagged.

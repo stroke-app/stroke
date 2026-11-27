@@ -1722,6 +1722,20 @@ pub async fn pg_get_table_rows(
     .await
 }
 
+/// Stop the row fetches tagged with a group starting with `group_prefix`, on
+/// the server too: Find in database's Stop. Postgres only (other engines do not
+/// tag fetches); elsewhere nothing is running under a tag and this returns 0.
+#[tauri::command]
+pub async fn pg_cancel_row_fetches(state: Db<'_>, group_prefix: String) -> Result<usize, String> {
+    if group_prefix.is_empty() {
+        return Ok(0);
+    }
+    match crate::db::connection::require_pool(&state) {
+        Ok(pool) => Ok(crate::db::cancel_row_fetches(&pool, &group_prefix)),
+        Err(_) => Ok(0),
+    }
+}
+
 /// Background row count for the main grid (see `count_table_rows`). Called
 /// after `pg_get_table_rows` returns rows with `include_count: false`, so the
 /// total streams in without blocking the initial paint.

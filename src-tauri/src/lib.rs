@@ -832,6 +832,7 @@ pub fn run() {
             commands::get_table_ddl_on_connection,
             commands::pg_get_table_rows,
             commands::pg_count_table_rows,
+            commands::pg_cancel_row_fetches,
             commands::pg_search_index_status,
             commands::pg_create_search_index,
             commands::pg_get_column_stats,
