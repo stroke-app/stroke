@@ -5,7 +5,7 @@
  * positions only lived for the session: every start of the app paid it again
  * for a schema that had not changed. A layout is saved under a key made from
  * the connection, the schema, the diagram's shape settings and a signature of
- * the drawn graph (each card's name and row count, each line's ends), so any
+ * the drawn graph (each card's name and rows, each line's ends), so any
  * change to the tables or the settings misses and lays out afresh.
  *
  * localStorage, at most MAX_ENTRIES diagrams, oldest dropped first. A failed
@@ -29,7 +29,7 @@ function fnv1a(s) {
 /**
  * The key for one drawn diagram.
  * @param {{ connectionId: string, schema: string, shape: string,
- *   nodes: { id: string, rows: number }[], edges: { id: string, source: string, target: string }[] }} g
+ *   nodes: { id: string, rows: number | string }[], edges: { id: string, source: string, target: string }[] }} g
  */
 export function layoutKey({ connectionId, schema, shape, nodes, edges }) {
   const n = nodes.map((x) => `${x.id}:${x.rows}`).sort().join('|')

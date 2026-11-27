@@ -58,3 +58,12 @@ describe('erd layout cache', () => {
     expect(loadLayout(keys[8], ['users'])).not.toBeNull()
   })
 })
+
+describe('erd layout cache rows', () => {
+  it('misses when a column is renamed or moved, even with the same count', () => {
+    const base = { ...graph, nodes: [{ id: 'users', rows: 'id,name' }, { id: 'orders', rows: 'id,user_id' }] }
+    const k = layoutKey(base)
+    expect(layoutKey({ ...base, nodes: [{ id: 'users', rows: 'name,id' }, base.nodes[1]] })).not.toBe(k)
+    expect(layoutKey({ ...base, nodes: [{ id: 'users', rows: 'id,email' }, base.nodes[1]] })).not.toBe(k)
+  })
+})

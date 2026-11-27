@@ -1027,7 +1027,9 @@
       connectionId,
       schema,
       shape: `${shapeKey()}|${focusTable ?? ''}`,
-      nodes: rawNodes.map((n) => ({ id: n.id, rows: n.data.columns.length })),
+      // The rows by name, in order: lines attach to a row, so a renamed or
+      // moved column must miss even when the count is the same.
+      nodes: rawNodes.map((n) => ({ id: n.id, rows: n.data.columns.map((/** @type {any} */ c) => c.name).join(',') })),
       edges: layoutEdges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
     })
     _layoutKey = key
