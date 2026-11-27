@@ -202,9 +202,11 @@
         {/each}
       </div>
     {/if}
+    {#if !signedOut}
     <Button variant="ghost" size="icon" class="size-8 shrink-0" aria-label="Refresh" title="Refresh" disabled={loading} onclick={() => void load()}>
       <Icon name="refresh-cw" class={cn('size-3.5 shrink-0', loading && 'animate-spin')} />
     </Button>
+    {/if}
     {#if onclose}
       <Button variant="ghost" size="icon" class="size-8 shrink-0" aria-label="Close" onclick={onclose}>
         <Icon name="x" class="size-4 shrink-0" />
@@ -213,10 +215,10 @@
   </div>
 
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto">
-    <div class="mx-auto flex w-full max-w-3xl flex-col px-4 pt-3 pb-8">
+    <div class="mx-auto flex min-h-full w-full max-w-3xl flex-col px-4 pt-3 pb-8">
       {#if signedOut && loaded}
         <EmptyState
-          class="py-24"
+          class="flex-1 justify-center py-12"
           iconName="lock"
           title="Sign in to share"
           description="Share links live on your Stroke account, so you can see who opened them and revoke them from any device."
@@ -255,7 +257,7 @@
         {/if}
 
         {#if !rows.length}
-          <EmptyState class="py-20" iconName="share-2" title="No shared links yet">
+          <EmptyState class="flex-1 justify-center py-12" iconName="share-2" title="No shared links yet">
             {#snippet body()}
               Press <span class="font-medium text-foreground">Share</span> above query results, a table, a chart or the schema diagram, or ask the AI to "share this chart". Everything is encrypted on this computer first.
             {/snippet}
