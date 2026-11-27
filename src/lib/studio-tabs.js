@@ -386,7 +386,10 @@ export function tabDisplayTitle(tab) {
   // Honour a custom title: a DDL viewer ("DDL · users") and the 2nd/3rd editor
   // ("Query Editor 2") are separate buffers and must not all read "Query Editor".
   if (tab.kind === 'terminal') return tab.title || 'Terminal'
-  if (tab.kind === 'sql') return tab.title || 'Query Editor'
+  // Shown in sentence case. "Query Editor" stays the stored default (saved
+  // tabs, the numbering of new ones and the rename check compare against it);
+  // only what the tab bar and the window title show changes.
+  if (tab.kind === 'sql') return (tab.title || 'Query Editor').replace(/^Query Editor(?=$| \d+$)/, 'Query editor')
   if (tab.kind === 'notebook') return tab.title || 'Untitled notebook'
   // A document tab is named after its collection.
   if (tab.kind === 'docs') return tab.title || 'Browse'

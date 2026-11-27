@@ -84,7 +84,9 @@
     const id = renamingId
     const title = renameValue.trim()
     renamingId = null
-    if (id && title && keep) onrename?.(id, title)
+    // Unchanged: nothing to rename (the field starts on the shown title).
+    const was = id ? tabs.find((t) => t.id === id) : null
+    if (id && title && keep && (!was || title !== tabDisplayTitle(was))) onrename?.(id, title)
     if (refocus && id) {
       void tick().then(() => /** @type {HTMLElement | null} */ (document.querySelector(`[data-tab-id="${CSS.escape(id)}"] [role="tab"]`))?.focus())
     }

@@ -113,3 +113,14 @@ describe('cloneSqlTabState', () => {
     expect(cloned.sqlLoading).toBe(true)
   })
 })
+
+describe('tabDisplayTitle for SQL tabs', () => {
+  it('shows the default title in sentence case and leaves custom names alone', async () => {
+    const { tabDisplayTitle } = await import('./studio-tabs.js')
+    expect(tabDisplayTitle(/** @type {any} */ ({ kind: 'sql', title: 'Query Editor' }))).toBe('Query editor')
+    expect(tabDisplayTitle(/** @type {any} */ ({ kind: 'sql', title: 'Query Editor 3' }))).toBe('Query editor 3')
+    expect(tabDisplayTitle(/** @type {any} */ ({ kind: 'sql', title: '' }))).toBe('Query editor')
+    expect(tabDisplayTitle(/** @type {any} */ ({ kind: 'sql', title: 'Query Editor notes' }))).toBe('Query Editor notes')
+    expect(tabDisplayTitle(/** @type {any} */ ({ kind: 'sql', title: 'Monthly report' }))).toBe('Monthly report')
+  })
+})

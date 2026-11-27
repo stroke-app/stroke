@@ -348,10 +348,10 @@
   );
 
   const TABS = [
-    { id: "roles", label: "Roles & Users" },
+    { id: "roles", label: "Roles & users" },
     { id: "permissions", label: "Permissions" },
     { id: "policies", label: "Policies" },
-    { id: "rls", label: "Row Level Security" },
+    { id: "rls", label: "Row-level security" },
   ];
 </script>
 
@@ -372,7 +372,7 @@
       libsql: 'LibSQL', clickhouse: 'ClickHouse', duckdb: 'DuckDB', mssql: 'SQL Server',
     }[connectionType ?? ''] ?? (connectionType ?? 'This engine')}
     <EmptyState class="min-h-0 flex-1 justify-center p-8" icon={ShieldCheck} title={`${engineLabel} does not support roles or RLS`}
-      description={`Row Level Security and role management need PostgreSQL or CockroachDB. Manage ${engineLabel} users and permissions in the SQL editor.`} />
+      description={`Row-level security and role management need PostgreSQL or CockroachDB. Manage ${engineLabel} users and permissions in the SQL editor.`} />
   {:else}
   <!-- Tab row -->
   <div class="flex shrink-0 items-center border-b border-border bg-panel">
