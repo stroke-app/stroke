@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.8.9] - 2026-11-27
+
+### Changes
+- Explain why the Arch update could not ask for a password (#447)
+
+
 ## [3.8.8] - 2026-11-27
 
 ### Bug Fixes
