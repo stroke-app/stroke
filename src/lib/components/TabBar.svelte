@@ -417,22 +417,22 @@
           <ContextMenu.Item onSelect={() => onpintoggle(tab.id)}>
             {#if tab.pinned}
               <Icon name="pin-off" class="size-3.5 shrink-0" />
-              Unpin Tab
+              Unpin tab
             {:else}
               <Icon name="pin" class="size-3.5 shrink-0" />
-              Pin Tab
+              Pin tab
             {/if}
           </ContextMenu.Item>
           {#if tab.kind === 'table' || tab.kind === 'sql'}
             <ContextMenu.Item onSelect={() => onduplicate(tab.id)}>
               <Icon name="copy" class="size-3.5 shrink-0" />
-              Duplicate Tab
+              Duplicate tab
             </ContextMenu.Item>
           {/if}
           {#if canRename(tab)}
             <ContextMenu.Item onSelect={() => setTimeout(() => startRename(tab), 0)}>
               <Icon name="pencil" class="size-3.5 shrink-0" />
-              Rename Tab
+              Rename tab
             </ContextMenu.Item>
           {/if}
           {#if tab.kind === 'table'}
@@ -444,37 +444,37 @@
           <ContextMenu.Separator />
           <ContextMenu.Item onSelect={() => onclose(tab.id)}>
             <Icon name="x" class="size-3.5 shrink-0" />
-            Close Tab
+            Close tab
             <ContextMenu.Shortcut command="tab.close" />
           </ContextMenu.Item>
           <ContextMenu.Item disabled={!hasOtherClosable} onSelect={() => oncloseothers(tab.id)}>
             <Icon name="circle-slash" class="size-3.5 shrink-0" />
-            Close Other Tabs
+            Close other tabs
           </ContextMenu.Item>
           <ContextMenu.Item
             disabled={leftClosable.length === 0}
             onSelect={() => onclosemany(leftClosable.map((t) => t.id), tab.id)}
           >
             <Icon name="arrow-left-to-line" class="size-3.5 shrink-0" />
-            Close Tabs to Left
+            Close tabs to the left
           </ContextMenu.Item>
           <ContextMenu.Item
             disabled={rightClosable.length === 0}
             onSelect={() => onclosemany(rightClosable.map((t) => t.id), tab.id)}
           >
             <Icon name="arrow-right-to-line" class="size-3.5 shrink-0" />
-            Close Tabs to Right
+            Close tabs to the right
           </ContextMenu.Item>
           <ContextMenu.Separator />
           <ContextMenu.Item disabled={!canreopenclosed} onSelect={onreopenclosed}>
             <Icon name="history" class="size-3.5 shrink-0" />
-            Reopen last tab
+            Reopen closed tab
             <ContextMenu.Shortcut command="tab.reopen" />
           </ContextMenu.Item>
           <ContextMenu.Separator />
           <ContextMenu.Item onSelect={oncloseall}>
             <Icon name="x" class="size-3.5 shrink-0" />
-            Close All Tabs
+            Close all tabs
             <ContextMenu.Shortcut command="tab.closeAll" />
           </ContextMenu.Item>
           {/if}
