@@ -411,8 +411,10 @@
       <div
         class="flex items-center justify-between border-b border-border/40 px-3 py-2"
       >
+        <!-- No count until the roles are in: it read "0 roles" while they
+             loaded. -->
         <span class="text-ui-xs text-muted-foreground"
-          >{ownRoles.length} {ownRoles.length === 1 ? "role" : "roles"}{#if builtinRoles.length}{` · ${builtinRoles.length} built-in`}{/if}</span
+          >{#if roles !== null && !rolesLoading}{ownRoles.length} {ownRoles.length === 1 ? "role" : "roles"}{#if builtinRoles.length}{` · ${builtinRoles.length} built-in`}{/if}{/if}</span
         >
         <button
           type="button"
