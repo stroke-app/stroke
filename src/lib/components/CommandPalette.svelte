@@ -1533,7 +1533,7 @@
                   <Command.Shortcut command="tab.forward" />
                 </Command.Item>
               {/if}
-              <Command.Item value="inset content panel layout linear rounded flat appearance" onSelect={() => run(() => updateSettings({ insetPanel: document.documentElement.dataset.layout !== 'inset' }))} keywords={['Toggle inset content panel']}>
+              <Command.Item value="inset content panel layout linear rounded flat appearance" onSelect={() => run(() => updateSettings({ insetLayout: document.documentElement.dataset.layout !== 'inset' }))} keywords={['Toggle inset content panel']}>
                 <Icon name="layout-template" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                 <span data-slot="command-label" class="truncate">Toggle inset content panel</span>
               </Command.Item>

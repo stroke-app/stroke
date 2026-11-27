@@ -1958,8 +1958,8 @@
     {@render switchRow(
       'Inset content panel',
       'The page sits in a rounded panel, with the sidebar, title bar and status bar around it on one background. Off, regions meet at hairlines.',
-      settings.insetPanel !== false,
-      () => { settings = updateSettings({ insetPanel: settings.insetPanel === false }); },
+      settings.insetLayout === true,
+      () => { settings = updateSettings({ insetLayout: settings.insetLayout !== true }); },
     )}
   {/if}
   {#if show('Animate panels', 'Slide the sidebar, the terminal and the AI panel; menus and dialogs ease in')}
