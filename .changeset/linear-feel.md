@@ -46,6 +46,13 @@
 - The New snapshot window had no focus, Escape or dialog role, and Enter in its title did nothing.
 - After choosing an engine, the first key typed filtered the saved connections instead of going into Host.
 - With the pointer resting over the command menu or a select menu, typing moved the highlight to whatever row slid under the pointer, and Enter picked that row. The best match keeps the highlight until the pointer moves.
+- Ctrl+F on a page with its own search (activity log, extensions, saved queries) went to the sidebar filter.
+- A computed SQLite column (sum(x), a CASE) showed null as its type, and the ghost semicolon sat after a run's timing instead of against the statement.
+- A bar chart of 20 rows in the results pane printed all 20 values over one another; values that would collide are left out.
+- SQLite query plans showed rows 0 and own cost 0.00 on every step, numbers SQLite never gives.
+- Find in database could sit on "Searching 184 of 185 tables" with no word on which table and no way out. It names the last tables it is reading and offers Stop, keeping what was found.
+- Security's roles header said 0 roles while they loaded.
+- The open tabs list could switch to a tab but not close one.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
@@ -73,3 +80,8 @@
 - Show / hide columns keeps the keyboard on the row just toggled.
 - The schema diagram remembers its layout: a schema laid out before opens at once after a restart instead of spending seconds on Laying out the diagram. Any change to its tables or settings lays it out again.
 - Labels that were still in Title Case read in sentence case like the rest: query editor tabs, the Security tabs, Account & sync, Instance insights table headers, Local servers and the MCP server window.
+- A failed connect offers Edit, which opens that connection's settings with the caret in its first field.
+- An empty table offers Add row, and the command menu has the table's Structure, which was only in the toolbar's overflow menu.
+- The ORM runner, activity log, record view and role SQL dialog use the shared search field, segmented filter and keycaps; search icons sit at the same inset in every hand-built search box.
+- The structure view on read-only engines drops its dropdown arrows, and its tabs share one font. Data diff marks its row filter with the structure view's pill.
+- The relation tree's table list and a role's grants load behind skeletons instead of a spinner.
