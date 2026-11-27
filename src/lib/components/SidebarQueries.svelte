@@ -1,5 +1,5 @@
 <script>
-  import { comboTitle } from '$lib/shortcuts.js'
+  import Kbd from './Kbd.svelte'
   /**
    * The sidebar's Queries tab: the connection's saved queries as a tree, with
    * folders. The same store as Saved in the SQL console's results pane, so the
@@ -349,7 +349,7 @@
     <div class="flex flex-1 flex-col items-center justify-center gap-2 px-6 text-center">
       <Icon name="file-code" class="size-5 shrink-0 text-muted-foreground" />
       <p class="text-ui-sm text-foreground">No saved queries</p>
-      <p class="text-ui-xs text-muted-foreground">{comboTitle('Mod+S')} in a query editor saves its query here.</p>
+      <p class="text-ui-xs text-muted-foreground"><Kbd combo="Mod+S" /> in a query editor saves its query here.</p>
       <Button variant="outline" size="sm" class="mt-1" disabled={!connectionId} onclick={() => onnew(null)}>
         <Icon name="plus" class="size-3.5 shrink-0" />New query
       </Button>

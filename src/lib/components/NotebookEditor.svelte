@@ -457,8 +457,8 @@
       <DropdownMenu.Root>
         <DropdownMenu.Trigger class={toolBtn} title={`Save (${comboTitle('Mod+S')})`}><Save class="size-3.5 shrink-0" />Save<ChevronDown class="size-3 shrink-0 opacity-60" /></DropdownMenu.Trigger>
         <DropdownMenu.Content align="end" class="min-w-56">
-          <DropdownMenu.Item onSelect={() => void save()}>Save<span class="ml-auto text-ui-3xs text-muted-foreground">{comboTitle('Mod+S')}</span></DropdownMenu.Item>
-          <DropdownMenu.Item onSelect={() => void saveAs()}>Save as…<span class="ml-auto text-ui-3xs text-muted-foreground">{comboTitle('Mod+Shift+S')}</span></DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => void save()}>Save<DropdownMenu.Shortcut combo="Mod+S" /></DropdownMenu.Item>
+          <DropdownMenu.Item onSelect={() => void saveAs()}>Save as…<DropdownMenu.Shortcut combo="Mod+Shift+S" /></DropdownMenu.Item>
           <DropdownMenu.Separator />
           <DropdownMenu.CheckboxItem checked={autosave} onCheckedChange={toggleAutosave}>Autosave to the file</DropdownMenu.CheckboxItem>
         </DropdownMenu.Content>
