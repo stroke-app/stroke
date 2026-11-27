@@ -1014,7 +1014,7 @@
           : 'show-scrollbar max-h-[min(420px,56vh)] pb-2 [mask-image:linear-gradient(to_bottom,black_calc(100%-16px),transparent)]'}
       >
         {#if page !== 'ask' && !LOCAL_PAGES.has(page)}
-          <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</Command.Empty>
+          <Command.Empty class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results')}</Command.Empty>
         {/if}
 
         <!-- Shared page-destination row (root "Views" + "Go to page" navigator) -->
@@ -1647,7 +1647,7 @@
         <!-- A page that filters its own rows draws its own empty state: bits-ui's
              search is empty there, so its Command.Empty never shows. -->
         {#if LOCAL_PAGES.has(page) && localFilter.search && localFilter.count === 0}
-          <p class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results.')}</p>
+          <p class="py-8 text-center text-ui-xs text-muted-foreground">{$tx('cmd.noResults', 'No results')}</p>
         {/if}
 
       </Command.List>

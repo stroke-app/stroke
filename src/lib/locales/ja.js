@@ -201,7 +201,7 @@ export default {
   "cmd.Data diff": "データの差分",
   "cmd.New notebook": "新しいノートブック",
   "cmd.Open notebook\u2026": "ノートブックを開く…",
-  "cmd.noResults": "結果がありません。",
+  "cmd.noResults": "結果がありません",
   "cmd.ph.root": "テーブル、スキーマ、コマンドを検索…",
   "cmd.ph.tables": "テーブルとビューを検索…",
   "cmd.ph.ask": "続けて質問…",

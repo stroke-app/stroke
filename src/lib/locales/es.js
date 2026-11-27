@@ -201,7 +201,7 @@ export default {
   "cmd.Data diff": "Comparar datos",
   "cmd.New notebook": "Nuevo cuaderno",
   "cmd.Open notebook\u2026": "Abrir cuaderno…",
-  "cmd.noResults": "Sin resultados.",
+  "cmd.noResults": "Sin resultados",
   "cmd.ph.root": "Buscar tablas, esquemas, comandos…",
   "cmd.ph.tables": "Buscar tablas y vistas…",
   "cmd.ph.ask": "Haz otra pregunta…",
