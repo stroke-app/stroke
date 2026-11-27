@@ -285,14 +285,14 @@
   </div>
 
   <div class="app-scroll min-h-0 flex-1 overflow-y-auto">
-    <div class="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
+    <div class="mx-auto flex min-h-full w-full max-w-4xl flex-col gap-5 px-6 py-6">
       {#if error}
         <div class="flex flex-col items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3" role="alert">
           <p class="text-ui-sm font-medium text-destructive">Could not read the migrations table</p>
           <p class="text-ui-xs break-words text-muted-foreground">{error}</p>
         </div>
       {:else if neither}
-        <EmptyState class="py-20" icon={GitMerge} title="No migrations in this database yet">
+        <EmptyState class="flex-1 justify-center py-12" icon={GitMerge} title="No migrations in this database yet">
           {#snippet body()}There's no <code class="font-mono">_prisma_migrations</code>, <code class="font-mono">__drizzle_migrations</code> or <code class="font-mono">d1_migrations</code> table here. Pick the project folder to see what would run.{/snippet}
           <Button size="sm" onclick={() => void chooseFolder()}><FolderOpen class="size-3.5 shrink-0" />Pick project folder</Button>
         </EmptyState>
