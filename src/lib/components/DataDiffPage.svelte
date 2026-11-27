@@ -602,7 +602,7 @@
           ><Plus class="size-3 shrink-0" />{col}</button>
         {/each}
         {#if !keyColSuggestions.length && !selectedKeyCols.size}
-          <span class="text-ui-2xs italic text-muted-foreground">auto, uses first column</span>
+          <span class="text-ui-2xs text-muted-foreground">The first column is the key unless you choose one</span>
         {/if}
       </div>
       <!-- Beside Compare, not in the header: it re-lists what the pickers above
