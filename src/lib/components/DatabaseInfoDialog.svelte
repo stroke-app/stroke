@@ -21,9 +21,7 @@
     <Dialog.Content showCloseButton={false} class="w-[min(27.5rem,calc(100vw-2rem))] gap-0 overflow-hidden p-0 sm:max-w-none">
 
       <div class="flex items-start gap-3.5 border-b border-border/25 px-5 pt-5 pb-4">
-        <div class="mt-px flex size-8 shrink-0 items-center justify-center rounded-lg bg-muted/50">
-          <Icon name="database" class="size-3.5 shrink-0 text-muted-foreground" />
-        </div>
+        <Icon name="database" class="mt-0.5 size-4 shrink-0 text-muted-foreground" />
         <div class="min-w-0 flex-1">
           <Dialog.Title class="truncate font-mono text-ui-sm font-semibold text-foreground">{name}</Dialog.Title>
           <p class="mt-0.5 text-ui-2xs text-muted-foreground">Database properties</p>

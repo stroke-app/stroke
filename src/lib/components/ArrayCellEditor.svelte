@@ -106,9 +106,7 @@
     <div class="flex max-h-[80vh] w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border/50 bg-background elevate-3-rim">
       <!-- Header -->
       <div class="flex items-center gap-3 border-b border-border/15 px-4 py-3.5">
-        <div class="flex size-8 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary">
-          <Brackets class="size-4 shrink-0" />
-        </div>
+        <Brackets class="size-4 shrink-0 text-muted-foreground" />
         <div class="min-w-0 flex-1">
           <p class="truncate text-ui-sm font-semibold tracking-tight text-foreground antialiased">{column}</p>
           <p class="truncate text-ui-2xs leading-relaxed text-muted-foreground">

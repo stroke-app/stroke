@@ -1433,9 +1433,7 @@
 <div class="flex min-h-0 flex-1 flex-col">
   {#if !connection && roots.length === 0}
     <div class="flex flex-col items-center gap-3 px-6 py-14 text-center">
-      <div class="flex size-10 items-center justify-center rounded-lg border border-border bg-muted/30">
-        <Icon name="list-tree" class="size-5 shrink-0 text-muted-foreground" />
-      </div>
+      <Icon name="list-tree" class="size-6 shrink-0 text-muted-foreground" strokeWidth={1.5} />
       <p class="max-w-[16rem] text-ui-xs font-medium text-foreground">No connections yet</p>
     </div>
   {:else}
