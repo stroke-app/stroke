@@ -388,7 +388,6 @@
     listIndexes,
     listEnums,
     listFunctions,
-    cancelQuery,
     pingConnection,
     listTriggers,
     listSequences,
@@ -10437,13 +10436,13 @@ let rowSearch = $state('')
    * Stop waiting for a table load that is taking too long. A connection that
    * dropped mid-query (Wi-Fi off, a VPN gone) leaves the read waiting on a dead
    * socket for minutes, with a spinner and no way out. The pending load is let
-   * go (its result, if it ever comes, is dropped), the server is asked to cancel,
-   * and the error panel offers Retry, which reconnects first.
+   * go (its result, if it ever comes, is dropped) and the error panel offers
+   * Retry, which reconnects first. No cancel is sent: cancel_query without an
+   * id stops every running query, a SQL run in another tab included.
    */
   function stopRowLoad() {
     const tabId = activeTabId
     bumpLoadSeq(tabId)
-    void cancelQuery(undefined).catch(() => {})
     const msg = 'Stopped waiting for the database. It may be unreachable.'
     connectionLost = true
     patchTableTab(tabId ?? '', { loadingRows: false, error: msg })
