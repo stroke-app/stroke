@@ -1049,6 +1049,11 @@
     // opening the picker and closing again doesn't ask about discarding changes
     // nobody made. Only editing a saved connection can be dirty.
     if (!editingId) baseline = snapshot();
+    // The form's first field takes the caret, its default selected so typing
+    // replaces it. Focus stayed in the picker's search, and the first key
+    // typed filtered the saved list instead. File engines have no host field;
+    // focusField does nothing there.
+    if (entryMode === "manual") void tick().then(() => focusField("cn-host"));
   }
 
   /** Back to the picker, keeping whatever has been typed so far. */
