@@ -1272,7 +1272,9 @@
             {#if connected && listAll}
             {#if queryHistory.length > 0}
               <Command.Group value="recentq" heading={$tx('group.Recent queries', 'Recent queries')}>
-                {#each queryHistory.slice(0, 20) as entry (entry.id)}
+                <!-- Five on the empty menu, twenty to search: fourteen history rows
+                     made the root list longer than everything above them. -->
+                {#each queryHistory.slice(0, paletteSearch.trim() ? 20 : 5) as entry (entry.id)}
                   <Command.Item value="recent query {entry.title} {entry.sql}" keywords={[entry.title ?? '']} onSelect={() => run(() => onqueryselect(entry.sql))}>
                     <Icon name="history" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                     <span data-slot="command-label" class="min-w-0 truncate font-mono text-ui-xs">{entry.title}</span>
