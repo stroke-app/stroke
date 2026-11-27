@@ -1485,7 +1485,9 @@
       description: fix ? fix.hint : msg,
       // Unrecognised failures show the driver's own words, so they get the
       // monospace treatment the toast already has for raw output.
-      ...(fix ? {} : { code: true }),
+      // A sentence of the app's own ("The saved credentials ... were
+      // rejected.") reads as prose; only raw output gets monospace.
+      ...(fix || /^[A-Z][^\n]{0,400}[.!?]$/.test(msg.trim()) ? {} : { code: true }),
       duration: 9000,
       ...(fix?.action
         ? { action: { label: fix.actionLabel, onClick: fix.action } }

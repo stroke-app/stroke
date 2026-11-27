@@ -1,5 +1,6 @@
 <script>
   import { formatApiCall } from '$lib/dynamo-json.js'
+  import { Button } from '$lib/components/ui/button/index.js'
   import { isNightly } from '$lib/build-track.js'
   import { sqlFamily, SQL_SNIPPETS } from '$lib/sql-complete-data.js'
   import { spannerIsPg } from '$lib/sql-ident.js'
@@ -41,6 +42,7 @@
   import { createHotkey } from '@tanstack/svelte-hotkeys'
   import { createCommandHotkey, matchesCommand } from '$lib/command-hotkey.js'
   import { IS_MAC } from '$lib/shortcuts.js'
+  import { detectOs } from '$lib/platform.js'
   import { isTypingTarget } from '$lib/focus-search.js'
   import { slashFocusTarget } from '$lib/slash-focus.js'
   import { offerUndo } from '$lib/undo-toast.js'
@@ -1218,9 +1220,11 @@
     // down; Tauri can't move them after launch), so the row only grows as much
     // as its zoomed buttons need. Scaling it as 38px x zoom put the icons 6pt
     // below the lights at 135%.
-    root.style.setProperty('--app-titlebar-h', IS_MAC ? 'max(38px, calc(24px * var(--app-scale, 1) + 8px))' : 'calc(36px * var(--app-scale, 1))')
-    // The status bar is h-7 (28px at 100%), growing cleanly with app zoom.
-    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 9)' : '0px')
+    // Linux is 32px: with the tab row under it, 36px read as a tall header
+    // beside GNOME's own windows. Windows keeps 36px for its caption buttons.
+    root.style.setProperty('--app-titlebar-h', IS_MAC ? 'max(38px, calc(24px * var(--app-scale, 1) + 8px))' : detectOs() === 'linux' ? 'calc(32px * var(--app-scale, 1))' : 'calc(36px * var(--app-scale, 1))')
+    // The status bar is h-8, growing cleanly with app zoom.
+    root.style.setProperty('--app-statusbar-h', !aiMode && statusBarVisible ? 'calc(var(--spacing) * 8)' : '0px')
   })
   // Width for the loading-fallback shell, so the spinner fills a properly-sized
   // sidebar panel (matching saved width) instead of a zero-width strip while the
@@ -13384,20 +13388,13 @@ let rowSearch = $state('')
     tabindex="-1"
     use:focusTrap
   >
-    <div class="w-full max-w-sm rounded-2xl border border-border/60 bg-background p-5 elevate-3-rim">
-      <p id="confirm-dialog-message" class="text-ui-sm text-foreground">{confirmDialog.message}</p>
+    <!-- The app's dialog frame and buttons: it was hand-built, a solid red
+         button with black text inside a blue focus ring. -->
+    <div class="w-full max-w-sm rounded-lg border border-border/70 bg-popover p-5 elevate-3-rim">
+      <p id="confirm-dialog-message" class="text-ui-sm leading-relaxed text-foreground">{confirmDialog.message}</p>
       <div class="mt-4 flex justify-end gap-2">
-        <button
-          type="button"
-          onclick={() => resolveConfirm(false)}
-          class="inline-flex h-8 items-center rounded-md px-3 text-ui-xs text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-        >Cancel</button>
-        <button
-          type="button"
-          data-autofocus
-          onclick={() => resolveConfirm(true)}
-          class="inline-flex h-8 items-center rounded-md bg-destructive px-3 text-ui-xs font-medium text-destructive-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring"
-        >{confirmDialog.confirmLabel}</button>
+        <Button variant="ghost" size="sm" onclick={() => resolveConfirm(false)}>Cancel</Button>
+        <Button variant="destructive" size="sm" data-autofocus onclick={() => resolveConfirm(true)}>{confirmDialog.confirmLabel}</Button>
       </div>
     </div>
   </div>

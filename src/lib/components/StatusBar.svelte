@@ -492,7 +492,7 @@
 {/snippet}
 
 <div
-  class={cn('@container/sb flex h-9 shrink-0 items-center gap-0.5 border-t border-border/50 bg-panel text-ui-xs text-muted-foreground select-none', 'px-2')}
+  class={cn('@container/sb flex h-8 shrink-0 items-center gap-0.5 border-t border-border/50 bg-panel text-ui-xs text-muted-foreground select-none', 'px-2')}
   data-studio-region="statusbar"
 >
   <!-- ── Left group ──────────────────────────────────────────────────── -->
@@ -798,15 +798,16 @@
       <!-- Live mode toggle (experimental, only shown when enabled in Settings) -->
       {#if liveSupported && $appLiveMode}
         {@render sep()}
-        <!-- A pill: a ringed dot that breathes while it is watching, a hollow
-             one while it is not. The tooltip says how changes are detected. -->
+        <!-- A status-bar item like its neighbours, not a bordered capsule: a dot
+             that glows while it is watching and a hollow one while it is not.
+             The tooltip says how changes are detected. -->
         <button
           type="button"
           class={cn(
-            'mx-0.5 inline-flex h-6 items-center gap-1.5 rounded-full border px-2 text-ui-2xs font-medium transition-[background-color,color,border-color] duration-150',
+            'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-ui-xs transition-colors',
             live
-              ? 'border-success/30 bg-success/10 text-success hover:bg-success/15'
-              : 'border-border/70 text-muted-foreground hover:bg-muted/50 hover:text-foreground',
+              ? 'text-success hover:bg-success/10'
+              : 'text-muted-foreground hover:bg-sidebar-accent/60 hover:text-foreground',
           )}
           onclick={ontogglelive}
           aria-pressed={live}
@@ -816,8 +817,7 @@
         >
           <span class="relative flex size-2 shrink-0 items-center justify-center" aria-hidden="true">
             {#if live}
-              <span class="absolute inline-flex size-full rounded-full bg-success/60 motion-safe:animate-ping"></span>
-              <span class="relative inline-flex size-1.5 rounded-full bg-success"></span>
+              <span class="inline-flex size-1.5 rounded-full bg-success shadow-[0_0_0_3px_color-mix(in_oklab,var(--success)_22%,transparent)] motion-safe:animate-pulse"></span>
             {:else}
               <span class="inline-flex size-1.5 rounded-full border border-current"></span>
             {/if}

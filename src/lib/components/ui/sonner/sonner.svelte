@@ -158,6 +158,7 @@
   {/if}
 
   {#each visible as t, i (t.id)}
+    {@const actionBelow = !!t.action && (!!t.code || (t.description?.length ?? 0) > 60)}
     <div
       class={base}
       style="font-family: var(--font-sans); font-size: var(--app-font-size);"
@@ -182,7 +183,7 @@
         </span>
       {/if}
 
-      <div class="flex min-w-0 flex-1 flex-col {t.action ? 'pr-2' : 'pr-5'}">
+      <div class="flex min-w-0 flex-1 flex-col {t.action && !actionBelow ? 'pr-2' : 'pr-5'}">
         <div
           class="text-ui-sm font-medium leading-snug text-foreground"
         >
@@ -207,8 +208,19 @@
             {/if}
           </div>
         {/if}
+        {#if actionBelow && t.action}
+          <!-- A long message keeps the toast's width: beside it, the button
+               squeezed the text into a column a few words wide. -->
+          <button
+            type="button"
+            class="mt-2 self-start rounded-md bg-muted/70 px-2.5 py-1 text-ui-xs font-medium text-foreground transition-colors hover:bg-accent"
+            onclick={() => { t.action?.onClick(); toast.dismiss(t.id) }}
+          >
+            {t.action.label}
+          </button>
+        {/if}
       </div>
-      {#if t.action}
+      {#if t.action && !actionBelow}
         <!-- Beside the message, not under it: a third line made an Undo toast
              a card, and the eye had to drop to find the button. Clear of the
              close button that shows on hover in the top corner. -->
