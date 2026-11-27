@@ -62,6 +62,19 @@
   let regexError = $state('')
   /** Tables whose query failed (permissions, a type the predicate can't read). */
   let failed = $state(0)
+  /** Tables being read right now, as "schema.name". */
+  let inFlight = $state(/** @type {string[]} */ ([]))
+  /** Tables left unread because the search was stopped. */
+  let skipped = $state(0)
+  /** Stop waiting: keep what was found, say how many tables were left. A big
+   *  table over a slow link held the page at "184 of 185" with no way out. */
+  function stopSearch() {
+    searchGeneration++
+    skipped = progress.total - progress.done
+    inFlight = []
+    searching = false
+    searched = true
+  }
   /** The highlighted result, for arrow keys and Enter. */
   let selected = $state(-1)
   /** @type {HTMLInputElement | null} */
@@ -83,6 +96,8 @@
       results = []
       searched = false
       failed = 0
+      skipped = 0
+      inFlight = []
       selected = -1
       progress = { done: 0, total: 0 }
       schemaTables.clear()
@@ -138,6 +153,8 @@
     results = []
     searched = false
     searching = false
+    skipped = 0
+    inFlight = []
     progress = { done: 0, total: 0 }
   }
 
@@ -172,6 +189,8 @@
     searched = false
     results = []
     failed = 0
+    skipped = 0
+    inFlight = []
     selected = -1
 
     /** @param {TableInfo & { kind?: string }} t */
@@ -205,6 +224,8 @@
       while (index < searchable.length && searchGeneration === gen) {
         const t = searchable[index++]
         if (!t) continue
+        const key = `${t.schema}.${t.name}`
+        inFlight = [...inFlight, key]
         try {
           const res = await getTableRows(t.schema, t.name, 1, 0, {
             ...searchParams,
@@ -227,6 +248,7 @@
           if (searchGeneration === gen) failed++
         }
         if (searchGeneration === gen) {
+          inFlight = inFlight.filter((k) => k !== key)
           progress = { done: progress.done + 1, total: progress.total }
         }
       }
@@ -423,10 +445,18 @@
             <span class="block h-full rounded-full bg-primary transition-[width] duration-150" style="width: {progressPct}%"></span>
           </span>
           {#if results.length}<span>· {results.length} with matches</span>{/if}
+          <!-- The last few tables, named: the wait is usually one big one. -->
+          {#if inFlight.length && inFlight.length <= 2 && progress.total - progress.done <= 2}
+            <span class="min-w-0 truncate">· reading {inFlight.map((k) => k.startsWith(`${schema}.`) ? k.slice(schema.length + 1) : k).join(', ')}</span>
+          {/if}
+          <button type="button" class="shrink-0 rounded-md px-1.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline" onclick={stopSearch}>Stop</button>
         {:else if searched && results.length}
           <span><span class="font-medium text-foreground">{totalMatches.toLocaleString()}</span> {totalMatches === 1 ? 'match' : 'matches'} in <span class="font-medium text-foreground">{results.length}</span> of {progress.total} tables</span>
         {:else if !query.trim()}
           {#if !canScope}<span>{relationCount(tables)} in {schema}</span>{/if}
+        {/if}
+        {#if skipped && !searching && query.trim()}
+          <span>· {skipped} {skipped === 1 ? 'table' : 'tables'} not searched</span>
         {/if}
         {#if failed && !searching && query.trim()}
           <!-- The dot separates it from a results line; alone it led with one. -->
@@ -485,7 +515,7 @@
         <EmptyState class="py-20" icon={Search}>
           {#snippet heading()}Nothing matches <span class="font-mono">"{query.trim()}"</span>{/snippet}
           {#snippet body()}
-            Searched {progress.total} table{progress.total === 1 ? '' : 's'} in {scope === 'all' && canScope ? `${userSchemas.length} schemas` : schema}.
+            Searched {progress.total - skipped} table{progress.total - skipped === 1 ? '' : 's'} in {scope === 'all' && canScope ? `${userSchemas.length} schemas` : schema}{#if skipped}, stopped before {skipped} more{/if}.
             {#if matchCase || wholeWord}Try without {matchCase && wholeWord ? 'Match case and Whole word' : matchCase ? 'Match case' : 'Whole word'}.{/if}
           {/snippet}
         </EmptyState>
