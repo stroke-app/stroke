@@ -2134,7 +2134,7 @@
           <div
             role="tablist"
             aria-label="Sidebar sections"
-            class="flex min-w-0 flex-1 items-center gap-0.5 overflow-hidden"
+            class="flex min-w-0 flex-1 items-stretch gap-0.5 self-stretch overflow-hidden"
             bind:clientWidth={tabStripW}
           >
             {#each stripTabs.shown as tab (tab.id)}
