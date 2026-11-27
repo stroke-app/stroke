@@ -40,7 +40,7 @@
      *  @type {{ reopen: (() => void) | null, close: (() => void) | null, closeOthers: (() => void) | null, togglePin: (() => void) | null, pinned: boolean, newTable: (() => void) | null } | null} */
     tabActions = null,
     /** The open table's toolbar, by name; null off a table tab.
-     *  @type {{ filter: () => void, sort: () => void, columns: () => void, addRow: (() => void) | null, findReplace: (() => void) | null, refresh: () => void } | null} */
+     *  @type {{ filter: () => void, sort: () => void, columns: () => void, addRow: (() => void) | null, findReplace: (() => void) | null, refresh: () => void, view: ((v: string) => void) | null, openInSql: () => void } | null} */
     tableCommands = null,
     /** Text to open with: a letter typed on the New tab page starts the search
      *  with it. Read once as the menu opens, then cleared. */
@@ -1341,6 +1341,45 @@
                 <Command.Item minScore={0.3} value="refresh rows reload data table" keywords={['Refresh rows']} onSelect={() => run(/** @type {() => void} */ (tableCommands?.refresh))}>
                   <Icon name="refresh-cw" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
                   <span data-slot="command-label" class="truncate">Refresh rows</span>
+                </Command.Item>
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="table grid rows view" keywords={['Table view']} onSelect={() => run(() => tableCommands?.view?.('table'))}>
+                    <Icon name="table-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Table view</span>
+                    <Command.Shortcut command="table.view.1" />
+                  </Command.Item>
+                {/if}
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="json view objects" keywords={['JSON view']} onSelect={() => run(() => tableCommands?.view?.('json'))}>
+                    <Icon name="braces" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">JSON view</span>
+                    <Command.Shortcut command="table.view.2" />
+                  </Command.Item>
+                {/if}
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="record view one row form card" keywords={['Record view']} onSelect={() => run(() => tableCommands?.view?.('record'))}>
+                    <Icon name="file-text" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Record view</span>
+                    <Command.Shortcut command="table.view.3" />
+                  </Command.Item>
+                {/if}
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="text view plain ascii" keywords={['Text view']} onSelect={() => run(() => tableCommands?.view?.('text'))}>
+                    <Icon name="wrap-text" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Text view</span>
+                    <Command.Shortcut command="table.view.4" />
+                  </Command.Item>
+                {/if}
+                {#if tableCommands.view}
+                  <Command.Item minScore={0.3} value="chart view graph plot visualize" keywords={['Chart view']} onSelect={() => run(() => tableCommands?.view?.('chart'))}>
+                    <Icon name="bar-chart-2" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                    <span data-slot="command-label" class="truncate">Chart view</span>
+                    <Command.Shortcut command="table.view.5" />
+                  </Command.Item>
+                {/if}
+                <Command.Item minScore={0.3} value="open table in sql editor select query" keywords={['Open in SQL editor']} onSelect={() => run(() => tableCommands?.openInSql())}>
+                  <Icon name="terminal" class="size-4 shrink-0 text-muted-foreground group-data-[selected]/command-item:text-foreground" />
+                  <span data-slot="command-label" class="truncate">Open in SQL editor</span>
                 </Command.Item>
             </Command.Group>
             {/if}

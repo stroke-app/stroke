@@ -11616,6 +11616,8 @@ let rowSearch = $state('')
     addRow: tableReadonly ? null : () => afterPalette(() => dtBeginInsertRow?.()),
     findReplace: findReplaceEnabled && !tableReadonly ? () => afterPalette(() => openFindReplacePanel()) : null,
     refresh: () => void loadRows(),
+    view: columns.length ? (/** @type {string} */ v) => { dataViewMode = /** @type {any} */ (v) } : null,
+    openInSql: () => openTableInSqlEditor(),
   } : null}
   viewCommands={{ zoomIn: increaseZoom, zoomOut: decreaseZoom, zoomReset: resetZoom, fullscreen: () => void toggleFullscreen() }}
   tabActions={connection && !aiMode ? {
