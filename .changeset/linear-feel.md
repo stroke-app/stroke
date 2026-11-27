@@ -42,6 +42,9 @@
 - A connection's hover card printed the engine's id (sqlite) instead of its name.
 - With the database unreachable, a table refresh waited over a minute with every control greyed out, and a SQL Stop sat on Stopping. The refresh button stops a slow load, a first load offers Stop after 6 seconds, and Stop ends a run whose cancel goes unanswered.
 - The Enums tab called every enum unused, and Find in database cut a long value before the match it found.
+- The Enums tab and Database info: enum values read as one run of words, and a 1.4 GB database said 1444 MB.
+- The New snapshot window had no focus, Escape or dialog role, and Enter in its title did nothing.
+- After choosing an engine, the first key typed filtered the saved connections instead of going into Host.
 
 ### Changes
 - Deleting a saved connection, AI chat, dashboard, dashboard card, saved chart, saved table view, virtual column, diagram or schema snapshot, or clearing the activity log or chat history, asks nothing and offers Undo for 8 seconds instead.
@@ -64,3 +67,6 @@
 - A new notebook opens with the caret in its cell, Recent table names use the full row width, and the peek card shows long table names whole.
 - Searching Settings or the keyboard shortcuts matches at the start of words, so "port" no longer lists every Import and Export, and "tab" no longer lists Switch database.
 - Both export menus list each format with a short description and without a repeated icon. Ctrl+Shift+E is named Toggle AI panel, which is what it opens.
+- Menus and dialogs lost their leftover icon tiles and repeated row icons; the tab menu, Relations headers and Structure view's Unique column read like the rest of the app, and Structure says No default where a NOT NULL column has none.
+- Empty Dashboard, Policies and Charts pages show one way to add the first item instead of two.
+- Show / hide columns keeps the keyboard on the row just toggled.
