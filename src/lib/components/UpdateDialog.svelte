@@ -51,6 +51,8 @@
   let downloadedBytes = $state(0)
   let totalBytes = $state(0)
   let errorMsg = $state('')
+  /** A command that installs the update by hand, split out of the error. */
+  let errorCommand = $state(/** @type {string | null} */ (null))
   let dismissed = $state(false)
   let checking = $state(false)
   let restarting = $state(false)
@@ -320,8 +322,24 @@
    */
   function fail(action, e) {
     failedAction = action
-    errorMsg = e instanceof Error ? e.message : String(e)
+    const msg = e instanceof Error ? e.message : String(e)
+    // Rust appends the package manager command as a fallback. Show it in the
+    // copy box instead of inside the sentence.
+    const m = msg.match(/^([\s\S]*?)\s*You can also run: (.+)$/)
+    errorMsg = m ? m[1] : msg
+    errorCommand = m ? m[2].trim() : null
     status = 'error'
+  }
+
+  async function copyErrorCommand() {
+    if (!errorCommand) return
+    try {
+      await navigator.clipboard.writeText(errorCommand)
+      copied = true
+      setTimeout(() => (copied = false), 1600)
+    } catch (e) {
+      console.error('[updater] copy failed:', e)
+    }
   }
 
   /** Re-run whatever failed: the download or install if we have an update, else the check. */
@@ -568,7 +586,16 @@
           {/if}
         </h2>
         {#if status === 'error'}
-          <p class="text-ui-xs break-words font-mono text-destructive">{errorMsg}</p>
+          <p class="mt-1 text-ui-sm text-pretty break-words text-muted-foreground">{errorMsg}</p>
+          {#if errorCommand}
+            <p class="mt-2 text-ui-xs text-muted-foreground">Or update from a terminal:</p>
+            <div class="mt-1 flex items-center gap-1 rounded-md bg-muted/40 py-1 ps-3 pe-1">
+              <code class="min-w-0 flex-1 truncate font-mono text-ui-xs text-foreground select-all">{errorCommand}</code>
+              <button type="button" class="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md px-2 text-ui-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={() => void copyErrorCommand()}>
+                {#if copied}<CheckCircle2 class="size-3.5 shrink-0 text-success" />Copied{:else}Copy{/if}
+              </button>
+            </div>
+          {/if}
         {:else}
           <p class="flex min-w-0 flex-wrap items-baseline gap-x-1.5 text-ui-sm text-muted-foreground">
             <span class="truncate font-mono text-ui-xs tabular-nums" title={updateVersion}>{updateVersion}</span>

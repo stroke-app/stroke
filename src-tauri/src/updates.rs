@@ -484,17 +484,29 @@ fn install_pacman(bytes: &[u8]) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("Could not prepare the update: {e}"))?;
     let pkg = dir.join("stroke-update.pkg.tar.zst");
     std::fs::write(&pkg, bytes).map_err(|e| format!("Could not prepare the update: {e}"))?;
-    let status = std::process::Command::new("pkexec")
+    let out = std::process::Command::new("pkexec")
         .args(["pacman", "-U", "--noconfirm"])
         .arg(&pkg)
-        .status();
+        .stdin(std::process::Stdio::null())
+        .output();
     let _ = std::fs::remove_dir_all(&dir);
     let fallback = aur_package().map(|p| format!(" You can also run: yay -Syu {p}")).unwrap_or_default();
-    match status {
-        Ok(s) if s.success() => Ok(()),
-        // pkexec: 126 = the prompt was dismissed, 127 = not authorized.
-        Ok(s) if matches!(s.code(), Some(126 | 127)) => Err(format!("The password prompt was closed, so nothing was installed.{fallback}")),
-        Ok(s) => Err(format!("pacman could not install the update (exit {}).{fallback}", s.code().unwrap_or(-1))),
+    match out {
+        Ok(o) if o.status.success() => Ok(()),
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            log::warn!("[updater] pkexec pacman -U exited {:?}: {}", o.status.code(), stderr.trim());
+            Err(match o.status.code() {
+                // No polkit agent (common on a bare window manager): pkexec
+                // can't show a prompt at all and fails straight away.
+                Some(127) if stderr.contains("authentication agent") => format!(
+                    "Your desktop has no password prompt running (a polkit agent), so the update could not ask for your password. Nothing was installed.{fallback}"
+                ),
+                Some(126) => format!("The password prompt was cancelled, so nothing was installed.{fallback}"),
+                Some(127) => format!("Your account isn't allowed to install packages, so nothing was installed.{fallback}"),
+                code => format!("pacman could not install the update (exit {}).{fallback}", code.unwrap_or(-1)),
+            })
+        }
         Err(e) => Err(format!("Could not ask for the password (pkexec: {e}).{fallback}")),
     }
 }
