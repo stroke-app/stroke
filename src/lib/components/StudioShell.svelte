@@ -3737,12 +3737,13 @@ let rowSearch = $state('')
     // sidebar's filter used to take the key on this page.
     if (activeTab?.kind === 'erd') { e.preventDefault(); void erdTabPage?.focusSearch?.(); return }
     if (activeTab?.kind !== 'table' || !activeTable) {
-      // A page with no search of its own finds in the sidebar. The sidebar's
-      // listener meant to do that, but this hotkey marks the key handled first,
-      // so it never ran. The schema page and the SQL tab keep theirs.
+      // The page's own search, found as `/` finds it; a page with none finds
+      // in the sidebar. The sidebar filter took the key on every page with a
+      // search box but no handler here (activity log, extensions, shortcuts).
+      // The schema page and the SQL tab keep theirs.
       if (activeTab?.kind === 'schema' || activeTab?.kind === 'sql') return
-      const filter = document.querySelector('[data-sidebar-filter]')
-      if (filter instanceof HTMLInputElement && filter.offsetParent) { e.preventDefault(); filter.focus(); filter.select() }
+      const target = slashFocusTarget()
+      if (target instanceof HTMLInputElement) { e.preventDefault(); target.focus(); target.select() }
       return
     }
     e.preventDefault()
