@@ -226,7 +226,9 @@
             .map((e) => Decoration.mark({ class: 'cm-sql-run-error' }).range(e.from, e.to)),
           ...run.marks
             .filter((m) => m.kind === 'ok' && m.info)
-            .map((m) => Decoration.widget({ widget: new RunInfoWidget(/** @type {string} */ (m.info)), side: 1 }).range(m.to)),
+            // side 2: after the ghost semicolon (side 1) at the same spot, which
+            // belongs against the code it completes, not past the run's timing.
+            .map((m) => Decoration.widget({ widget: new RunInfoWidget(/** @type {string} */ (m.info)), side: 2 }).range(m.to)),
         ],
         true,
       ),
