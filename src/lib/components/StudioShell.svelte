@@ -12727,6 +12727,7 @@ let rowSearch = $state('')
             onmodshifte={() => { if (connection) aiMode ? exitAiMode() : enterAiMode() }}
             onmodshiftd={() => { if (connection) showDisconnectDialog = true }}
             onmodaltd={() => { if (connection) void focusDataView() }}
+            onsearchdb={() => { if (connection) openSearchTab() }}
           />
           {/await}
           </svelte:boundary>
@@ -12791,6 +12792,7 @@ let rowSearch = $state('')
             onmodshiftd={() => { if (connection) showDisconnectDialog = true }}
             onmodaltd={() => { if (connection) void focusDataView() }}
             onmodshifto={() => { if (connection) openOrmTab() }}
+            onsearchdb={() => { if (connection) openSearchTab() }}
             onqueryrefresh={refreshQueryStores}
             onhistoryselect={(sql) => openQueryInEditor(sql)}
             onopenqueries={(view) => openQueriesTab(view)}

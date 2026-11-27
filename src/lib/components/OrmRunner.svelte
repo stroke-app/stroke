@@ -56,6 +56,8 @@
     onmodshifte = undefined,
     onmodshiftd = undefined,
     onmodaltd = undefined,
+    /** Find in database: the app's key, which CodeMirror took for find-previous. */
+    onsearchdb = undefined,
   } = $props();
 
   /** @type {HTMLElement | null} */
@@ -137,6 +139,7 @@
     ["connection.disconnect", onmodshiftd],
     ["view.data", onmodaltd],
     ["ai.panel", onmodshifte],
+    ["search.database", onsearchdb],
   ]);
 
   // ── Valid JS identifier table names only ──────────────────────────────────

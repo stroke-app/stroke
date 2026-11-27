@@ -120,6 +120,8 @@
     onmodshiftd = undefined,
     onmodaltd = undefined,
     onmodshifto = undefined,
+    /** Find in database, from inside the editor. */
+    onsearchdb = undefined,
     onmodshiftb = undefined,
     /** Set true to open the History list in the results pane; it reads back
      *  false once the list is up, so the next request opens it again. */
@@ -1478,6 +1480,7 @@
       {onmodshiftd}
       {onmodaltd}
       {onmodshifto}
+      {onsearchdb}
       onmodj={toggleOutput}
       onmodshiftb={() => { toggleHistory(); onmodshiftb?.() }}
       onlens={onStatementAction}

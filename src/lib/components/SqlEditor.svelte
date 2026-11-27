@@ -69,6 +69,8 @@
     onmodshiftd = undefined,
     onmodaltd = undefined,
     onmodshifto = undefined,
+    /** Find in database: the app's key, which CodeMirror took for find-previous. */
+    onsearchdb = undefined,
     onmodj = undefined,
     onmodshiftb = undefined,
     /**
@@ -992,6 +994,7 @@
     ['view.data', onmodaltd],
     ['ai.panel', onmodshifte],
     ['view.orm', onmodshifto],
+    ['search.database', onsearchdb],
   ])
 
   // The editor's own chords: these mean something different in a console
