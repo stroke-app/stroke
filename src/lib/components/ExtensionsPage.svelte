@@ -400,7 +400,7 @@
 
 <!-- Group label + hairline-bordered list -->
 {#snippet sectionLabel(text)}
-  <h3 class="mb-2 px-0.5 text-ui-2xs font-medium uppercase tracking-[0.06em] text-muted-foreground">{text}</h3>
+  <h3 class="mb-2 px-0.5 text-ui-xs font-medium text-muted-foreground">{text}</h3>
 {/snippet}
 
 <div class="app-scroll min-h-0 flex-1 overflow-y-auto bg-background">
@@ -564,14 +564,9 @@
                     title="Configure {ext.name}"
                     class="group flex h-full w-full items-start gap-3 rounded-lg bg-muted/25 p-3 pr-14 text-left transition-[background-color,scale] duration-150 ease-out hover:bg-accent/50 active:scale-[0.99] focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring"
                   >
-                    <span
-                      class={cn(
-                        "grid size-8 shrink-0 place-items-center rounded-md transition-colors",
-                        on ? "bg-primary/15 text-primary" : "bg-muted/60 text-muted-foreground group-hover:text-foreground",
-                      )}
-                    >
-                      <Icon class="size-4 shrink-0" />
-                    </span>
+                    <!-- The glyph alone: a tile that turned blue when on repeated the
+                         toggle beside it (DESIGN_SYSTEM.md §11, no icon tiles). -->
+                    <Icon class="mt-0.5 size-4 shrink-0 text-muted-foreground transition-colors group-hover:text-foreground" />
                     <span class="flex min-w-0 flex-1 flex-col gap-0.5">
                       <span class="truncate text-ui-sm font-medium text-foreground">{ext.name}</span>
                       <span class="line-clamp-2 text-ui-xs leading-snug text-muted-foreground">{ext.description ?? KIND_LABEL[ext.kind] ?? "Extension"}</span>
@@ -631,9 +626,8 @@
                  colour that everywhere else in the app means "interactive",
                  sitting next to the toggle that already says on or off. The
                  icon is an identifier, not a status light. -->
-            <span class="grid size-10 shrink-0 place-items-center rounded-lg border border-border/60 bg-muted/30 text-foreground/70">
-              {#if Icon}<Icon class="size-5 shrink-0" />{/if}
-            </span>
+            <!-- The glyph alone, muted (DESIGN_SYSTEM.md §11: no boxed icon tiles). -->
+            {#if Icon}<Icon class="mt-1 size-5 shrink-0 text-muted-foreground" />{/if}
             <div class="min-w-0 flex-1 pt-0.5">
               <h2 class="text-ui-lg font-semibold tracking-tight text-foreground">{selected.name}</h2>
               <p class="mt-0.5 text-ui-2xs text-muted-foreground">{KIND_LABEL[selected.kind] ?? "Extension"}</p>
