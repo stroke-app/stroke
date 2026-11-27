@@ -5,6 +5,10 @@
   import Icon from "./Icon.svelte";
   import SlidersHorizontal from "@lucide/svelte/icons/sliders-horizontal";
   import Check from "@lucide/svelte/icons/check";
+  // Real arrows for sort direction: the icon registry draws arrow-up / arrow-down
+  // as chevrons, which in a list read as expand and collapse.
+  import ArrowUp from "@lucide/svelte/icons/arrow-up";
+  import ArrowDown from "@lucide/svelte/icons/arrow-down";
   import * as DropdownMenu from "$lib/components/ui/dropdown-menu/index.js";
   import { Popover, PopoverTrigger, PopoverContent } from "$lib/components/ui/popover/index.js";
   import * as Select from "$lib/components/ui/select/index.js";
@@ -1179,7 +1183,7 @@
           {/if}
         {/snippet}
         {#snippet item(it)}
-          {#if it.dir === "asc"}<Icon name="arrow-up" class="size-3.5 shrink-0 text-muted-foreground" />{:else}<Icon name="arrow-down" class="size-3.5 shrink-0 text-muted-foreground" />{/if}
+          {#if it.dir === "asc"}<ArrowUp class="size-3.5 shrink-0 text-muted-foreground" />{:else}<ArrowDown class="size-3.5 shrink-0 text-muted-foreground" />{/if}
           <span class="min-w-0 flex-1 truncate">{it.label}</span>
           <span class="shrink-0 text-ui-3xs text-muted-foreground">{it.dir === "asc" ? "Asc" : "Desc"}</span>
           {#if it.active}<Check class="size-3.5 shrink-0 text-primary" />{/if}
