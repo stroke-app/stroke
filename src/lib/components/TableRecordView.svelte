@@ -528,7 +528,7 @@
                 {#if field.isPk}
                   <Icon name="key-round" class="size-3 shrink-0 self-center text-warning" aria-label="Primary key" />
                 {/if}
-                <span class="ml-auto min-w-0 truncate text-ui-2xs text-muted-foreground">{field.dataType}</span>
+                <span class="ml-auto min-w-0 truncate text-ui-2xs text-muted-foreground">{String(field.dataType).toLowerCase() === 'null' ? '' : field.dataType}</span>
               </dt>
 
               <dd class="relative min-w-0">

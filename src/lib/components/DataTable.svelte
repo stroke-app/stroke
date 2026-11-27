@@ -8085,7 +8085,9 @@ import FilterX from "@lucide/svelte/icons/filter-x";
     // 60% alpha measured 2.6:1 on the light themes; full muted is 6:1 or more.
     const typeStartX = tx + (indicators.length ? 5 : 3)
     const typeRoom = x + w - sortReserve - typeStartX
-    if (typeRoom > 24 && col.dataType) {
+    // SQLite reports "NULL" for a computed column (sum(x), a CASE): no type,
+    // and printed it read as the column's value.
+    if (typeRoom > 24 && col.dataType && String(col.dataType).toLowerCase() !== 'null') {
       ctx.font = _fonts.type
       ctx.fillStyle = c.cMuted
       ctx.fillText(truncText(ctx, col.dataType, typeRoom), typeStartX, cy + 0.5)
