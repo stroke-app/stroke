@@ -86,3 +86,4 @@
 - The ORM runner, activity log, record view and role SQL dialog use the shared search field, segmented filter and keycaps; search icons sit at the same inset in every hand-built search box.
 - The structure view on read-only engines drops its dropdown arrows, and its tabs share one font. Data diff marks its row filter with the structure view's pill.
 - The relation tree's table list and a role's grants load behind skeletons instead of a spinner.
+- Reset (or Alt+Backspace) on staged table edits offers Undo for 8 seconds instead of losing them for good.
