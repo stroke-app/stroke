@@ -165,12 +165,18 @@ describe('databaseInfoRows', () => {
   })
   it('labels the Postgres columns and reads -1 as unlimited', () => {
     const rows = databaseInfoRows('postgres', {
-      rows: [['app', 'nees', 'UTF8', 'en_US.utf8', 'en_US.utf8', -1, true, '8192 kB', 3, null]],
+      rows: [['app', 'nees', 'UTF8', 'en_US.utf8', 'en_US.utf8', -1, true, 8388608, 3, null]],
     })
     expect(rows.find((r) => r.label === 'Connection limit')?.value).toBe('Unlimited')
     expect(rows.find((r) => r.label === 'Accepts connections')?.value).toBe('Yes')
-    expect(rows.find((r) => r.label === 'Size on disk')?.value).toBe('8192 kB')
+    expect(rows.find((r) => r.label === 'Size on disk')?.value).toBe('8 MB')
     expect(rows.find((r) => r.label === 'Comment')?.value).toBe('-')
+  })
+  it('reads a Postgres database over 1 GB in GB, not thousands of MB', () => {
+    const rows = databaseInfoRows('postgres', {
+      rows: [['app', 'o', 'UTF8', 'c', 'c', 10, true, '1514143744', 3, null]],
+    })
+    expect(rows.find((r) => r.label === 'Size on disk')?.value).toBe('1.4 GB')
   })
   it('formats the MySQL size, which comes back as bytes', () => {
     const rows = databaseInfoRows('mysql', { rows: [['app', 'utf8mb4', 'utf8mb4_unicode_ci', 12, 5_242_880]] })
