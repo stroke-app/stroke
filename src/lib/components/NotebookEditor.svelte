@@ -1,4 +1,5 @@
 <script>
+  import Kbd from './Kbd.svelte'
   /**
    * SQL notebook: prose and queries in cells, saved as a .sqlnb file on disk.
    *
@@ -553,9 +554,14 @@
           <button type="button" onclick={() => { const c = addCell(notebook.cells.length - 1, 'sql'); focusCell(c.id) }} class="flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-3 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"><Plus class="size-3.5 shrink-0" />SQL</button>
           <button type="button" onclick={() => { const c = addCell(notebook.cells.length - 1, 'markdown'); focusCell(c.id) }} class="flex h-7 items-center gap-1.5 rounded-md border border-border/60 px-3 text-ui-xs text-muted-foreground hover:bg-muted hover:text-foreground"><Plus class="size-3.5 shrink-0" />Text</button>
         </div>
-        <p class="pb-16 text-center text-ui-3xs text-muted-foreground">
-          {comboTitle('Mod+Enter')} run · {comboTitle('Shift+Enter')} run and next · {comboTitle('Mod+Shift+Enter')} run all · write <span class="font-mono">{'{{name}}'}</span> in a query for a variable
-        </p>
+        <!-- Keycaps, as the SQL editor's hints are: a 10px run of "Ctrl+Enter run ·
+             Shift+Enter run and next ·" read as one sentence of key names. -->
+        <div class="flex flex-wrap items-center justify-center gap-x-4 gap-y-1.5 pb-16 text-ui-xs text-muted-foreground">
+          <span class="inline-flex items-center gap-1.5"><Kbd combo="Mod+Enter" /> runs a cell</span>
+          <span class="inline-flex items-center gap-1.5"><Kbd combo="Shift+Enter" /> runs it and moves on</span>
+          <span class="inline-flex items-center gap-1.5"><Kbd combo="Mod+Shift+Enter" /> runs them all</span>
+          <span><span class="font-mono text-foreground">{'{{name}}'}</span> in a query asks for a value</span>
+        </div>
       </div>
     {/if}
   </div>
