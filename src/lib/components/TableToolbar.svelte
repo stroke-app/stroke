@@ -1275,13 +1275,9 @@
             <Icon name="crosshair" class="size-3.5 shrink-0" />
           </button>
         {/snippet}
-        {#snippet header()}
-          <div class="border-b border-border/40 px-3 py-1.5">
-            <span class="text-ui-2xs font-medium text-muted-foreground">{$tx('tb.jumpToHead', 'Jump to column')}</span>
-          </div>
-        {/snippet}
+        <!-- Column names only: the search already says Jump to column, and the
+             same crosshair on every row said it again. -->
         {#snippet item(it)}
-          <Icon name="crosshair" class="size-3.5 shrink-0 text-muted-foreground" />
           <span class="min-w-0 flex-1 truncate">{it.label}</span>
         {/snippet}
       </SearchableMenu>
