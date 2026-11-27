@@ -475,7 +475,7 @@
         {#if objQuery}
           <button
             type="button"
-            class="absolute right-1 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            class="hit-area absolute right-1 inline-flex size-5 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
             aria-label="Clear search"
             onclick={() => (objQuery = '')}
           >

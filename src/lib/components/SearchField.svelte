@@ -60,7 +60,7 @@
     <button
       type="button"
       aria-label="Clear search"
-      class="absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+      class="hit-area absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
       onclick={() => { value = ''; ref?.focus() }}
     >
       <Icon name="x" class="size-3 shrink-0" />

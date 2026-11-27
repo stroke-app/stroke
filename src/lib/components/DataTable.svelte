@@ -9309,7 +9309,7 @@ import FilterX from "@lucide/svelte/icons/filter-x";
                   <div class="absolute inset-y-0 flex items-center justify-center border-r border-border/20 bg-primary/5" style="left:{showRowExpand ? GUTTER_EXPAND_W : 0}px; width:{GUTTER_SELECT_W}px">
                     <button
                       type="button"
-                      class="inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-destructive"
+                      class="hit-area inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-destructive"
                       onclick={() => removeDraftRow(di)}
                       title={draftCount > 1 ? 'Discard this row' : 'Cancel'}
                     >

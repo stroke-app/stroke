@@ -206,7 +206,7 @@
       {#if search}
         <button
           type="button"
-          class="absolute top-1/2 right-1.5 -translate-y-1/2 inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+          class="hit-area absolute top-1/2 right-1.5 -translate-y-1/2 inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           onclick={() => {
             search = "";
           }}><X class="size-3 shrink-0" /></button

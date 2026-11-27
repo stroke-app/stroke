@@ -232,7 +232,7 @@
       {#if filter}
         <button
           type="button"
-          class="absolute right-1.5 inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
+          class="hit-area absolute right-1.5 inline-flex size-4 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           aria-label="Clear the search"
           onclick={() => { filter = ''; cursor = 0; filterEl?.focus() }}
         ><X class="size-3 shrink-0" /></button>

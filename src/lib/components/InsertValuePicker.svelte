@@ -138,7 +138,7 @@
       {disabled}
       tabindex={-1}
       aria-label="Show values"
-      class="absolute right-0 inline-flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
+      class="hit-area absolute right-0 inline-flex size-4 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:text-foreground"
       onclick={() => { open = !open; inputEl?.focus() }}
     >
       <Icon name="chevron-down" class={cn('size-3 transition-transform', open && 'rotate-180')} />

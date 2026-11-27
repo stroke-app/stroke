@@ -2531,7 +2531,7 @@
             <button
               type="button"
               tabindex="-1"
-              class="absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
+              class="hit-area absolute top-1/2 right-1.5 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-md text-muted-foreground hover:bg-accent hover:text-foreground"
               title="Clear"
               aria-label="Clear filter"
               onclick={() => { handleFilterInput(''); flushFilter(); filterEl?.focus() }}
@@ -3677,7 +3677,7 @@
                   <div class="absolute inset-y-0 right-1 hidden items-center gap-0.5 group-hover/chat:flex group-focus-within/chat:flex">
                       <button
                         type="button"
-                        class="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.97]"
+                        class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-foreground active:scale-[0.97]"
                         title="Rename"
                         aria-label="Rename chat"
                         onclick={() => startChatRename(chat)}
@@ -3686,7 +3686,7 @@
                       </button>
                     <button
                       type="button"
-                      class="inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-destructive active:scale-[0.97]"
+                      class="hit-area inline-flex size-5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-[color,background-color,scale] duration-[120ms] ease-[var(--ease-out)] hover:bg-sidebar-accent hover:text-destructive active:scale-[0.97]"
                       title="Delete"
                       aria-label="Delete chat"
                       onclick={() => void deleteChat(chat.id)}

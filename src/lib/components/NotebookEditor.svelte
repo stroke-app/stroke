@@ -471,7 +471,7 @@
           <input class="no-focus-ring w-20 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.name} placeholder="name" aria-label="Variable name" data-var={i} data-part="name" oninput={(e) => setVariable(i, { name: /** @type {HTMLInputElement} */ (e.target).value.replace(/[^\w]/g, '') })} />
           <span class="text-muted-foreground">=</span>
           <input class="no-focus-ring w-28 bg-transparent text-foreground outline-none placeholder:text-muted-foreground" value={v.value} placeholder="value" aria-label="Value of {v.name || 'variable'}" data-var={i} data-part="value" oninput={(e) => setVariable(i, { value: /** @type {HTMLInputElement} */ (e.target).value })} />
-          <button type="button" class="inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Remove variable" onclick={() => removeVariable(i)}><X class="size-3 shrink-0" /></button>
+          <button type="button" class="hit-area inline-flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-accent hover:text-foreground" aria-label="Remove variable" onclick={() => removeVariable(i)}><X class="size-3 shrink-0" /></button>
         </span>
       {/each}
       {#each undefinedVars as n (n)}

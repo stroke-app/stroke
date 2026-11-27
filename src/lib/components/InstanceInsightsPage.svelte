@@ -865,7 +865,7 @@
                 <button
                   type="button"
                   aria-label="Clear search"
-                  class="absolute right-2 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                  class="hit-area absolute right-2 top-1/2 inline-flex size-5 -translate-y-1/2 items-center justify-center rounded-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                   onclick={() => (configSearch = '')}
                 >
                   <X class="size-3 shrink-0" />

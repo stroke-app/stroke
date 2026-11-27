@@ -814,7 +814,7 @@
                 <!-- Resize: drag the corner, or focus it and use the arrow keys. -->
                 <button
                   type="button"
-                  class="absolute right-0 bottom-0 z-10 flex size-5 cursor-nwse-resize touch-none items-end justify-end p-1 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+                  class="hit-area absolute right-0 bottom-0 z-10 flex size-5 cursor-nwse-resize touch-none items-end justify-end p-1 text-muted-foreground/50 opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
                   title="Drag to resize"
                   aria-label="Resize {title}: arrow keys change width and height"
                   onpointerdown={(e) => startResize(e, item)}
