@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.9.1] - 2026-11-28
+
+### Changes
+- Add Count of rows as a chart value (#449)
+
+
 ## [3.9.0] - 2026-11-28
 
 ### Changes
