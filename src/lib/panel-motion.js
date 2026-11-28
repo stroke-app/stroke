@@ -88,9 +88,12 @@ export function closePanel(el, prop) {
  * @returns {Promise<void>}
  */
 export function slidePanel(el, edge, open) {
-  if (!el || panelMotionOff() || typeof el.animate !== 'function') return Promise.resolve()
-  const prev = running.get(el)
-  prev?.cancel()
+  if (!el) return Promise.resolve()
+  // A close holds its last frame (off screen) until the caller hides the
+  // panel. Drop it first, even when this open doesn't animate: with Animate
+  // panels turned off in between, it kept the reopened dock out of view.
+  settlePanel(el)
+  if (panelMotionOff() || typeof el.animate !== 'function') return Promise.resolve()
   const away = edge === 'bottom' ? 'translateY(100%)' : 'translateX(100%)'
   const frames = open ? [{ transform: away }, { transform: 'none' }] : [{ transform: 'none' }, { transform: away }]
   const anim = el.animate(frames, { duration: PANEL_MS, easing: PANEL_EASE, fill: 'forwards' })
@@ -105,6 +108,19 @@ export function slidePanel(el, edge, open) {
     anim.onfinish = done
     anim.oncancel = () => resolve()
   })
+}
+
+/**
+ * Cancel any slide still applied to a panel, so it sits where layout puts it.
+ * @param {HTMLElement | null | undefined} el
+ */
+export function settlePanel(el) {
+  if (!el) return
+  running.get(el)?.cancel()
+  running.delete(el)
+  try {
+    for (const a of el.getAnimations?.() ?? []) a.cancel()
+  } catch {}
 }
 
 export const PANEL_RESIZE_END_EVENT = 'stroke:panel-resize-end'
