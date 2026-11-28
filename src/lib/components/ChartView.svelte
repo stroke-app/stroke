@@ -8,7 +8,7 @@
   import EChartPanel from './EChartPanel.svelte'
   import {
     buildOption, guessXCol, guessYCol, isChartable,
-    colType, getRequiredAxes, CHART_CATALOG, resolveChartAccent,
+    colType, getRequiredAxes, CHART_CATALOG, resolveChartAccent, CHART_COUNT,
   } from '$lib/chart-utils.js'
   import { isCurrentThemeDark } from '$lib/stores/settings.js'
   import { chartGroups, saveChart, addGroup } from '$lib/stores/saved-charts.js'
@@ -178,7 +178,7 @@
     untrack(() => {
       const gx = xCol && names.has(xCol) ? xCol : guessXCol(effectiveColumns)
       xCol = gx
-      yCol = yCol && names.has(yCol) ? yCol : guessYCol(effectiveColumns, gx)
+      yCol = yCol && (names.has(yCol) || yCol === CHART_COUNT) ? yCol : guessYCol(effectiveColumns, gx)
       if (zCol && !names.has(zCol)) zCol = ''
       if (groupCol && !names.has(groupCol)) groupCol = ''
     })
@@ -320,7 +320,7 @@
   function onSaveOpenChange(open) {
     if (!open) return
     // Named for what it plots, selected, so typing replaces it.
-    saveName = yCol && xCol ? `${yCol} by ${xCol}` : ''; saveGroup = $chartGroups[0] ?? 'Default'
+    saveName = yCol && xCol ? `${yCol === CHART_COUNT ? 'Count' : yCol} by ${xCol}` : ''; saveGroup = $chartGroups[0] ?? 'Default'
     newGroupMode = false; newGroupName = ''
   }
 
@@ -476,7 +476,9 @@
         <!-- Searchable, like every other select: a field on top, then each
              column with its type, so a wide result is quick to pick from. -->
         <SearchableMenu
-          items={[...(optional ? [{ value: '', label: 'None', icon: 'minus', keywords: ['none'] }] : []), ...options.map((col) => ({ value: col, label: col, hint: colTypeOf(col), icon: colIcon(col), keywords: [col] }))]}
+          items={[...(optional ? [{ value: '', label: 'None', icon: 'minus', keywords: ['none'] }] : []), ...options.map((col) => col === CHART_COUNT
+            ? { value: col, label: 'Count of rows', hint: 'count', icon: 'hash', keywords: ['count', 'rows', 'number of'] }
+            : { value: col, label: col, hint: colTypeOf(col), icon: colIcon(col), keywords: [col] })]}
           align="start"
           contentClass="w-64 max-w-[min(20rem,80vw)]"
           placeholder="Search columns"
@@ -485,7 +487,7 @@
           {#snippet trigger(props)}
             <button {...props} type="button" class={cn('inline-flex items-center', axisToken)} aria-label={label}>
               <span class={axisLabel}>{label}</span>
-              <span class={axisValue}>{value || 'None'}</span>
+              <span class={axisValue}>{value === CHART_COUNT ? 'Count' : value || 'None'}</span>
               <Icon name="chevron-down" class="size-3.5 shrink-0" />
             </button>
           {/snippet}
@@ -506,7 +508,7 @@
         {@render axisPicker(
           requiredAxes.y.split(' ')[0],
           yCol,
-          ['scatter', 'bubble'].includes(chartType) ? allCols : numericCols.map(c => c.name),
+          ['scatter', 'bubble'].includes(chartType) ? allCols : [CHART_COUNT, ...numericCols.map(c => c.name)],
           (v) => (yCol = v),
           false,
         )}

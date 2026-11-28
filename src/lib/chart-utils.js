@@ -41,15 +41,21 @@ export function guessXCol(columns) {
 
 /** @param {ColInfo[]} columns @param {string} xCol */
 export function guessYCol(columns, xCol) {
+  // Numbers that are labels, not amounts: summing ids or phone numbers is
+  // meaningless, so with nothing else to plot the chart counts rows instead.
   const isIdish = (/** @type {ColInfo} */ c) =>
     /^(id|_id|rowid|oid|pk|key|uuid)$/i.test(c.name) ||
-    /_(id|key|pk)$/i.test(c.name)
-  return (
-    columns.find(c => c.name !== xCol && colType(c) === 'number' && !isIdish(c)) ??
-    columns.find(c => c.name !== xCol && colType(c) === 'number') ??
-    columns.find(c => c.name !== xCol)
-  )?.name ?? ''
+    /_(id|key|pk)$/i.test(c.name) || /[a-z]Id$/.test(c.name) ||
+    /phone|mobile|zip|postal|postcode|pin_?code/i.test(c.name)
+  return columns.find(c => c.name !== xCol && colType(c) === 'number' && !isIdish(c))?.name ?? CHART_COUNT
 }
+
+/**
+ * The Value choice that counts rows per category instead of adding up a
+ * column. `buildOption` turns it into a column of 1s, so every aggregating
+ * chart sums those into a count.
+ */
+export const CHART_COUNT = 'count(*)'
 
 /**
  * @param {string} chartType
@@ -474,6 +480,7 @@ function categoryXAxis(isDark, xData) {
 function fmtCompact(v) {
   if (typeof v !== 'number' || !isFinite(v)) return String(v)
   const a = Math.abs(v)
+  if (a >= 1e12) return (v / 1e12).toFixed(a % 1e12 === 0 ? 0 : 1) + 'T'
   if (a >= 1e9) return (v / 1e9).toFixed(a % 1e9 === 0 ? 0 : 1) + 'B'
   if (a >= 1e6) return (v / 1e6).toFixed(a % 1e6 === 0 ? 0 : 1) + 'M'
   if (a >= 1e3) return (v / 1e3).toFixed(a % 1e3 === 0 ? 0 : 1) + 'k'
@@ -502,6 +509,10 @@ function valueYAxis(isDark) {
  * @returns {import('echarts').EChartsOption}
  */
 export function buildOption({ type, columns, rows, xCol, yCol, zCol, groupCol, isDark = false, title, noTitle = false, accent = '' }) {
+  if (yCol === CHART_COUNT && !columns.some((c) => c.name === CHART_COUNT)) {
+    columns = [...columns, { name: CHART_COUNT, dataType: 'number' }]
+    rows = rows.map((r) => [...r, 1])
+  }
   // Theme-aware palette: lead with the live accent (resolved from the app's
   // --primary token by the caller) so single-series charts and accents follow
   // the current theme; the rest of the categorical ramp stays fixed. Shadows the

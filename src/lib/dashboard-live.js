@@ -1,7 +1,7 @@
 // Live dashboard cards: a saved chart's query run again, turned into a chart
 // option, or into one big number when the result is a single value.
 
-import { buildOption, colType, guessXCol, guessYCol } from '$lib/chart-utils.js'
+import { buildOption, colType, guessXCol, guessYCol, CHART_COUNT } from '$lib/chart-utils.js'
 
 /**
  * One number to show large: a single row whose only numeric cell is the value
@@ -119,7 +119,8 @@ export function queryView(r, type, isDark) {
     const v = row[columns.findIndex((c) => c.name === yCol)]
     return v == null || typeof v === 'number' || (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v)))
   })
-  if (!xCol || !yCol || xCol === yCol || !yIsNumber) return table()
+  // No column worth adding up: a query result reads better as its rows.
+  if (!xCol || !yCol || yCol === CHART_COUNT || xCol === yCol || !yIsNumber) return table()
   const xIsTime = colType(columns.find((c) => c.name === xCol) ?? { name: '' }) === 'date'
   const chartType = pick ?? (xIsTime ? 'line' : 'bar')
   const option = buildOption({ type: chartType, columns, rows: rows.slice(0, 2000), xCol, yCol, isDark, noTitle: true })
