@@ -4,6 +4,12 @@ All notable changes to Stroke are listed here, newest first.
 
 ---
 
+## [3.9.0] - 2026-11-28
+
+### Changes
+- Fix the blank terminal dock and hung psql sessions (#448)
+
+
 ## [3.8.9] - 2026-11-27
 
 ### Changes
