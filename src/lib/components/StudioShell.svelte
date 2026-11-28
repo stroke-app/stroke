@@ -6,7 +6,7 @@
   import { spannerIsPg } from '$lib/sql-ident.js'
   import ArrowLeft from '@lucide/svelte/icons/arrow-left'
   import { onMount, onDestroy, untrack, tick } from 'svelte'
-  import { panelMotionOff, slidePanel, openPanel, closePanel, beginPanelResize, endPanelResize } from '$lib/panel-motion.js'
+  import { panelMotionOff, slidePanel, settlePanel, openPanel, closePanel, beginPanelResize, endPanelResize } from '$lib/panel-motion.js'
   import { fade } from 'svelte/transition'
   import { traceInteraction, tracePoint, traceMark } from '$lib/perf.js'
   import { couchAdapter, cassandraAdapter, elasticAdapter, firestoreAdapter, convexAdapter, mongoAdapter, neo4jAdapter, influxAdapter, uriHost } from '$lib/doc-adapters.js'
@@ -4102,7 +4102,7 @@ let rowSearch = $state('')
   $effect(() => {
     const open = terminalDockOpen
     untrack(() => {
-      if (panelMotionOff()) { terminalDockPhase = open ? 'open' : 'closed'; return }
+      if (panelMotionOff()) { settlePanel(terminalDockEl); terminalDockPhase = open ? 'open' : 'closed'; return }
       if (open) {
         if (terminalDockPhase === 'open') return
         terminalDockPhase = 'opening'
@@ -5094,7 +5094,7 @@ let rowSearch = $state('')
     const modeFlip = aiMode !== aiPanelMode
     aiPanelMode = aiMode
     untrack(() => {
-      if (modeFlip || panelMotionOff()) { aiPanelPhase = want ? 'open' : 'closed'; return }
+      if (modeFlip || panelMotionOff()) { settlePanel(aiPanelEl); aiPanelPhase = want ? 'open' : 'closed'; return }
       if (want) {
         if (aiPanelPhase === 'open') return
         aiPanelPhase = 'opening'

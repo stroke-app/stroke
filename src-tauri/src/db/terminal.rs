@@ -471,6 +471,10 @@ fn psql_display_args(windows: bool) -> Vec<String> {
     }
 }
 
+/// psql's database argument, read as a conninfo string: keepalive probes after
+/// 30 idle seconds, every 10 seconds, 3 misses and the link counts as dead.
+const PSQL_KEEPALIVES: &str = "keepalives=1 keepalives_idle=30 keepalives_interval=10 keepalives_count=3";
+
 async fn pg_launch(config: PgConfig) -> Result<Launch, String> {
     let (c, tunnel) = resolve_pg_ssh(config).await?;
     let mut env = vec![
@@ -516,6 +520,14 @@ async fn pg_launch(config: PgConfig) -> Result<Launch, String> {
         ]
         .into_iter()
         .chain(psql_display_args(cfg!(windows)))
+        // TCP keepalives, which libpq only takes in a conninfo string (there
+        // are no PG* variables for them); everything else still comes from
+        // the PG* variables above. Without them a session left idle behind a
+        // NAT or cloud firewall lost its connection silently, and the next
+        // statement waited forever: Ctrl+C printed "Cancel request sent" and
+        // the prompt never came back. Now a dead link is found within about a
+        // minute and psql reconnects, and the probes keep an idle one open.
+        .chain(std::iter::once(PSQL_KEEPALIVES.to_string()))
         .collect(),
         env,
         unset: &["PGSERVICE", "PGPASSWORD", "PGSSLMODE", "PGSSLROOTCERT", "PGTZ", "PGOPTIONS"],

@@ -42,7 +42,7 @@ export function defaultNativeScroll() {
 
 /** Panels slide where WebKit composites on the GPU (macOS, Windows), not on Linux. */
 export function defaultSlidePanels() {
-  return typeof navigator !== 'undefined' && detectOs() !== 'linux'
+  return false
 }
 
 /** One-shot marker for the migration in `loadSettings` (see there for why). */
@@ -616,11 +616,9 @@ export const DEFAULT_SETTINGS = {
   rowSpacing: DEFAULT_ROW_SPACING,
   motion: DEFAULT_MOTION,
   // The sidebar, the terminal dock and the AI panel slide open and closed.
-  // A platform default: on macOS and Windows WebKit composites on the GPU and
-  // the slide is smooth; on Linux it runs on the software renderer, where it
-  // dropped frames, so there they appear at once. (Was `animatePanels`, off
-  // everywhere, and before that `panelMotion`; renamed so every install takes
-  // the platform default once.)
+  // Off everywhere: panels appear at once, which reads faster. (Was a platform
+  // default, on for macOS and Windows; `stroke:panels-static-v1` turns that
+  // stored `true` off once.)
   slidePanels: defaultSlidePanels(),
   // The page sits in a rounded panel inset from the window, the sidebar, title
   // and status bars around it on one canvas. Off (the default): the flat
@@ -1042,7 +1040,15 @@ export function loadSettings() {
     }
     const rowSpacing = normalizeRowSpacing(parsed.rowSpacing)
     const motion = normalizeMotion(parsed.motion)
-    const slidePanels = typeof parsed.slidePanels === 'boolean' ? parsed.slidePanels : defaultSlidePanels()
+    let slidePanels = typeof parsed.slidePanels === 'boolean' ? parsed.slidePanels : defaultSlidePanels()
+    // The slide was on by default on macOS and Windows. Turn it off once;
+    // anyone who turns it back on afterwards keeps it.
+    try {
+      if (localStorage.getItem('stroke:panels-static-v1') !== '1') {
+        if (slidePanels) { slidePanels = false; settingsMigrated = true }
+        localStorage.setItem('stroke:panels-static-v1', '1')
+      }
+    } catch {}
     const insetLayout = parsed.insetLayout === true
     const quitGuard = parsed.quitGuard !== false
     const reopenTabs = parsed.reopenTabs !== false
